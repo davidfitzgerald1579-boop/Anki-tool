@@ -21,14 +21,18 @@ MODE_HIDE_ONE = "hog1"  # Hide One, Guess One
 
 # Shape kinds
 KIND_RECT = "rect"
-KIND_ELLIPSE = "ellipse"
+KIND_ELLIPSE = "ellipse"  # legacy: no longer drawable, still renders on old notes
 KIND_ERASE = "erase"
+KIND_PATCH = "patch"  # a pixel-exact cutout of the image, movable
+
+# Kinds that become occlusion masks / cards (erase + patch are image surgery)
+MASK_KINDS = (KIND_RECT, KIND_ELLIPSE)
 
 # Editor tools
 TOOL_SELECT = "select"
 TOOL_RECT = "rect"
-TOOL_ELLIPSE = "ellipse"
 TOOL_ERASE = "erase"
+TOOL_PATCH = "patch"
 
 # Geometry
 MIN_SHAPE_PX = 6  # shapes smaller than this on creation are discarded

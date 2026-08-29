@@ -70,7 +70,7 @@ def main() -> None:
         Shape(kind="rect", x=396, y=110, w=222, h=26, group="g1"),
         Shape(kind="rect", x=170, y=154, w=200, h=26),
         Shape(kind="rect", x=118, y=198, w=192, h=26, group="g1"),
-        Shape(kind="ellipse", x=350, y=240, w=190, h=34),
+        Shape(kind="rect", x=350, y=240, w=195, h=28),
     ]
     payload = payload_json(shapes, img_w, img_h)
     targets = ["g1", "s:" + shapes[1].id]

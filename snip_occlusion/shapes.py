@@ -12,7 +12,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 
-from .consts import KIND_ERASE
+from .consts import KIND_ERASE, KIND_PATCH, MASK_KINDS
 
 
 def new_id() -> str:
@@ -21,7 +21,7 @@ def new_id() -> str:
 
 @dataclass
 class Shape:
-    kind: str  # "rect" | "ellipse" | "erase"
+    kind: str  # "rect" | "ellipse" | "erase" | "patch"
     x: float
     y: float
     w: float
@@ -29,6 +29,8 @@ class Shape:
     id: str = field(default_factory=new_id)
     group: Optional[str] = None  # explicit group id, None = ungrouped
     color: Optional[str] = None  # fill color for erase shapes ("#rrggbb")
+    sx: Optional[float] = None  # patch source rect origin in the image
+    sy: Optional[float] = None
 
     def contains(self, px: float, py: float) -> bool:
         if not (self.x <= px <= self.x + self.w and self.y <= py <= self.y + self.h):
@@ -66,6 +68,9 @@ class Shape:
         }
         if self.color:
             d["color"] = self.color
+        if self.sx is not None:
+            d["sx"] = self.sx
+            d["sy"] = self.sy
         return d
 
     @staticmethod
@@ -79,15 +84,32 @@ class Shape:
             id=d.get("id") or new_id(),
             group=d.get("group"),
             color=d.get("color"),
+            sx=d.get("sx"),
+            sy=d.get("sy"),
         )
 
 
 def mask_shapes(shapes: list) -> list:
-    return [s for s in shapes if s.kind != KIND_ERASE]
+    """Shapes that occlude content and generate cards."""
+    return [s for s in shapes if s.kind in MASK_KINDS]
 
 
 def erase_shapes(shapes: list) -> list:
     return [s for s in shapes if s.kind == KIND_ERASE]
+
+
+def patch_shapes(shapes: list) -> list:
+    return [s for s in shapes if s.kind == KIND_PATCH]
+
+
+def layer_of(shape: Shape) -> int:
+    """Paint order: erase fills at the bottom, patches above them (so a
+    moved snippet can sit on covered-up text), masks on top."""
+    if shape.kind == KIND_ERASE:
+        return 0
+    if shape.kind == KIND_PATCH:
+        return 1
+    return 2
 
 
 def target_groups(shapes: list) -> list:
@@ -104,7 +126,7 @@ def explicit_group_index(shapes: list) -> dict:
     """Map explicit group id -> 1-based badge number, in first-seen order."""
     order: dict = {}
     for s in shapes:
-        if s.kind != KIND_ERASE and s.group and s.group not in order:
+        if s.kind in MASK_KINDS and s.group and s.group not in order:
             order[s.group] = len(order) + 1
     return order
 

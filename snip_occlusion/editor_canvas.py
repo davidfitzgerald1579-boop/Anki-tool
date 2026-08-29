@@ -25,10 +25,12 @@ from .consts import (
     GROUP_PALETTE,
     KIND_ELLIPSE,
     KIND_ERASE,
+    KIND_PATCH,
     KIND_RECT,
+    MASK_KINDS,
     MIN_SHAPE_PX,
-    TOOL_ELLIPSE,
     TOOL_ERASE,
+    TOOL_PATCH,
     TOOL_RECT,
     TOOL_SELECT,
 )
@@ -68,10 +70,11 @@ class _OverlayItem(QGraphicsItem):
         if c.image is None:
             return
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
         scale = c.view_scale()
         badge_order = sh.explicit_group_index(c.shapes)
 
-        for s in c.shapes:
+        for s in c.ordered_shapes():
             rect = QRectF(s.x, s.y, s.w, s.h)
             if s.kind == KIND_ERASE:
                 painter.setBrush(QBrush(QColor(s.color or "#ffffff")))
@@ -81,8 +84,20 @@ class _OverlayItem(QGraphicsItem):
                 painter.drawRect(rect)
                 continue
 
-            fill = QColor(c.mask_fill)
-            fill.setAlpha(235)
+            if s.kind == KIND_PATCH:
+                # pixel-exact copy from the ORIGINAL image, so quality is
+                # identical to the snip and unaffected by cover-ups below it
+                painter.drawImage(
+                    rect, c.image, QRectF(s.sx or 0, s.sy or 0, s.w, s.h)
+                )
+                pen = QPen(QColor(70, 130, 220, 200), 1, Qt.PenStyle.DashLine)
+                pen.setCosmetic(True)
+                painter.setPen(pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawRect(rect)
+                continue
+
+            fill = QColor(c.mask_fill)  # fully opaque: masks must hide text
             painter.setBrush(QBrush(fill))
             pen = QPen(QColor(0, 0, 0, 110), 1)
             pen.setCosmetic(True)
@@ -109,9 +124,14 @@ class _OverlayItem(QGraphicsItem):
                 else:
                     painter.drawRect(rect)
 
-        # resize handles for a single selected shape
+        # resize handles: only while hovering the single selected shape
+        # (or mid-resize), so they don't clutter the view
         single = c.single_selected()
-        if single is not None:
+        if (
+            single is not None
+            and single.kind != KIND_PATCH
+            and (c.handles_visible or (c.gesture or {}).get("type") == "resize")
+        ):
             hs = HANDLE_SCREEN_PX / scale
             painter.setBrush(QBrush(QColor("#ffffff")))
             hpen = QPen(QColor("#1a73e8"), 1)
@@ -175,11 +195,13 @@ class OcclusionCanvas(QGraphicsView):
         self.selection: set = set()
         self.tool: str = TOOL_SELECT
         self.gesture: dict | None = None
+        self.handles_visible: bool = False
         self._group_counter = 0
         self._undo: list = []
         self._redo: list = []
         self._last_undo_tag: str | None = None
         self._pan_origin: QPoint | None = None
+        self._user_zoomed = False
 
         self._scene = QGraphicsScene(self)
         self.setScene(self._scene)
@@ -209,6 +231,12 @@ class OcclusionCanvas(QGraphicsView):
         self._scene.clear()  # deletes old items
         self._pixmap_item = self._scene.addPixmap(QPixmap.fromImage(self.image))
         self._pixmap_item.setZValue(0)
+        # smooth scaling: the default (fast/nearest-neighbour) looks
+        # pixelated at any zoom other than exactly 100%
+        self._pixmap_item.setTransformationMode(
+            Qt.TransformationMode.SmoothTransformation
+        )
+        self._user_zoomed = False
         self._overlay = _OverlayItem(self)
         self._scene.addItem(self._overlay)
         self._scene.setSceneRect(
@@ -231,13 +259,29 @@ class OcclusionCanvas(QGraphicsView):
             return local_background(self.image, s.x, s.y, s.w, s.h).name()
         return self.majority.name()
 
-    def bake_erasures(self) -> QImage:
-        """Return a copy of the image with erase rects filled in."""
+    def ordered_shapes(self) -> list:
+        """Shapes in paint order: erases, then patches, then masks."""
+        return sorted(self.shapes, key=sh.layer_of)
+
+    def bake_image(self) -> QImage:
+        """Copy of the image with erase fills and patches applied.
+
+        Patches are drawn from the ORIGINAL image at integer positions with
+        no scaling, so the moved snippet is pixel-identical to the source.
+        """
         img = self.image.copy()
         painter = QPainter(img)
         for s in sh.erase_shapes(self.shapes):
             painter.fillRect(
                 QRectF(s.x, s.y, s.w, s.h), QColor(s.color or "#ffffff")
+            )
+        for s in sh.patch_shapes(self.shapes):
+            painter.drawImage(
+                QPoint(round(s.x), round(s.y)),
+                self.image,
+                QRect(
+                    round(s.sx or 0), round(s.sy or 0), round(s.w), round(s.h)
+                ),
             )
         painter.end()
         return img
@@ -295,7 +339,7 @@ class OcclusionCanvas(QGraphicsView):
         members = [
             s
             for s in self.shapes
-            if s.id in self.selection and s.kind != KIND_ERASE
+            if s.id in self.selection and s.kind in MASK_KINDS
         ]
         if len(members) < 2:
             return False
@@ -382,11 +426,25 @@ class OcclusionCanvas(QGraphicsView):
         self.fitInView(
             self._scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio
         )
+        self._user_zoomed = False
 
     def zoom(self, factor: float) -> None:
         new_scale = self.view_scale() * factor
         if 0.05 <= new_scale <= 16:
             self.scale(factor, factor)
+            self._user_zoomed = True
+
+    def resizeEvent(self, event) -> None:
+        # keep the image fit-to-window (including on maximize/fullscreen)
+        # until the user explicitly zooms
+        super().resizeEvent(event)
+        if self.image is not None and not self._user_zoomed:
+            self.fit()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self.image is not None and not self._user_zoomed:
+            self.fit()
 
     def wheelEvent(self, event) -> None:
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
@@ -400,7 +458,7 @@ class OcclusionCanvas(QGraphicsView):
     # ------------------------------------------------------------- hit tests
 
     def shape_at(self, pos: QPointF) -> sh.Shape | None:
-        for s in reversed(self.shapes):  # topmost first
+        for s in reversed(self.ordered_shapes()):  # topmost first
             if s.contains(pos.x(), pos.y()):
                 return s
         return None
@@ -424,7 +482,9 @@ class OcclusionCanvas(QGraphicsView):
 
     def handle_at(self, pos: QPointF) -> int | None:
         s = self.single_selected()
-        if s is None:
+        if s is None or s.kind == KIND_PATCH:
+            # patches can be moved but never resized: resizing would
+            # resample the pixels and lose the 1:1 snip quality
             return None
         size = HANDLE_SCREEN_PX / self.view_scale() * 1.5  # generous hit area
         for code, hr in enumerate(self.handle_rects(s, size)):
@@ -451,11 +511,11 @@ class OcclusionCanvas(QGraphicsView):
         shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
         ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
 
-        if self.tool in (TOOL_RECT, TOOL_ELLIPSE, TOOL_ERASE):
+        if self.tool in (TOOL_RECT, TOOL_ERASE, TOOL_PATCH):
             kind = {
                 TOOL_RECT: KIND_RECT,
-                TOOL_ELLIPSE: KIND_ELLIPSE,
                 TOOL_ERASE: KIND_ERASE,
+                TOOL_PATCH: KIND_PATCH,
             }[self.tool]
             self.gesture = {
                 "type": "draw",
@@ -617,8 +677,17 @@ class OcclusionCanvas(QGraphicsView):
                 )
                 if s.kind == KIND_ERASE:
                     s.color = self.default_erase_color(s)
+                elif s.kind == KIND_PATCH:
+                    # integer source rect = clean pixel copy, no resampling
+                    s.x, s.y = float(round(s.x)), float(round(s.y))
+                    s.w, s.h = float(round(s.w)), float(round(s.h))
+                    s.sx, s.sy = s.x, s.y
                 self.shapes.append(s)
                 self.selection = {s.id}
+                if s.kind == KIND_PATCH:
+                    # switch straight to select so the cutout can be dragged
+                    # out of the way immediately
+                    self.set_tool(TOOL_SELECT)
                 self._emit_changed()
             else:
                 self.viewport().update()
@@ -666,6 +735,18 @@ class OcclusionCanvas(QGraphicsView):
             self.viewport().update()
         if s.kind == KIND_ERASE:
             self._erase_color_menu(s, event.globalPos())
+            return
+        if s.kind == KIND_PATCH:
+            menu = QMenu(self)
+            act_home = menu.addAction("Snap back to original position")
+            act_del = menu.addAction("Delete\tDel")
+            chosen = menu.exec(event.globalPos())
+            if chosen == act_home:
+                self.push_undo()
+                s.x, s.y = s.sx or 0, s.sy or 0
+                self._emit_changed()
+            elif chosen == act_del:
+                self.delete_selected()
             return
         menu = QMenu(self)
         act_group = menu.addAction("Group selected\tG")
@@ -741,10 +822,10 @@ class OcclusionCanvas(QGraphicsView):
             self.set_tool(TOOL_SELECT)
         elif key == Qt.Key.Key_R:
             self.set_tool(TOOL_RECT)
-        elif key == Qt.Key.Key_E:
-            self.set_tool(TOOL_ELLIPSE)
         elif key == Qt.Key.Key_C:
             self.set_tool(TOOL_ERASE)
+        elif key == Qt.Key.Key_P:
+            self.set_tool(TOOL_PATCH)
         elif key == Qt.Key.Key_F or key == Qt.Key.Key_0:
             self.fit()
         elif key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
@@ -780,16 +861,27 @@ class OcclusionCanvas(QGraphicsView):
 
     def _update_hover_cursor(self, pos: QPointF) -> None:
         if self.tool != TOOL_SELECT:
+            self._set_handles_visible(False)
             return
         handle = self.handle_at(pos)
         if handle is not None:
+            self._set_handles_visible(True)
             self.viewport().setCursor(HANDLE_CURSORS[handle])
             return
         s = self.shape_at(pos)
+        single = self.single_selected()
+        self._set_handles_visible(
+            s is not None and single is not None and s.id == single.id
+        )
         if s is not None and s.id in self.selection:
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
         else:
             self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
+
+    def _set_handles_visible(self, visible: bool) -> None:
+        if visible != self.handles_visible:
+            self.handles_visible = visible
+            self.viewport().update()
 
     def _apply_resize(self, g: dict, pos: QPointF) -> None:
         s: sh.Shape = g["shape"]
@@ -830,14 +922,15 @@ class OcclusionCanvas(QGraphicsView):
                 )
                 painter.setBrush(QBrush(QColor(color)))
                 pen = QPen(QColor(120, 120, 120, 200), 1, Qt.PenStyle.DashLine)
+            elif g["kind"] == KIND_PATCH:
+                # selection-marquee look while choosing what to snip out
+                painter.setBrush(QBrush(QColor(70, 130, 220, 40)))
+                pen = QPen(QColor(70, 130, 220), 1, Qt.PenStyle.DashLine)
             else:
                 fill = QColor(self.mask_fill)
-                fill.setAlpha(180)
+                fill.setAlpha(180)  # see-through while aiming; opaque once placed
                 painter.setBrush(QBrush(fill))
                 pen = QPen(QColor(0, 0, 0, 130), 1)
             pen.setCosmetic(True)
             painter.setPen(pen)
-            if g["kind"] == KIND_ELLIPSE:
-                painter.drawEllipse(r)
-            else:
-                painter.drawRect(r)
+            painter.drawRect(r)

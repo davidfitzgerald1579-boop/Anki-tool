@@ -16,8 +16,8 @@ from .consts import (
     DEFAULT_CONFIG,
     MODE_HIDE_ALL,
     MODE_HIDE_ONE,
-    TOOL_ELLIPSE,
     TOOL_ERASE,
+    TOOL_PATCH,
     TOOL_RECT,
     TOOL_SELECT,
 )
@@ -25,8 +25,8 @@ from .editor_canvas import OcclusionCanvas
 from .shapes import target_groups
 
 _HELP_TEXT = """<b>Tools</b><br>
-<b>S</b> Select &nbsp; <b>R</b> Rectangle &nbsp; <b>E</b> Ellipse &nbsp; \
-<b>C</b> Cover-up (erase text)<br><br>
+<b>S</b> Select &nbsp; <b>R</b> Box &nbsp; \
+<b>C</b> Cover-up (erase text) &nbsp; <b>P</b> Snip patch<br><br>
 <b>Selection</b><br>
 Click = select one &middot; Shift+click = add/remove from selection \
 (never moves anything)<br>
@@ -38,11 +38,18 @@ Arrow keys = nudge &middot; Shift+arrows = bigger nudge<br><br>
 <b>Groups</b> (shapes revealed together, one card per group)<br>
 <b>G</b> group selected &middot; <b>U</b> ungroup<br><br>
 <b>Cover-up boxes</b><br>
-Filled with the slide's majority colour by default. Right-click or \
-double-click one to sample the local background or pick a colour.<br><br>
+Filled with the slide's majority colour by default; permanently baked into \
+the image, never part of any card. Right-click or double-click one to \
+sample the local background or pick a colour.<br><br>
+<b>Snip patch</b> (keep one sentence, ditch the paragraph)<br>
+Press <b>P</b>, drag over the text you want to KEEP - it becomes a movable \
+pixel-perfect cutout. Drag it aside, cover the paragraph with <b>C</b>, \
+then drag the cutout back on top. Right-click it to snap it home. Patches \
+are baked into the image, never resized, never part of a card.<br><br>
 <b>Other</b><br>
 Ctrl+Z / Ctrl+Y undo &middot; redo &middot; Del = delete &middot; \
-Ctrl+wheel = zoom &middot; F = fit &middot; middle-drag = pan<br>
+Ctrl+wheel = zoom &middot; F = fit &middot; middle-drag = pan &middot; \
+F11 = full screen<br>
 Ctrl+Enter = Add Cards"""
 
 
@@ -62,7 +69,16 @@ class SnipOcclusionDialog(QDialog):
         self.config = get_config()
         self.setWindowTitle(ADDON_NAME)
         self.setMinimumSize(900, 620)
+        # give the dialog real minimize/maximize buttons so the image can be
+        # edited at full size; F11 toggles borderless full screen
+        self.setWindowFlags(
+            self.windowFlags()
+            | Qt.WindowType.WindowMinimizeButtonHint
+            | Qt.WindowType.WindowMaximizeButtonHint
+        )
         self._build_ui()
+        fs_shortcut = QShortcut(QKeySequence("F11"), self)
+        qconnect(fs_shortcut.activated, self._toggle_fullscreen)
 
         self._clipboard = QApplication.clipboard()
         qconnect(self._clipboard.dataChanged, self._on_clipboard_changed)
@@ -70,32 +86,64 @@ class SnipOcclusionDialog(QDialog):
 
     # ------------------------------------------------------------------- UI
 
-    def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
+    def _side_button(self, label: str, tip: str) -> QToolButton:
+        btn = QToolButton(self)
+        btn.setText(label)
+        btn.setToolTip(tip)
+        btn.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        btn.setMinimumHeight(32)
+        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        return btn
 
-        # --- toolbar
-        bar = QHBoxLayout()
+    @staticmethod
+    def _separator() -> QFrame:
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        return line
+
+    def _build_ui(self) -> None:
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(8, 8, 8, 8)
+
+        # --- left-hand toolbar
+        side_widget = QWidget(self)
+        side_widget.setFixedWidth(170)
+        side = QVBoxLayout(side_widget)
+        side.setContentsMargins(0, 0, 6, 0)
+        side.setSpacing(4)
+
+        self.clip_btn = QPushButton("📋 Load new snip", self)
+        self.clip_btn.setToolTip(
+            "Load the image currently on the clipboard "
+            "(lights up when a new snip is waiting)"
+        )
+        qconnect(self.clip_btn.clicked, self._load_clipboard_clicked)
+        side.addWidget(self.clip_btn)
+        side.addWidget(self._separator())
+
         self.tool_group = QButtonGroup(self)
         self.tool_buttons = {}
         for tool, label, tip in [
             (TOOL_SELECT, "Select", "Select / move / resize (S)"),
             (TOOL_RECT, "▭ Box", "Draw occlusion rectangle (R)"),
-            (TOOL_ELLIPSE, "◯ Oval", "Draw occlusion ellipse (E)"),
             (TOOL_ERASE, "⌫ Cover-up", "Erase slide text: draws a box filled "
                                         "with the background colour (C)"),
+            (TOOL_PATCH, "✂ Snip patch", "Cut out a piece of the image you "
+                                         "want to KEEP as a movable, "
+                                         "pixel-perfect patch (P)"),
         ]:
-            btn = QToolButton(self)
-            btn.setText(label)
-            btn.setToolTip(tip)
+            btn = self._side_button(label, tip)
             btn.setCheckable(True)
             self.tool_group.addButton(btn)
             self.tool_buttons[tool] = btn
             qconnect(btn.clicked, lambda _=False, t=tool: self._pick_tool(t))
-            bar.addWidget(btn)
+            side.addWidget(btn)
         self.tool_buttons[TOOL_SELECT].setChecked(True)
 
-        bar.addSpacing(12)
+        side.addWidget(self._separator())
         for label, tip, cb in [
             ("Group", "Group selected shapes (G)", self._group),
             ("Ungroup", "Ungroup selected shapes (U)", self._ungroup),
@@ -104,17 +152,15 @@ class SnipOcclusionDialog(QDialog):
             ("Redo", "Redo (Ctrl+Y)", self._redo),
             ("Fit", "Fit image to window (F)", self._fit),
         ]:
-            btn = QToolButton(self)
-            btn.setText(label)
-            btn.setToolTip(tip)
+            btn = self._side_button(label, tip)
             qconnect(btn.clicked, lambda _=False, f=cb: f())
-            bar.addWidget(btn)
+            side.addWidget(btn)
 
-        bar.addSpacing(12)
-        self.swatch_btn = QToolButton(self)
-        self.swatch_btn.setToolTip(
+        side.addWidget(self._separator())
+        self.swatch_btn = self._side_button(
+            "Fill: auto",
             "Cover-up fill colour (auto-detected majority colour of the "
-            "slide). Click to change."
+            "slide). Click to change.",
         )
         self.swatch_btn.setPopupMode(
             QToolButton.ToolButtonPopupMode.InstantPopup
@@ -129,20 +175,17 @@ class SnipOcclusionDialog(QDialog):
             self._swatch_pick,
         )
         self.swatch_btn.setMenu(swatch_menu)
-        bar.addWidget(self.swatch_btn)
+        side.addWidget(self.swatch_btn)
 
-        bar.addStretch(1)
-
-        self.clip_btn = QPushButton("📋 Load new snip from clipboard", self)
-        qconnect(self.clip_btn.clicked, self._load_clipboard_clicked)
-        bar.addWidget(self.clip_btn)
-
-        help_btn = QToolButton(self)
-        help_btn.setText("?")
-        help_btn.setToolTip("Shortcuts and tips")
+        side.addStretch(1)
+        help_btn = self._side_button("?  Shortcuts", "Shortcuts and tips")
         qconnect(help_btn.clicked, self._show_help)
-        bar.addWidget(help_btn)
-        layout.addLayout(bar)
+        side.addWidget(help_btn)
+        outer.addWidget(side_widget)
+
+        # --- right-hand side: canvas + form
+        layout = QVBoxLayout()
+        outer.addLayout(layout, 1)
 
         # --- canvas / placeholder stack
         self.stack = QStackedWidget(self)
@@ -326,6 +369,12 @@ class SnipOcclusionDialog(QDialog):
         self.canvas.fit()
         self.canvas.setFocus()
 
+    def _toggle_fullscreen(self) -> None:
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
+
     def _swatch_auto(self) -> None:
         self.canvas.erase_color_override = None
         self._update_swatch()
@@ -376,7 +425,7 @@ class SnipOcclusionDialog(QDialog):
             )
             return
 
-        baked = self.canvas.bake_erasures()
+        baked = self.canvas.bake_image()
         buf = QBuffer()
         buf.open(QIODevice.OpenModeFlag.WriteOnly)
         baked.save(buf, "PNG")

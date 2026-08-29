@@ -46,9 +46,27 @@ def test_normalized_payload_excludes_erase_and_rounds():
 
 
 def test_serialize_roundtrip():
-    orig = [make(group="g1"), make(kind="erase", color="#ffffff")]
+    orig = [
+        make(group="g1"),
+        make(kind="erase", color="#ffffff"),
+        make(kind="patch", x=50, y=200, w=80, h=20, sx=50, sy=30),
+    ]
     restored = sh.deserialize(sh.serialize(orig))
     assert [s.to_dict() for s in restored] == [s.to_dict() for s in orig]
+    assert restored[2].sx == 50 and restored[2].sy == 30
+
+
+def test_patches_are_not_masks_and_layer_below_them():
+    mask = make()
+    erase = make(kind="erase")
+    patch = make(kind="patch", sx=0, sy=0)
+    shapes = [mask, erase, patch]
+    assert sh.mask_shapes(shapes) == [mask]
+    assert sh.patch_shapes(shapes) == [patch]
+    assert sh.target_groups(shapes) == ["s:" + mask.id]
+    assert sh.layer_of(erase) < sh.layer_of(patch) < sh.layer_of(mask)
+    payload = sh.normalized_payload(shapes, 100, 100)
+    assert len(payload["shapes"]) == 1
 
 
 def test_clamp_rect():

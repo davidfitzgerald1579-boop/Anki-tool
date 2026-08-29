@@ -11,7 +11,9 @@ from PyQt6.QtGui import QKeyEvent, QMouseEvent
 from snip_occlusion.consts import (
     DEFAULT_CONFIG,
     TOOL_ERASE,
+    TOOL_PATCH,
     TOOL_RECT,
+    TOOL_SELECT,
 )
 from snip_occlusion.editor_canvas import OcclusionCanvas
 from snip_occlusion.shapes import Shape, target_groups
@@ -217,11 +219,96 @@ def test_erase_shape_gets_majority_color_and_bakes(canvas):
     br, bg_, bb = int(BG[1:3], 16), int(BG[3:5], 16), int(BG[5:7], 16)
     fr, fg, fb = int(fill[1:3], 16), int(fill[3:5], 16), int(fill[5:7], 16)
     assert abs(fr - br) <= 12 and abs(fg - bg_) <= 12 and abs(fb - bb) <= 12
-    baked = canvas.bake_erasures()
+    baked = canvas.bake_image()
     c = baked.pixelColor(270, 127)  # centre of the erased line
     assert abs(c.red() - fr) <= 2 and abs(c.green() - fg) <= 2
     # erase shapes never become cards
     assert target_groups(canvas.shapes) == []
+
+
+def test_patch_tool_cuts_moves_and_bakes_pixel_exact(canvas):
+    # snip out a piece of the title text
+    canvas.set_tool(TOOL_PATCH)
+    drag(canvas, 100, 60, 300, 100)
+    assert len(canvas.shapes) == 1
+    p = canvas.shapes[0]
+    assert p.kind == "patch"
+    assert p.sx == p.x and p.sy == p.y  # starts on top of its source
+    assert canvas.tool == TOOL_SELECT  # auto-switch so it can be dragged
+    assert canvas.selection == {p.id}
+
+    # remember what the source pixels look like
+    src_x, src_y = int(p.sx) + 5, int(p.sy) + 5
+    src_color = canvas.image.pixelColor(src_x, src_y)
+
+    # drag it 200px down, then cover the original area
+    press(canvas, p.x + 10, p.y + 10)
+    move(canvas, p.x + 10, p.y + 210)
+    release(canvas, p.x + 10, p.y + 210)
+    assert abs(p.y - (p.sy + 200)) <= 1.5
+    assert p.sx is not None and p.sy is not None  # source unchanged
+
+    canvas.set_tool(TOOL_ERASE)
+    drag(canvas, 90, 50, 320, 110)
+    erase = [s for s in canvas.shapes if s.kind == "erase"][0]
+
+    baked = canvas.bake_image()
+    # the patch destination shows the original source pixels exactly
+    moved = baked.pixelColor(int(p.x) + 5, int(p.y) + 5)
+    assert moved.rgb() == src_color.rgb()
+    # the original spot is covered by the erase fill, not the old pixels
+    covered = baked.pixelColor(src_x, src_y)
+    assert covered.name() == erase.color
+
+    # patches never generate cards and cannot be grouped
+    assert target_groups(canvas.shapes) == []
+    canvas.selection = {p.id, erase.id}
+    assert not canvas.group_selected()
+
+
+def test_patch_has_no_resize_handles(canvas):
+    canvas.set_tool(TOOL_PATCH)
+    drag(canvas, 100, 100, 200, 150)
+    p = canvas.shapes[0]
+    assert canvas.selection == {p.id}
+    from PyQt6.QtCore import QPointF as _P
+
+    assert canvas.handle_at(_P(100, 100)) is None  # corner of the patch
+
+
+def test_handles_only_visible_on_hover(canvas):
+    s = add_shape(canvas, 100, 100)
+    canvas.selection = {s.id}
+    assert not canvas.handles_visible
+    move(canvas, 110, 110)  # hover over the selected shape
+    assert canvas.handles_visible
+    move(canvas, 500, 400)  # hover empty space
+    assert not canvas.handles_visible
+
+
+def test_fit_follows_resize_until_user_zooms(canvas, qapp):
+    fit_scale = canvas.view_scale()
+    canvas.resize(500, 350)
+    qapp.processEvents()
+    assert canvas.view_scale() < fit_scale  # refit to the smaller window
+    # corners of the image stay visible after refit
+    tl = canvas.mapFromScene(QPointF(0, 0))
+    br = canvas.mapFromScene(
+        QPointF(canvas.image.width(), canvas.image.height())
+    )
+    vp = canvas.viewport().rect()
+    assert vp.contains(tl) and vp.contains(br)
+
+    canvas.zoom(2.0)
+    zoomed = canvas.view_scale()
+    canvas.resize(900, 600)
+    qapp.processEvents()
+    assert abs(canvas.view_scale() - zoomed) < 1e-6  # manual zoom preserved
+    canvas.fit()  # F re-engages fit mode
+    canvas.resize(700, 500)
+    qapp.processEvents()
+    tl = canvas.mapFromScene(QPointF(0, 0))
+    assert canvas.viewport().rect().contains(tl)
 
 
 def test_move_is_clamped_to_image(canvas):

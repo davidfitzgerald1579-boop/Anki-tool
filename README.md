@@ -9,9 +9,11 @@ cards.
 
 ![The editor](docs/editor.png)
 
-*The editor: yellow masks with numbered group badges, a selected box with
-resize handles, and a cover-up box (dashed outline) that has erased a line of
-irrelevant text by filling it with the slide's background colour.*
+*The editor: opaque masks with numbered group badges, a selected box (blue
+outline; resize handles appear on hover), a cover-up box (grey dashed
+outline) that has erased a line of irrelevant text by filling it with the
+slide's background colour, and a snip patch (blue dashed outline, bottom
+right) — a pixel-perfect cutout of that erased sentence, dragged aside.*
 
 ## Why this exists
 
@@ -22,9 +24,15 @@ Occlusion keeps everything that works and fixes what doesn't:
 | Kept from IOE | Fixed in Snip Occlusion |
 | --- | --- |
 | Clipboard image auto-loads when the editor opens | **Grouping is by explicit selection, not position** — shift-click any combination of boxes and press **G**. A box sandwiched between two grouped boxes stays independent. |
-| Click-and-drag boxes and ovals | **Shift-click never moves a shape.** It only toggles selection, and no shape moves until the cursor travels a threshold (default 5 px, configurable) — so building up a selection can't nudge your boxes. |
+| Click-and-drag occlusion boxes | **Shift-click never moves a shape.** It only toggles selection, and no shape moves until the cursor travels a threshold (default 5 px, configurable) — so building up a selection can't nudge your boxes. |
 | "Hide All, Guess One" and "Hide One, Guess One" card generation | **Dragging one shape moves only that shape**, even when several are selected. Hold **Ctrl** while dragging to move the whole selection deliberately. |
 | Grouped shapes hidden/revealed together | **A cover-up (text eraser) tool**: draw a box over irrelevant slide text and it is filled with the slide's auto-detected majority colour, then baked into the image when cards are created. Right-click a cover-up box to sample the local background instead (for text on coloured callouts) or pick any colour. |
+| | **A snip-patch tool**: cut out the one sentence you want to *keep* as a movable, pixel-perfect patch — drag it aside, cover up the rest of the paragraph, drag it back on top. Patches are copied from the original image with no rescaling, so there is zero quality loss. |
+
+Plus editor quality-of-life: a left-hand toolbar, fully opaque masks, the
+image always fits the window (until you zoom yourself), smooth high-quality
+image display at any zoom, resize handles that appear only on hover, and a
+maximizable window with **F11** full-screen for precise editing.
 
 ## How the cards look
 
@@ -66,9 +74,14 @@ Anki add-ons folder (Tools → Add-ons → View Files) and restart Anki.
    editor automatically. If you snip again mid-edit, the
    "Load new snip" button lights up instead of interrupting you.
 3. Draw:
-   - **R** — rectangle mask, **E** — oval mask. Click-drag to draw.
+   - **R** — rectangle mask. Click-drag to draw.
    - **C** — cover-up box: erases slide text by covering it with the
-     background colour.
+     background colour. Never becomes a card — it permanently edits the
+     image.
+   - **P** — snip patch: cut out a sentence you want to keep, drag it
+     aside, cover-up the paragraph it came from, then drag it back over
+     the covered area. Right-click a patch to snap it back to where it
+     was cut from.
    - **S** — back to select.
 4. Group facts that should be revealed together: shift-click each box
    (anywhere on the slide, in any order), press **G**. Numbered badges show
@@ -83,7 +96,7 @@ Anki add-ons folder (Tools → Add-ons → View Files) and restart Anki.
 
 | Keys | Action |
 | --- | --- |
-| S / R / E / C | Select / Rectangle / Oval / Cover-up tool |
+| S / R / C / P | Select / Rectangle / Cover-up / Snip patch tool |
 | Click | Select a shape |
 | Shift+click | Add/remove shape from selection (never moves it) |
 | Drag on empty area | Rubber-band select |
@@ -95,6 +108,7 @@ Anki add-ons folder (Tools → Add-ons → View Files) and restart Anki.
 | Ctrl+Z / Ctrl+Y | Undo / redo |
 | Ctrl+wheel, +/-, F | Zoom, fit |
 | Middle-drag | Pan |
+| F11 | Full screen |
 | Ctrl+Enter | Add cards |
 
 ## Configuration

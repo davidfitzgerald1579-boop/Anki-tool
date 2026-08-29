@@ -30,13 +30,17 @@ def main() -> None:
         Shape(kind="rect", x=396, y=110, w=222, h=26, group="g1"),
         Shape(kind="rect", x=170, y=154, w=200, h=26),
         Shape(kind="rect", x=118, y=198, w=192, h=26, group="g1"),
-        Shape(kind="ellipse", x=350, y=240, w=190, h=34, group="g2"),
-        Shape(kind="ellipse", x=90, y=346, w=290, h=32, group="g2"),
+        Shape(kind="rect", x=350, y=240, w=195, h=28, group="g2"),
+        Shape(kind="rect", x=90, y=346, w=290, h=32, group="g2"),
     ]
     canvas.shapes.extend(shapes)
     erase = Shape(kind="erase", x=38, y=282, w=475, h=28)
     erase.color = canvas.default_erase_color(erase)
     canvas.shapes.append(erase)
+    # a snip patch: a sentence cut out and dragged below the paragraph
+    canvas.shapes.append(
+        Shape(kind="patch", x=520, y=430, w=250, h=26, sx=40, sy=284)
+    )
     canvas._group_counter = 2
     canvas.selection = {shapes[1].id}
 
