@@ -1,6 +1,8 @@
 # Changelog
 
-Versions are tagged on the repository (see the tags/releases page).
+Each version below corresponds to a commit on the repository; the
+installed version is shown as `human_version` in
+`snip_occlusion/manifest.json`.
 
 ## v0.3.0 — 2026-08-30
 
