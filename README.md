@@ -1,1 +1,149 @@
-# Anki-tool
+# Snip Occlusion
+
+**Clipboard-first image occlusion for Anki, built for studying from slide decks
+(BPP Adapt, PowerPoint, any presentation you can screenshot).**
+
+Snip a slide → it lands in the editor automatically → draw boxes over the
+facts you need to recall → erase the irrelevant text → one click adds the
+cards.
+
+![The editor](docs/editor.png)
+
+*The editor: yellow masks with numbered group badges, a selected box with
+resize handles, and a cover-up box (dashed outline) that has erased a line of
+irrelevant text by filling it with the slide's background colour.*
+
+## Why this exists
+
+[Image Occlusion Enhanced](https://github.com/glutanimate/image-occlusion-enhanced)
+is brilliant, but day-to-day slide studying runs into a few walls. Snip
+Occlusion keeps everything that works and fixes what doesn't:
+
+| Kept from IOE | Fixed in Snip Occlusion |
+| --- | --- |
+| Clipboard image auto-loads when the editor opens | **Grouping is by explicit selection, not position** — shift-click any combination of boxes and press **G**. A box sandwiched between two grouped boxes stays independent. |
+| Click-and-drag boxes and ovals | **Shift-click never moves a shape.** It only toggles selection, and no shape moves until the cursor travels a threshold (default 5 px, configurable) — so building up a selection can't nudge your boxes. |
+| "Hide All, Guess One" and "Hide One, Guess One" card generation | **Dragging one shape moves only that shape**, even when several are selected. Hold **Ctrl** while dragging to move the whole selection deliberately. |
+| Grouped shapes hidden/revealed together | **A cover-up (text eraser) tool**: draw a box over irrelevant slide text and it is filled with the slide's auto-detected majority colour, then baked into the image when cards are created. Right-click a cover-up box to sample the local background instead (for text on coloured callouts) or pick any colour. |
+
+## How the cards look
+
+| Hide All, Guess One — question | — answer |
+| --- | --- |
+| ![front](docs/front_hag1.png) | ![back](docs/back_hag1.png) |
+
+The red boxes are the target group (note they skip the yellow box between
+them). On the answer the target is revealed with a dashed outline; other
+masks stay in place and can be clicked to peek underneath.
+
+| Hide One, Guess One — question | — answer |
+| --- | --- |
+| ![front](docs/front_hog1.png) | ![back](docs/back_hog1.png) |
+
+Cards are rendered with plain HTML/CSS/JS positioned by percentages, so they
+scale to any window and **review correctly on AnkiDroid and AnkiMobile with
+no add-on installed on the device**.
+
+## Install
+
+Requires Anki 2.1.50 or later (tested against Anki 26.08, works on both Qt5
+and Qt6 builds — all Qt imports go through `aqt.qt`).
+
+**From the packaged file:**
+
+1. `python3 tools/build_ankiaddon.py` (or download `snip_occlusion.ankiaddon`
+   from the CI artifacts).
+2. In Anki: Tools → Add-ons → Install from file… → pick the `.ankiaddon`.
+3. Restart Anki.
+
+**For development:** copy (or symlink) the `snip_occlusion/` folder into your
+Anki add-ons folder (Tools → Add-ons → View Files) and restart Anki.
+
+## Workflow
+
+1. In Anki, press **Ctrl+Shift+O** (or Tools → Snip Occlusion).
+2. Snip your slide (**Win+Shift+S** on Windows). The image appears in the
+   editor automatically. If you snip again mid-edit, the
+   "Load new snip" button lights up instead of interrupting you.
+3. Draw:
+   - **R** — rectangle mask, **E** — oval mask. Click-drag to draw.
+   - **C** — cover-up box: erases slide text by covering it with the
+     background colour.
+   - **S** — back to select.
+4. Group facts that should be revealed together: shift-click each box
+   (anywhere on the slide, in any order), press **G**. Numbered badges show
+   the groups. **U** ungroups.
+5. Pick a deck, tags, header/footer, and a mode:
+   - **Hide All, Guess One** — everything masked, target highlighted.
+   - **Hide One, Guess One** — only the target masked.
+6. **Add Cards** (or Ctrl+Enter). One card per group (ungrouped boxes are
+   their own cards). The workspace clears, ready for the next snip.
+
+### All shortcuts
+
+| Keys | Action |
+| --- | --- |
+| S / R / E / C | Select / Rectangle / Oval / Cover-up tool |
+| Click | Select a shape |
+| Shift+click | Add/remove shape from selection (never moves it) |
+| Drag on empty area | Rubber-band select |
+| Drag a shape | Move **only that shape** |
+| Ctrl+drag | Move all selected shapes |
+| Arrows / Shift+arrows | Nudge 1 px / 10 px |
+| G / U | Group / ungroup selection |
+| Del | Delete selection |
+| Ctrl+Z / Ctrl+Y | Undo / redo |
+| Ctrl+wheel, +/-, F | Zoom, fit |
+| Middle-drag | Pan |
+| Ctrl+Enter | Add cards |
+
+## Configuration
+
+Tools → Add-ons → Snip Occlusion → Config. Options include the drag
+threshold, mask colours, the default cover-up fill strategy
+(`majority` / `local`), the opening shortcut, and the default card mode.
+See [`snip_occlusion/config.md`](snip_occlusion/config.md) for details.
+
+## Architecture
+
+```
+snip_occlusion/
+├── __init__.py       # Anki entry point: Tools menu + shortcut
+├── dialog.py         # main dialog: clipboard watching, deck/tags/mode, add
+├── editor_canvas.py  # QGraphicsView editor: all mouse/keyboard handling
+├── shapes.py         # pure-Python shape model (no Qt) + normalisation
+├── color_utils.py    # majority-colour and local-background detection
+├── notes.py          # note type management + note creation (no aqt)
+├── template.py       # card templates: % -positioned mask divs + CSS
+└── qtshim.py         # aqt.qt in Anki, PyQt6 in tests
+```
+
+Design notes:
+
+- Shapes are plain dataclasses; the canvas paints them all from one overlay
+  item. That is what makes the interaction rules (drag thresholds,
+  move-one-not-all, explicit groups) straightforward to implement and test.
+- Mask geometry is stored **normalised (0–1)** in a JSON field on the note,
+  so cards don't depend on image resolution or the add-on at review time.
+- One note = one card = one target group. The occluded image is shared.
+- `shapes.py`, `notes.py`, and `color_utils.py` have no `aqt` dependency and
+  are tested against a real temporary Anki collection.
+
+## Tests
+
+```bash
+pip install PyQt6 anki pytest
+QT_QPA_PLATFORM=offscreen python -m pytest tests/ -v
+```
+
+27 tests cover the shape model, colour detection, note/card creation against
+a real collection, and — via synthesised mouse events on the offscreen
+canvas — every interaction fix: the drag threshold, shift-click safety,
+single-shape moves, arbitrary grouping, rubber-band selection, undo/redo,
+and cover-up baking. `tools/render_preview.py` additionally renders the card
+templates in headless Chromium and verifies mask positions land on the image
+where the payload says they should.
+
+## Licence
+
+Apache License 2.0 (see [LICENSE](LICENSE)).
