@@ -311,6 +311,54 @@ def test_fit_follows_resize_until_user_zooms(canvas, qapp):
     assert canvas.viewport().rect().contains(tl)
 
 
+def test_patch_can_be_parked_outside_the_image(canvas):
+    canvas.set_tool(TOOL_PATCH)
+    drag(canvas, 100, 100, 250, 140)
+    p = canvas.shapes[0]
+    # drag it far left, well past the image edge
+    press(canvas, p.x + 10, p.y + 10)
+    move(canvas, p.x - 220, p.y + 10)
+    release(canvas, p.x - 220, p.y + 10)
+    assert p.x < -100  # allowed off the image, onto the canvas
+    assert canvas.patches_outside_image() == [p]
+    # masks are still confined to the image (see clamp test below)
+    press(canvas, p.x + 5, p.y + 5)
+    move(canvas, 150, 120)
+    release(canvas, 150, 120)
+    assert canvas.patches_outside_image() == []
+
+
+def test_fit_keeps_parked_patch_visible(canvas, qapp):
+    canvas.set_tool(TOOL_PATCH)
+    drag(canvas, 100, 100, 250, 140)
+    p = canvas.shapes[0]
+    press(canvas, p.x + 10, p.y + 10)
+    move(canvas, p.x - 200, p.y + 10)
+    release(canvas, p.x - 200, p.y + 10)
+    canvas.fit()
+    qapp.processEvents()
+    vp = canvas.viewport().rect()
+    assert vp.contains(canvas.mapFromScene(QPointF(p.x, p.y)))
+    assert vp.contains(
+        canvas.mapFromScene(QPointF(canvas.image.width(), 0))
+    )
+
+
+def test_resize_works_inside_box_tool(canvas):
+    s = add_shape(canvas, 100, 100, w=80, h=40)
+    canvas.selection = {s.id}
+    canvas.set_tool(TOOL_RECT)
+    # grab the bottom-right handle without leaving the Box tool
+    press(canvas, 180, 140)
+    move(canvas, 240, 170)
+    release(canvas, 240, 170)
+    assert abs((s.x + s.w) - 240) <= 2 and abs((s.y + s.h) - 170) <= 2
+    assert len(canvas.shapes) == 1  # resized, not drew a new box
+    # drawing away from the handles still draws
+    drag(canvas, 300, 300, 380, 340)
+    assert len(canvas.shapes) == 2
+
+
 def test_move_is_clamped_to_image(canvas):
     s = add_shape(canvas, 10, 10, w=50, h=30)
     press(canvas, 20, 20)

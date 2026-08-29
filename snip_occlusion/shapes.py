@@ -164,12 +164,26 @@ def deserialize(data: str) -> list:
     return [Shape.from_dict(d) for d in json.loads(data)]
 
 
+def clamp_rect_in(
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    bx0: float,
+    by0: float,
+    bx1: float,
+    by1: float,
+):
+    """Clamp a rect (keeping its size where possible) inside given bounds."""
+    w = min(w, bx1 - bx0)
+    h = min(h, by1 - by0)
+    x = min(max(x, bx0), bx1 - w)
+    y = min(max(y, by0), by1 - h)
+    return x, y, w, h
+
+
 def clamp_rect(
     x: float, y: float, w: float, h: float, img_w: float, img_h: float
 ):
     """Clamp a rect (keeping its size where possible) inside the image."""
-    w = min(w, img_w)
-    h = min(h, img_h)
-    x = min(max(x, 0.0), img_w - w)
-    y = min(max(y, 0.0), img_h - h)
-    return x, y, w, h
+    return clamp_rect_in(x, y, w, h, 0.0, 0.0, img_w, img_h)

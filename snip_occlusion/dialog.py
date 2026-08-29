@@ -53,6 +53,102 @@ F11 = full screen<br>
 Ctrl+Enter = Add Cards"""
 
 
+# Warm pastel theme, scoped to this dialog only (never leaks into Anki).
+_STYLE = """
+* {
+    font-family: "Segoe UI", "SF Pro Text", "Helvetica Neue", Arial,
+                 sans-serif;
+    font-size: 10.5pt;
+    color: #3d3929;
+}
+QDialog {
+    background: #faf6ef;
+}
+QToolButton, QPushButton {
+    background: #ffffff;
+    border: 1px solid #e3dcd0;
+    border-radius: 8px;
+    padding: 6px 10px;
+}
+QToolButton:hover, QPushButton:hover {
+    background: #f6eee2;
+    border-color: #d8cdbb;
+}
+QToolButton:pressed, QPushButton:pressed {
+    background: #f0e4d3;
+}
+QToolButton:checked {
+    background: #f7ddc9;
+    border: 2px solid #d97757;
+}
+QPushButton#addBtn {
+    background: #d97757;
+    color: #ffffff;
+    font-weight: 600;
+    padding: 8px 22px;
+}
+QPushButton#addBtn:hover {
+    background: #c96543;
+}
+QPushButton#addBtn:disabled {
+    background: #e8ddd2;
+    color: #a99f8f;
+}
+QLineEdit, QComboBox {
+    background: #ffffff;
+    border: 1px solid #e3dcd0;
+    border-radius: 6px;
+    padding: 5px 8px;
+    selection-background-color: #f0c9b0;
+    selection-color: #3d3929;
+}
+QLineEdit:focus, QComboBox:focus {
+    border: 1px solid #d97757;
+}
+QComboBox::drop-down {
+    border: none;
+    width: 24px;
+}
+QComboBox QAbstractItemView {
+    background: #ffffff;
+    border: 1px solid #e3dcd0;
+    selection-background-color: #f6eee2;
+    selection-color: #3d3929;
+}
+QFrame[frameShape="4"] {  /* the separator lines */
+    color: #e3dcd0;
+}
+QRadioButton, QLabel {
+    background: transparent;
+}
+QScrollBar:vertical, QScrollBar:horizontal {
+    background: #f2ece1;
+    border: none;
+    width: 12px;
+    height: 12px;
+}
+QScrollBar::handle {
+    background: #d8cdbb;
+    border-radius: 5px;
+    min-height: 24px;
+    min-width: 24px;
+}
+QScrollBar::handle:hover {
+    background: #c4b7a2;
+}
+QScrollBar::add-line, QScrollBar::sub-line {
+    height: 0;
+    width: 0;
+}
+QToolTip {
+    background: #fffdf8;
+    color: #3d3929;
+    border: 1px solid #d8cdbb;
+    padding: 4px 6px;
+}
+"""
+
+
 def get_config() -> dict:
     cfg = dict(DEFAULT_CONFIG)
     try:
@@ -76,6 +172,7 @@ class SnipOcclusionDialog(QDialog):
             | Qt.WindowType.WindowMinimizeButtonHint
             | Qt.WindowType.WindowMaximizeButtonHint
         )
+        self.setStyleSheet(_STYLE)
         self._build_ui()
         fs_shortcut = QShortcut(QKeySequence("F11"), self)
         qconnect(fs_shortcut.activated, self._toggle_fullscreen)
@@ -190,7 +287,7 @@ class SnipOcclusionDialog(QDialog):
         # --- canvas / placeholder stack
         self.stack = QStackedWidget(self)
         placeholder = QLabel(
-            "<div style='color:#bbb;font-size:16px'>"
+            "<div style='color:#6b6252;font-size:16px'>"
             "<p><b>Snip a slide to get started.</b></p>"
             "<p>Take a screenshot snip (e.g. <b>Win+Shift+S</b>) of your BPP "
             "slide —<br>it will appear here automatically from the clipboard."
@@ -198,7 +295,9 @@ class SnipOcclusionDialog(QDialog):
             self,
         )
         placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        placeholder.setStyleSheet("background:#3b3b3b;")
+        placeholder.setStyleSheet(
+            "background:#ece5d8;border:1px solid #e3dcd0;border-radius:8px;"
+        )
         self.canvas = OcclusionCanvas(self.config, self)
         self.stack.addWidget(placeholder)
         self.stack.addWidget(self.canvas)
@@ -260,6 +359,7 @@ class SnipOcclusionDialog(QDialog):
         bottom.addSpacing(12)
 
         self.add_btn = QPushButton("Add Cards", self)
+        self.add_btn.setObjectName("addBtn")
         self.add_btn.setDefault(False)
         self.add_btn.setAutoDefault(False)
         qconnect(self.add_btn.clicked, self.add_cards)
@@ -312,7 +412,7 @@ class SnipOcclusionDialog(QDialog):
         else:
             # don't interrupt work in progress; light the button up instead
             self.clip_btn.setStyleSheet(
-                "background:#1a73e8;color:white;font-weight:bold;"
+                "background:#d97757;color:#ffffff;font-weight:bold;"
             )
 
     def _load_clipboard_clicked(self) -> None:
@@ -424,6 +524,22 @@ class SnipOcclusionDialog(QDialog):
                 title=ADDON_NAME,
             )
             return
+
+        outside = self.canvas.patches_outside_image()
+        if outside:
+            resp = QMessageBox.question(
+                self,
+                ADDON_NAME,
+                "%d snip patch%s still sitting outside the slide and will "
+                "be cut off in the saved image.\n\nAdd the cards anyway?"
+                % (
+                    len(outside),
+                    " is" if len(outside) == 1 else "es are",
+                ),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if resp != QMessageBox.StandardButton.Yes:
+                return
 
         baked = self.canvas.bake_image()
         buf = QBuffer()

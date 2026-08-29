@@ -63,7 +63,8 @@ class _OverlayItem(QGraphicsItem):
         c = self.canvas
         if c.image is None:
             return QRectF()
-        return QRectF(0, 0, c.image.width(), c.image.height())
+        # covers the whole scene: patches may be parked outside the image
+        return c._scene.sceneRect()
 
     def paint(self, painter: QPainter, option, widget=None) -> None:
         c = self.canvas
@@ -99,7 +100,14 @@ class _OverlayItem(QGraphicsItem):
 
             fill = QColor(c.mask_fill)  # fully opaque: masks must hide text
             painter.setBrush(QBrush(fill))
-            pen = QPen(QColor(0, 0, 0, 110), 1)
+            if s.group:
+                # group membership is shown by a bold shared outline colour
+                idx = badge_order.get(s.group, 1)
+                pen = QPen(
+                    QColor(GROUP_PALETTE[(idx - 1) % len(GROUP_PALETTE)]), 3
+                )
+            else:
+                pen = QPen(QColor(0, 0, 0, 110), 1)
             pen.setCosmetic(True)
             painter.setPen(pen)
             if s.kind == KIND_ELLIPSE:
@@ -107,22 +115,20 @@ class _OverlayItem(QGraphicsItem):
             else:
                 painter.drawRect(rect)
 
-            if s.group:
-                idx = badge_order.get(s.group, 1)
-                self._paint_badge(painter, rect, idx, scale)
-
-        # selection outlines
-        sel_pen = QPen(QColor("#1a73e8"), 2)
-        sel_pen.setCosmetic(True)
+        # selection outlines: white halo + bold blue, so selection stands
+        # out clearly against both the masks and any group colour
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.setPen(sel_pen)
         for s in c.shapes:
             if s.id in c.selection:
                 rect = QRectF(s.x, s.y, s.w, s.h)
-                if s.kind == KIND_ELLIPSE:
-                    painter.drawEllipse(rect)
-                else:
-                    painter.drawRect(rect)
+                for color, width in (("#ffffff", 6), ("#1a73e8", 3)):
+                    pen = QPen(QColor(color), width)
+                    pen.setCosmetic(True)
+                    painter.setPen(pen)
+                    if s.kind == KIND_ELLIPSE:
+                        painter.drawEllipse(rect)
+                    else:
+                        painter.drawRect(rect)
 
         # resize handles: only while hovering the single selected shape
         # (or mid-resize), so they don't clutter the view
@@ -148,32 +154,6 @@ class _OverlayItem(QGraphicsItem):
             painter.setPen(pen)
             painter.setBrush(QBrush(QColor(26, 115, 232, 30)))
             painter.drawRect(r)
-
-    def _paint_badge(
-        self, painter: QPainter, rect: QRectF, idx: int, scale: float
-    ) -> None:
-        color = QColor(GROUP_PALETTE[(idx - 1) % len(GROUP_PALETTE)])
-        r = 9.0 / scale
-        cx = rect.x() + r + 2.0 / scale
-        cy = rect.y() + r + 2.0 / scale
-        painter.save()
-        painter.setBrush(QBrush(color))
-        pen = QPen(QColor(255, 255, 255, 220), 1)
-        pen.setCosmetic(True)
-        painter.setPen(pen)
-        painter.drawEllipse(QPointF(cx, cy), r, r)
-        painter.setPen(QPen(QColor("#ffffff")))
-        f = painter.font()
-        f.setPixelSize(max(2, int(11.0 / scale)))
-        f.setBold(True)
-        painter.setFont(f)
-        painter.drawText(
-            QRectF(cx - r, cy - r, 2 * r, 2 * r),
-            Qt.AlignmentFlag.AlignCenter,
-            str(idx),
-        )
-        painter.restore()
-
 
 class OcclusionCanvas(QGraphicsView):
     shapes_changed = pyqtSignal()
@@ -212,7 +192,7 @@ class OcclusionCanvas(QGraphicsView):
         self.setTransformationAnchor(
             QGraphicsView.ViewportAnchor.AnchorUnderMouse
         )
-        self.setBackgroundBrush(QBrush(QColor("#3b3b3b")))
+        self.setBackgroundBrush(QBrush(QColor("#ece5d8")))
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
 
@@ -237,10 +217,22 @@ class OcclusionCanvas(QGraphicsView):
             Qt.TransformationMode.SmoothTransformation
         )
         self._user_zoomed = False
+        # a subtle frame so the slide edge is visible against the canvas
+        frame_pen = QPen(QColor("#c9c0b0"), 1)
+        frame_pen.setCosmetic(True)
+        self._scene.addRect(
+            QRectF(0, 0, self.image.width(), self.image.height()), frame_pen
+        ).setZValue(1)
         self._overlay = _OverlayItem(self)
         self._scene.addItem(self._overlay)
+        # scene extends well past the image so snip patches can be parked
+        # anywhere on the surrounding canvas while rearranging the slide
+        mx = max(240.0, self.image.width() * 0.5)
+        my = max(240.0, self.image.height() * 0.5)
         self._scene.setSceneRect(
-            QRectF(0, 0, self.image.width(), self.image.height())
+            QRectF(
+                -mx, -my, self.image.width() + 2 * mx, self.image.height() + 2 * my
+            )
         )
         self.fit()
         self.shapes_changed.emit()
@@ -362,19 +354,31 @@ class OcclusionCanvas(QGraphicsView):
         if changed:
             self._emit_changed()
 
+    def move_bounds(self, s: sh.Shape):
+        """Where a shape may be moved: patches roam the whole canvas so they
+        can be parked out of the way; masks/erases must stay on the image."""
+        if s.kind == KIND_PATCH:
+            r = self._scene.sceneRect()
+            return r.left(), r.top(), r.right(), r.bottom()
+        return 0.0, 0.0, float(self.image.width()), float(self.image.height())
+
+    def patches_outside_image(self) -> list:
+        """Patches that are not fully inside the image (would be cut off)."""
+        img = QRectF(0, 0, self.image.width(), self.image.height())
+        return [
+            s
+            for s in sh.patch_shapes(self.shapes)
+            if not img.contains(QRectF(s.x, s.y, s.w, s.h))
+        ]
+
     def nudge_selection(self, dx: float, dy: float) -> None:
         if not self.selection or self.image is None:
             return
         self.push_undo(tag="nudge")
         for s in self.shapes:
             if s.id in self.selection:
-                s.x, s.y, s.w, s.h = sh.clamp_rect(
-                    s.x + dx,
-                    s.y + dy,
-                    s.w,
-                    s.h,
-                    self.image.width(),
-                    self.image.height(),
+                s.x, s.y, s.w, s.h = sh.clamp_rect_in(
+                    s.x + dx, s.y + dy, s.w, s.h, *self.move_bounds(s)
                 )
         self._emit_changed()
 
@@ -423,9 +427,14 @@ class OcclusionCanvas(QGraphicsView):
     def fit(self) -> None:
         if self.image is None:
             return
-        self.fitInView(
-            self._scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio
-        )
+        # fit the image plus any patches parked outside it, so nothing the
+        # user is working with ever disappears off screen
+        rect = QRectF(0, 0, self.image.width(), self.image.height())
+        for s in sh.patch_shapes(self.shapes):
+            rect = rect.united(QRectF(s.x, s.y, s.w, s.h))
+        pad = 12.0
+        rect = rect.adjusted(-pad, -pad, pad, pad)
+        self.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
         self._user_zoomed = False
 
     def zoom(self, factor: float) -> None:
@@ -511,6 +520,21 @@ class OcclusionCanvas(QGraphicsView):
         shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
         ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
 
+        # resize handles win in EVERY tool, so a box can be reshaped right
+        # from the draw tool without switching back to Select first
+        handle = self.handle_at(pos)
+        if handle is not None:
+            s = self.single_selected()
+            self.gesture = {
+                "type": "resize",
+                "shape": s,
+                "handle": handle,
+                "orig": (s.x, s.y, s.w, s.h),
+                "moved": False,
+            }
+            event.accept()
+            return
+
         if self.tool in (TOOL_RECT, TOOL_ERASE, TOOL_PATCH):
             kind = {
                 TOOL_RECT: KIND_RECT,
@@ -522,20 +546,6 @@ class OcclusionCanvas(QGraphicsView):
                 "kind": kind,
                 "origin": pos,
                 "rect": QRectF(pos, pos),
-            }
-            event.accept()
-            return
-
-        # select tool
-        handle = self.handle_at(pos)
-        if handle is not None:
-            s = self.single_selected()
-            self.gesture = {
-                "type": "resize",
-                "shape": s,
-                "handle": handle,
-                "orig": (s.x, s.y, s.w, s.h),
-                "moved": False,
             }
             event.accept()
             return
@@ -624,13 +634,8 @@ class OcclusionCanvas(QGraphicsView):
                 s = self.shape_by_id(sid)
                 if s is None:
                     continue
-                s.x, s.y, s.w, s.h = sh.clamp_rect(
-                    ox + dx,
-                    oy + dy,
-                    s.w,
-                    s.h,
-                    self.image.width(),
-                    self.image.height(),
+                s.x, s.y, s.w, s.h = sh.clamp_rect_in(
+                    ox + dx, oy + dy, s.w, s.h, *self.move_bounds(s)
                 )
             g["moved"] = True
             self.viewport().update()
@@ -860,9 +865,8 @@ class OcclusionCanvas(QGraphicsView):
         self.viewport().update()
 
     def _update_hover_cursor(self, pos: QPointF) -> None:
-        if self.tool != TOOL_SELECT:
-            self._set_handles_visible(False)
-            return
+        # handles are live in every tool, so hovering the selected shape's
+        # edge always offers a resize
         handle = self.handle_at(pos)
         if handle is not None:
             self._set_handles_visible(True)
@@ -873,7 +877,9 @@ class OcclusionCanvas(QGraphicsView):
         self._set_handles_visible(
             s is not None and single is not None and s.id == single.id
         )
-        if s is not None and s.id in self.selection:
+        if self.tool != TOOL_SELECT:
+            self.viewport().setCursor(Qt.CursorShape.CrossCursor)
+        elif s is not None and s.id in self.selection:
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
         else:
             self.viewport().setCursor(Qt.CursorShape.ArrowCursor)

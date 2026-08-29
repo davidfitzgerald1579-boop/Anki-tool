@@ -9,11 +9,12 @@ cards.
 
 ![The editor](docs/editor.png)
 
-*The editor: opaque masks with numbered group badges, a selected box (blue
-outline; resize handles appear on hover), a cover-up box (grey dashed
-outline) that has erased a line of irrelevant text by filling it with the
-slide's background colour, and a snip patch (blue dashed outline, bottom
-right) — a pixel-perfect cutout of that erased sentence, dragged aside.*
+*The editor: opaque masks (groups share a bold outline colour), a selected
+box (blue outline with a white halo; resize handles appear on hover), a
+cover-up box (grey dashed outline) that has erased a line of irrelevant
+text by filling it with the slide's background colour, and a snip patch
+(blue dashed outline) — a pixel-perfect cutout of that erased sentence,
+parked outside the slide while rearranging.*
 
 ## Why this exists
 
@@ -84,8 +85,8 @@ Anki add-ons folder (Tools → Add-ons → View Files) and restart Anki.
      was cut from.
    - **S** — back to select.
 4. Group facts that should be revealed together: shift-click each box
-   (anywhere on the slide, in any order), press **G**. Numbered badges show
-   the groups. **U** ungroups.
+   (anywhere on the slide, in any order), press **G**. Boxes in the same
+   group share a bold outline colour. **U** ungroups.
 5. Pick a deck, tags, header/footer, and a mode:
    - **Hide All, Guess One** — everything masked, target highlighted.
    - **Hide One, Guess One** — only the target masked.
