@@ -65,6 +65,19 @@ def _setup_menu() -> None:
     qconnect(action.triggered, _open)
     mw.form.menuTools.addAction(action)
 
+    text_action = QAction(ADDON_NAME + " — Write a Text Card…", mw)
+    text_shortcut = cfg.get("shortcut_text_card") or ""
+    if text_shortcut:
+        text_action.setShortcut(QKeySequence(text_shortcut))
+    qconnect(text_action.triggered, _open_text_card)
+    mw.form.menuTools.addAction(text_action)
+
+
+def _open_text_card() -> None:
+    from .textcard import open_text_card_dialog
+
+    open_text_card_dialog()
+
 
 def _delete_current_card() -> None:
     """One-press deletion of the card being reviewed (undoable, Ctrl+Z)."""

@@ -264,6 +264,30 @@ def test_find_notes_sharing_image_across_tools(col):
     assert len(col.find_notes("snip-xyz")) == len(ours)
 
 
+def test_basic_text_note_type_and_card(col):
+    deck_id = col.decks.id("Own Words")
+    note = notes_mod.add_text_note(
+        col,
+        deck_id,
+        "<b>What</b> is <i>legislation</i>?",
+        "Law made with the approval of Parliament.",
+        "See the What is legislation slide.",
+    )
+    assert note.cards()[0].did == deck_id
+    q = note.cards()[0].question()
+    a = note.cards()[0].answer()
+    assert "legislation" in q and "<b>What</b>" in q
+    assert "approval of Parliament" in a
+    assert 'class="sn-notes"' in a  # notes rendered on the back
+
+    # reused, not duplicated, on the next card
+    nt = notes_mod.ensure_basic_note_type(col)
+    note2 = notes_mod.add_text_note(col, deck_id, "Front only", "", "")
+    assert note2.note_type()["id"] == nt["id"]
+    a2 = note2.cards()[0].answer()
+    assert 'class="sn-notes"' not in a2  # empty notes stay hidden
+
+
 def test_incompatible_existing_model_gets_suffixed_name(col):
     mm = col.models
     bogus = mm.new(MODEL_NAME)

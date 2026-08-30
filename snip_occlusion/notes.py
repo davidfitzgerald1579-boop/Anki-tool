@@ -11,7 +11,14 @@ import re
 import uuid
 
 from . import template
-from .consts import CARD_NAME, FIELDS, MARKER_FIELDS, MODEL_NAME
+from .consts import (
+    BASIC_FIELDS,
+    BASIC_MODEL_NAME,
+    CARD_NAME,
+    FIELDS,
+    MARKER_FIELDS,
+    MODEL_NAME,
+)
 from .shapes import normalized_payload, shapes_from_payload, target_groups
 
 
@@ -103,6 +110,50 @@ def add_occlusion_notes(
             note.tags = list(tag_list)
         col.add_note(note, deck_id)
     return len(targets)
+
+
+# ------------------------------------------------------ simple text cards
+
+
+def ensure_basic_note_type(col):
+    """Find or create the simple Front/Back/Notes note type."""
+    mm = col.models
+    name = BASIC_MODEL_NAME
+    for attempt in range(10):
+        nt = _by_name(mm, name)
+        if nt is None:
+            break
+        existing = {f["name"] for f in nt["flds"]}
+        if all(f in existing for f in BASIC_FIELDS):
+            return nt
+        if {"Front", "Back"} <= existing:
+            for fname in BASIC_FIELDS:
+                if fname not in existing:
+                    mm.add_field(nt, mm.new_field(fname))
+            _save(mm, nt)
+            return _by_name(mm, name)
+        name = "%s %d" % (BASIC_MODEL_NAME, attempt + 2)
+
+    nt = mm.new(name)
+    for fname in BASIC_FIELDS:
+        mm.add_field(nt, mm.new_field(fname))
+    tmpl = mm.new_template("Card 1")
+    tmpl["qfmt"] = template.BASIC_FRONT
+    tmpl["afmt"] = template.BASIC_BACK
+    mm.add_template(nt, tmpl)
+    nt["css"] = template.BASIC_CSS
+    mm.add(nt)
+    return _by_name(mm, name)
+
+
+def add_text_note(col, deck_id: int, front: str, back: str, notes: str):
+    nt = ensure_basic_note_type(col)
+    note = col.new_note(nt)
+    note["Front"] = front
+    note["Back"] = back
+    note["Notes"] = notes
+    col.add_note(note, deck_id)
+    return note
 
 
 # ------------------------------------------------- bulk delete by image

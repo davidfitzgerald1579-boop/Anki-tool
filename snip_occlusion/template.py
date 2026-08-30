@@ -157,3 +157,31 @@ _CSS = """.card {
 
 def build_css(mask_fill: str, target_fill: str) -> str:
     return _CSS % {"mask_fill": mask_fill, "target_fill": target_fill}
+
+
+# ------------------------------------------------ simple text card ("Basic")
+
+BASIC_FRONT = "{{Front}}"
+
+BASIC_BACK = """{{FrontSide}}
+<hr id=answer>
+{{Back}}
+{{#Notes}}<div class="sn-notes">{{Notes}}</div>{{/Notes}}
+"""
+
+BASIC_CSS = """.card {
+  font-family: arial, sans-serif;
+  font-size: 20px;
+  text-align: center;
+  color: black;
+  background-color: white;
+}
+.sn-notes {
+  margin-top: 18px;
+  padding-top: 10px;
+  border-top: 1px dashed #bbb;
+  font-size: 0.8em;
+  color: #666;
+}
+.night_mode .sn-notes { color: #aaa; border-top-color: #555; }
+"""

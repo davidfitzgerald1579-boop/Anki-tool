@@ -4,6 +4,8 @@ ADDON_NAME = "Snip Occlusion"
 
 # Note type
 MODEL_NAME = "Snip Occlusion"
+BASIC_MODEL_NAME = "Snip Occlusion Basic"
+BASIC_FIELDS = ["Front", "Back", "Notes"]
 FIELDS = [
     "Occlusion ID",
     "Image",
@@ -63,6 +65,7 @@ DEFAULT_CONFIG = {
     "erase_color_mode": "majority",  # "majority" or "local"
     "highlight_fill": "#ffe94d",
     "shortcut_open": "Ctrl+Shift+O",
+    "shortcut_text_card": "Ctrl+Shift+T",
     "close_after_add": False,
     "default_mode": MODE_HIDE_ALL,
     "nudge_step": 1,

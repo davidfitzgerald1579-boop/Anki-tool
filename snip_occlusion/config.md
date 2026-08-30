@@ -16,6 +16,8 @@
   always override a single box by right-clicking it. Default: `"majority"`.
 - `shortcut_open`: global shortcut for opening the dialog from the main
   window. Default: `"Ctrl+Shift+O"`.
+- `shortcut_text_card`: shortcut for the simple front/back text card
+  dialog. Default: `"Ctrl+Shift+T"`.
 - `close_after_add`: close the dialog after adding cards instead of
   clearing it for the next snip. Default: `false`.
 - `default_mode`: `"hag1"` (Hide All, Guess One) or `"hog1"`

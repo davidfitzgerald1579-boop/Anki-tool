@@ -30,13 +30,14 @@ from .shapes import target_groups
 _HELP_TEXT = """<b>Tools</b><br>
 <b>S</b> Select &nbsp; <b>R</b> Box &nbsp; <b>H</b> Highlighter &nbsp; \
 <b>C</b> Cover-up (erase text) &nbsp; <b>P</b> Snip patch<br><br>
-<b>Word occlusion</b><br>
-<b>Double-click any word</b> to occlude exactly that word (hyphenated \
-words count as one). Drag its side handles to swallow or release \
-neighbouring words - whole words only, never half a word. Top/bottom \
-handles resize freely; the middle of the box always drags to move. \
-If a click grabs the wrong amount, press <b>Ctrl+D</b> to copy a \
-debug picture of what was detected (to report it).<br><br>
+<b>Word occlusion / highlighting</b><br>
+<b>Double-click any word</b> to occlude exactly that word - or, in the \
+Highlighter tool, to highlight it instead (hyphenated words count as \
+one). Drag its side handles to swallow or release neighbouring words - \
+whole words only, never half a word. Top/bottom handles resize freely; \
+the middle of the box always drags to move. If a click grabs the wrong \
+amount, press <b>Ctrl+D</b> to copy a debug picture of what was \
+detected (to report it).<br><br>
 <b>Moving</b> works in every tool: click and hold any box of the \
 current tool's kind and drag it. Handles live on the border; the \
 middle always moves.<br><br>
@@ -200,6 +201,31 @@ def get_config() -> dict:
     except Exception:
         pass
     return cfg
+
+
+# the most recent OCR text of a snip, for "copy text from previous slide"
+_LAST_OCR_TEXT = ""
+
+
+def _remember_ocr(text: str) -> None:
+    global _LAST_OCR_TEXT
+    if text:
+        _LAST_OCR_TEXT = text
+
+
+def get_previous_snip_text() -> str:
+    """OCR text of the current/most recent snip: reads the live occlusion
+    editor's image if one is open, else the last OCR result remembered."""
+    dlg = getattr(mw, "_snip_occlusion_dialog", None)
+    if dlg is not None and dlg.isVisible() and dlg.canvas.has_image():
+        try:
+            text = ocr.extract_text(dlg.canvas.bake_image(), dlg.config)
+        except Exception:
+            text = ""
+        if text:
+            _remember_ocr(text)
+            return text
+    return _LAST_OCR_TEXT
 
 
 class SnipOcclusionDialog(QDialog):
@@ -366,6 +392,14 @@ class SnipOcclusionDialog(QDialog):
         # the queue soaks up all spare sidebar height (scroll area size
         # hints don't propagate reliably, so an explicit stretch it is)
         side.addWidget(self.queue_panel, 1)
+
+        text_btn = self._side_button(
+            "📝 Text card",
+            "Write a simple front/back card in your own words "
+            "(Ctrl+Shift+T from the main window)",
+        )
+        qconnect(text_btn.clicked, self._open_text_card)
+        side.addWidget(text_btn)
 
         help_btn = self._side_button("?  Shortcuts", "Shortcuts and tips")
         qconnect(help_btn.clicked, self._show_help)
@@ -599,6 +633,7 @@ class SnipOcclusionDialog(QDialog):
             pass
         finally:
             QApplication.restoreOverrideCursor()
+        _remember_ocr(search_text)
 
         # overwrite the media file in place so every sibling keeps its name
         buf = QBuffer()
@@ -815,6 +850,7 @@ class SnipOcclusionDialog(QDialog):
             showWarning("OCR failed: %s" % exc, parent=self, title=ADDON_NAME)
             return
         QApplication.restoreOverrideCursor()
+        _remember_ocr(text)
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Search text preview (%s OCR)" % backend)
@@ -871,6 +907,11 @@ class SnipOcclusionDialog(QDialog):
         self.add_btn.setEnabled(n > 0)
         self._update_swatch()
 
+    def _open_text_card(self) -> None:
+        from .textcard import open_text_card_dialog
+
+        open_text_card_dialog()
+
     def _show_help(self) -> None:
         QMessageBox.information(self, ADDON_NAME + " – shortcuts", _HELP_TEXT)
 
@@ -921,6 +962,7 @@ class SnipOcclusionDialog(QDialog):
                     parent=self, period=5000)
         finally:
             QApplication.restoreOverrideCursor()
+        _remember_ocr(search_text)
 
         buf = QBuffer()
         buf.open(QIODevice.OpenModeFlag.WriteOnly)

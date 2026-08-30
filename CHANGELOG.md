@@ -4,6 +4,19 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.8.0 — 2026-08-30
+
+- **Double-click highlights in the Highlighter tool.** With the
+  Highlighter (H) active, double-clicking a word paints a snug highlight
+  over exactly that word instead of occluding it. Side handles still
+  extend it word-by-word; never becomes a card.
+- **Simple text cards (Ctrl+Shift+T).** A deliberately minimal dialog
+  for writing a card in your own words: Deck, Front, Back, Notes (shown
+  small under the answer), with bold/italic/underline and font size —
+  nothing else. A "Copy text from previous snip" button drops the OCR
+  text of your most recent snip onto the front to rephrase. Also
+  reachable from the 📝 button in the occlusion editor's toolbar.
+
 ## v0.7.2 — 2026-08-30
 
 - **Word detection now understands multiple backgrounds on one slide**

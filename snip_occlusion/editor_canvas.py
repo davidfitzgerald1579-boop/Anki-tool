@@ -972,19 +972,27 @@ class OcclusionCanvas(QGraphicsView):
         elif s is not None and s.kind == KIND_HIGHLIGHT:
             self._highlight_color_menu(s, event.globalPosition().toPoint())
         elif s is None:
-            # double-click a word on the slide: occlude exactly that word
-            self.create_word_box(pos.x(), pos.y())
+            # double-click a word: in the Highlighter tool it highlights
+            # the word; in every other tool it occludes it with a mask
+            kind = (
+                KIND_HIGHLIGHT
+                if self.tool == TOOL_HIGHLIGHT
+                else KIND_RECT
+            )
+            self.create_word_box(pos.x(), pos.y(), kind=kind)
         event.accept()
 
-    def create_word_box(self, cx: float, cy: float) -> sh.Shape | None:
-        """Mask box snapped to the word under (cx, cy); see wordsnap.py."""
+    def create_word_box(
+        self, cx: float, cy: float, kind: str = KIND_RECT
+    ) -> sh.Shape | None:
+        """Shape snapped to the word under (cx, cy); see wordsnap.py."""
         self._last_word_click = (cx, cy)  # for the Ctrl+D debug snapshot
         found = wordsnap.word_box_at(self.image, cx, cy)
         if found is None:
             return None
         (x, y, w, h), _line = found
         self.push_undo()
-        s = sh.Shape(kind=KIND_RECT, x=x, y=y, w=w, h=h, snap=SNAP_WORD)
+        s = sh.Shape(kind=kind, x=x, y=y, w=w, h=h, snap=SNAP_WORD)
         self.shapes.append(s)
         self.selection = {s.id}
         self._emit_changed()

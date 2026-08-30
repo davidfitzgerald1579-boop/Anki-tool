@@ -419,6 +419,34 @@ def test_double_click_word_creates_snapped_mask(canvas):
     assert target_groups(canvas.shapes) == [s.effective_group()]  # is a card
 
 
+def test_double_click_in_highlighter_tool_highlights_word(canvas):
+    from PyQt6.QtGui import QMouseEvent
+
+    canvas.set_tool(TOOL_HIGHLIGHT)
+    vp = QPointF(canvas.mapFromScene(QPointF(70, 122)))
+    ev2 = QMouseEvent(
+        QEvent.Type.MouseButtonDblClick, vp, vp, LEFT, LEFT, NOMOD
+    )
+    canvas.mouseDoubleClickEvent(ev2)
+    assert len(canvas.shapes) == 1
+    s = canvas.shapes[0]
+    assert s.kind == "highlight"  # highlighted, not blocked out
+    assert s.snap == SNAP_WORD  # side handles still snap by word
+    assert target_groups(canvas.shapes) == []  # never a card
+    # baked pixels: the band's background is tinted yellow (multiply), so
+    # its brightest pixel is yellowish, no longer near-white
+    baked = canvas.bake_image()
+    brightest = None
+    for yy in range(int(s.y), int(s.y + s.h)):
+        for xx in range(int(s.x), int(s.x + s.w)):
+            c = baked.pixelColor(xx, yy)
+            if brightest is None or c.red() + c.green() > (
+                brightest.red() + brightest.green()
+            ):
+                brightest = c
+    assert brightest.red() > 200 and brightest.blue() < 180  # yellow tint
+
+
 def test_word_box_resize_snaps_to_whole_words(canvas):
     s = canvas.create_word_box(70, 122)
     assert s is not None

@@ -103,7 +103,7 @@ Anki add-ons folder (Tools → Add-ons → View Files) and restart Anki.
 | Keys | Action |
 | --- | --- |
 | S / R / H / C / P | Select / Rectangle / Highlighter / Cover-up / Snip patch |
-| Double-click a word | Occlude exactly that word (side handles snap by word) |
+| Double-click a word | Occlude that word — or highlight it, in the Highlighter tool |
 | Ctrl+C / Ctrl+V | Copy selected shapes / paste beside them |
 | T | See-through mode: outlines only, text visible underneath |
 | Right-click a box | Peek underneath just that box (and group/colour options) |
@@ -126,6 +126,11 @@ Edit during review) and click the **✂** button — the slide reopens with
 all its boxes and groups for reworking; Save Changes updates every card
 sharing that slide, adds cards for new boxes, and asks before deleting
 cards whose boxes were removed.
+
+**Text cards in your own words:** press **Ctrl+Shift+T** (or the 📝
+button in the editor) for a minimal Front/Back/Notes card with
+bold/italic/underline and font size; "Copy text from previous snip"
+drops your last snip's OCR text onto the front to rephrase.
 
 **During review:** press **Delete** (or right-click → "Delete this
 card") to remove a bad card instantly; **Shift+Delete** removes ALL
