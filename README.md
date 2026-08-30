@@ -128,10 +128,16 @@ sharing that slide, adds cards for new boxes, and asks before deleting
 cards whose boxes were removed.
 
 **AI-suggested cards:** in the text card dialog, "✨ Suggest cards"
-drafts Q/A pairs from your last snip's OCR text via the Claude API
-(bring your own API key — `anthropic_api_key` in the config). Each
-"Use →" opens the draft in its own window; the list stays behind so you
-can pick several.
+drafts Q/A pairs from your last snip's OCR text using a **free,
+open-source AI model running on your own computer** — no API key, no
+cost, and the slide text never leaves your machine. Each "Use →" opens
+the draft in its own window; the list stays behind so you can pick
+several. One-time setup: install [Ollama](https://ollama.com/download)
+(no account needed), then run `ollama pull llama3.1:8b` in a terminal
+(~4.7 GB). Prefer a different runner? Any OpenAI-compatible server
+(LM Studio, llama.cpp, Jan, vLLM) works too — see
+[`snip_occlusion/config.md`](snip_occlusion/config.md) for the
+`qgen_*` settings.
 
 **Text cards in your own words:** press **Ctrl+Shift+T** (or the 📝
 button in the editor) for a minimal Front/Back/Notes card with

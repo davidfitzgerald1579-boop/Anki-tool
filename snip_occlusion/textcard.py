@@ -106,9 +106,10 @@ class TextCardDialog(QDialog):
         bar.addWidget(snip_btn)
         self.suggest_btn = QPushButton("✨ Suggest cards", self)
         self.suggest_btn.setToolTip(
-            "Ask Claude to draft question/answer cards from your most "
-            "recent snip's text — then pick your favourites.\n"
-            "Needs your Anthropic API key in the add-on config."
+            "Ask a local AI model to draft question/answer cards from "
+            "your most recent snip's text — then pick your favourites.\n"
+            "Free and private: runs on your own computer via Ollama "
+            "(install from ollama.com, then: ollama pull llama3.1:8b)."
         )
         qconnect(self.suggest_btn.clicked, self._suggest_cards)
         bar.addWidget(self.suggest_btn)
@@ -246,17 +247,6 @@ class TextCardDialog(QDialog):
 
     def _suggest_cards(self) -> None:
         config = get_config()
-        if not qgen.has_api_key(config):
-            QMessageBox.information(
-                self,
-                ADDON_NAME,
-                "Suggesting cards uses the Claude API with your own API "
-                "key (your snip's text is sent to Anthropic for this).\n\n"
-                "1. Create a key at console.anthropic.com\n"
-                "2. Tools → Add-ons → Snip Occlusion → Config\n"
-                '3. Paste it as "anthropic_api_key"',
-            )
-            return
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             text = get_previous_snip_text()
