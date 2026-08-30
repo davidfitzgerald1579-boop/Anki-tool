@@ -36,6 +36,24 @@ BAND_HALF = 90  # rows examined above/below the click
 MAX_LINE_H = 140  # sanity cap on a text line's height
 MIN_RUN_W = 2  # ignore single-column specks
 
+# The background is judged LOCALLY: a slide can hold several background
+# regions (white page, a pink table-header bar with white text, grey
+# cells with dark text). We sample the colour around the click, grow the
+# region as far as that background extends, detect whether the text is
+# darker or lighter than it, and analyze only inside that region.
+SEED_HALF_W = 60  # seed window for the local background colour
+SEED_HALF_H = 14
+REGION_COLOR_TOL = 90  # manhattan RGB: still the same background family
+# A row/column belongs to the region if at least this fraction of its
+# pixels shows the background colour. Deliberately low: dense bold text
+# can cover half a row, but a FOREIGN background (white page next to a
+# pink bar) shows ~0% of the local colour, so 0.25 still separates them.
+REGION_MATCH_FRACTION = 0.25
+REGION_PROBE_HALF_W = 110  # columns sampled when testing a row
+REGION_MISMATCH_RUN = 3  # stop growing after this many misses in a row
+POLARITY_MARGIN = 40  # luma: clearly darker / clearly lighter than bg
+MIN_REGION_W = 24  # tiny regions fall back to whole-band analysis
+
 # Line boundaries are found by ink DENSITY, not empty rows: in tightly-set
 # justified text (BPP slides) the descenders of one line share pixel rows
 # with the next line's ascenders, so a fully empty row may never exist.
@@ -103,9 +121,114 @@ def _binarize(diffs: list, margin: int):
 
 
 def _ink_rows(img: QImage, y0: int, y1: int, margin: int = LUMA_MARGIN):
-    """Boolean ink map for rows y0..y1 (exclusive), full image width."""
+    """Boolean ink map for rows y0..y1 (exclusive), full image width.
+
+    Legacy single-background helper (dark text assumed); analyze_line uses
+    the region-aware pipeline below instead.
+    """
     diffs, _w = _diff_rows(img, y0, y1)
     return _binarize(diffs, margin)
+
+
+def _analyze_region(crop: QImage, cx: int, cy: int):
+    """Local background, its extent, and text polarity around the click.
+
+    Returns (bg_color, (rx0, ry0, rx1, ry1) inclusive, light_text).
+    """
+    w, h = crop.width(), crop.height()
+    seed = crop.copy(
+        max(0, cx - SEED_HALF_W),
+        max(0, cy - SEED_HALF_H),
+        min(2 * SEED_HALF_W, w),
+        min(2 * SEED_HALF_H, h),
+    )
+    bg = majority_color(seed)
+    br, bgc, bb = bg.red(), bg.green(), bg.blue()
+
+    def close(c) -> bool:
+        return (
+            abs(c.red() - br) + abs(c.green() - bgc) + abs(c.blue() - bb)
+            <= REGION_COLOR_TOL
+        )
+
+    def row_matches(r: int) -> bool:
+        x_lo = max(0, cx - REGION_PROBE_HALF_W)
+        x_hi = min(w, cx + REGION_PROBE_HALF_W)
+        total = match = 0
+        for c in range(x_lo, x_hi, 2):
+            total += 1
+            if close(crop.pixelColor(c, r)):
+                match += 1
+        return total > 0 and match / total >= REGION_MATCH_FRACTION
+
+    def grow(start: int, limit: int, step: int, matches) -> int:
+        pos = start
+        misses = 0
+        probe = start + step
+        while 0 <= probe < limit:
+            if matches(probe):
+                pos = probe
+                misses = 0
+            else:
+                misses += 1
+                if misses >= REGION_MISMATCH_RUN:
+                    break
+            probe += step
+        return pos
+
+    ry0 = grow(cy, h, -1, row_matches)
+    ry1 = grow(cy, h, +1, row_matches)
+
+    def col_matches(c: int) -> bool:
+        total = match = 0
+        for r in range(ry0, ry1 + 1, 2):
+            total += 1
+            if close(crop.pixelColor(c, r)):
+                match += 1
+        return total > 0 and match / total >= REGION_MATCH_FRACTION
+
+    rx0 = grow(cx, w, -1, col_matches)
+    rx1 = grow(cx, w, +1, col_matches)
+
+    # polarity: is the region's text darker or lighter than its background?
+    bg_luma = _luma_1000(br, bgc, bb)
+    margin = POLARITY_MARGIN * 1000
+    darker = lighter = 0
+    for r in range(ry0, ry1 + 1, 2):
+        for c in range(rx0, rx1 + 1, 2):
+            px = crop.pixelColor(c, r)
+            luma = _luma_1000(px.red(), px.green(), px.blue())
+            if bg_luma - luma > margin:
+                darker += 1
+            elif luma - bg_luma > margin:
+                lighter += 1
+    light_text = lighter > darker
+    return bg, (rx0, ry0, rx1, ry1), light_text
+
+
+def _diff_rows_region(crop: QImage, bg, region, light_text: bool):
+    """Darkness/lightness map relative to the LOCAL background, zero
+    outside the region (other backgrounds are no-data, never ink)."""
+    rx0, ry0, rx1, ry1 = region
+    bg_luma = _luma_1000(bg.red(), bg.green(), bg.blue())
+    ptr = crop.constBits()
+    ptr.setsize(crop.sizeInBytes())
+    data = bytes(ptr)
+    bpl = crop.bytesPerLine()
+    w, h = crop.width(), crop.height()
+    diffs = []
+    for r in range(h):
+        row = [0] * w
+        if ry0 <= r <= ry1:
+            base = r * bpl
+            for c in range(rx0, rx1 + 1):
+                o = base + c * 4
+                luma = _luma_1000(data[o + 2], data[o + 1], data[o])
+                row[c] = (
+                    luma - bg_luma if light_text else bg_luma - luma
+                )
+        diffs.append(row)
+    return diffs
 
 
 def _line_extent(rows: list, rel: int):
@@ -231,8 +354,19 @@ def analyze_line(img: QImage, cx: float, cy: float):
         return None
     y0 = max(0, cyi - BAND_HALF)
     y1 = min(h, cyi + BAND_HALF)
-    diffs, w = _diff_rows(img, y0, y1)
     rel = cyi - y0
+
+    crop = img.copy(0, y0, w, y1 - y0).convertToFormat(
+        QImage.Format.Format_RGB32
+    )
+    bg, region, light_text = _analyze_region(crop, cxi, rel)
+    if region[2] - region[0] < MIN_REGION_W:
+        # degenerate region (clicked on a border/gradient): fall back to
+        # the whole band with the classic dark-on-light model
+        bg = majority_color(crop)
+        region = (0, 0, crop.width() - 1, crop.height() - 1)
+        light_text = False
+    diffs = _diff_rows_region(crop, bg, region, light_text)
 
     # strict pass: find the line with definite ink only
     rows = _binarize(diffs, LUMA_MARGIN)

@@ -282,6 +282,75 @@ def test_adaptive_threshold_stays_strict_for_dark_text(qapp):
     assert all(r[1] < 480 for r in line.runs)
 
 
+def _table_slide():
+    """White page, a pink header bar with WHITE bold text, and a grey cell
+    with dark text below - the BPP table layout."""
+    font = QFont("Arial", 15)
+    font.setBold(True)
+    fm = QFontMetrics(font)
+    img = QImage(700, 220, QImage.Format.Format_RGB32)
+    img.fill(QColor("#ffffff"))
+    p = QPainter(img)
+    p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+    p.fillRect(QRectF(20, 40, 410, 36), QColor("#e91e63"))  # pink bar
+    p.setFont(font)
+    p.setPen(QColor("#ffffff"))
+    p.drawText(QPointF(32, 66), "Primary legislation")
+    p.fillRect(QRectF(20, 76, 410, 120), QColor("#d3d3d3"))  # grey cell
+    body = QFont("Arial", 13)
+    p.setFont(body)
+    p.setPen(QColor("#333333"))
+    p.drawText(QPointF(32, 104), "Acts of Parliament which are put")
+    p.drawText(QPointF(32, 130), "before Parliament as Bills")
+    p.end()
+    return img, fm
+
+
+def test_white_text_on_pink_header_bar(qapp):
+    """Regression: double-clicking 'Primary' in a pink table header used
+    to select the entire bar - the pink bar read as one slab of 'ink'
+    against the page-wide white background, and the white letters were
+    invisible. Local background + polarity detection must isolate the
+    word."""
+    img, fm = _table_slide()
+    adv_primary = fm.horizontalAdvance("Primary")
+    cx = 32 + adv_primary / 2
+    found = wordsnap.word_box_at(img, cx, 58)
+    assert found is not None
+    (x, y, w, h), line = found
+    assert len(line.runs) == 2  # "Primary" and "legislation"
+    # covers the word, not the bar
+    assert x <= 33 and x + w >= 32 + adv_primary - 2
+    assert w < fm.horizontalAdvance("Primary legislation")
+    # vertically within the bar, sized like text, not the whole box
+    assert 40 <= y and y + h <= 78
+    assert h <= fm.height() + 10
+
+    # the second word works too
+    adv_leg = fm.horizontalAdvance("legislation")
+    lx = 32 + fm.horizontalAdvance("Primary ") + adv_leg / 2
+    found2 = wordsnap.word_box_at(img, lx, 58)
+    assert found2 is not None
+    (x2, y2, w2, h2), _ = found2
+    assert x2 > x + w - 4  # a different box, to the right
+    assert w2 < fm.horizontalAdvance("Primary legislation")
+
+
+def test_dark_text_on_grey_cell(qapp):
+    """Dark text on the grey table cell: the local background is the grey,
+    not the white page."""
+    img, _fm = _table_slide()
+    body_fm = QFontMetrics(QFont("Arial", 13))
+    adv_acts = body_fm.horizontalAdvance("Acts")
+    found = wordsnap.word_box_at(img, 32 + adv_acts / 2, 97)
+    assert found is not None
+    (x, y, w, h), line = found
+    assert len(line.runs) >= 5  # the sentence's words
+    assert x <= 33 and x + w >= 32 + adv_acts - 2
+    assert w < body_fm.horizontalAdvance("Acts of")
+    assert h <= body_fm.height() + 10
+
+
 def test_no_word_in_empty_area(qapp):
     img = make_text_image()
     wordsnap.word_box_at(img, 740, 60)  # far corner: must not raise

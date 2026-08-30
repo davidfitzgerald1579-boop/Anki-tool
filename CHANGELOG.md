@@ -4,6 +4,18 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.7.2 — 2026-08-30
+
+- **Word detection now understands multiple backgrounds on one slide**
+  (table layouts). Double-clicking white text on a pink header bar used
+  to select the whole bar: against the page-wide white background the
+  pink bar itself read as one slab of "ink" and the white letters were
+  invisible. Detection now samples the background AT the click, grows
+  that background's region to its edges, detects whether the text is
+  darker or lighter than it (white-on-pink flips polarity), and analyzes
+  only within the region. Dark text on grey table cells works the same
+  way; ordinary slides behave exactly as before.
+
 ## v0.7.1 — 2026-08-30
 
 - **Delete ALL cards from an image.** While reviewing, press Shift+Delete
