@@ -1,8 +1,9 @@
 """The 'New card queue' panel: lives at the bottom of the left toolbar.
 
-Each queued card shows a live thumbnail and accepts snip patches dropped
-onto it straight from the canvas. Cards can also be created empty, have
-their background colour changed, or be deleted. 'Start next' loads the
+Each queued card is shown PowerPoint-style: a numbered slide thumbnail
+(the card's background colour, thin border, soft shadow) with its snips
+letterboxed inside. Cards accept snip patches dropped straight from the
+canvas, can be created empty, recoloured, or deleted. 'Start' loads the
 first queued card into the editor as a fresh image to occlude.
 """
 
@@ -13,10 +14,12 @@ from .newcard import NewCardQueue, QueuedCard
 
 PATCH_MIME = "application/x-snip-occlusion-patch"
 
+THUMB_ASPECT = 0.625  # 16:10, like a slide
+
 _CARD_STYLE = """
 QFrame#queueCard {
-    background: #ffffff;
-    border: 1px solid #e3dcd0;
+    background: transparent;
+    border: 2px solid transparent;
     border-radius: 8px;
 }
 QFrame#queueCard[dropHover="true"] {
@@ -37,53 +40,112 @@ QToolButton:hover {
 
 
 class QueueCardWidget(QFrame):
-    """One card in the queue: thumbnail + background/delete buttons."""
+    """One card in the queue: slide-style thumbnail + controls."""
 
     def __init__(self, card: QueuedCard, panel: "NewCardQueuePanel"):
         super().__init__(panel)
         self.card = card
         self.panel = panel
+        self.index = 1
+        self._composed: QImage | None = None
         self.setObjectName("queueCard")
         self.setStyleSheet(_CARD_STYLE)
         self.setAcceptDrops(True)
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(6, 6, 6, 4)
-        lay.setSpacing(3)
+        lay.setContentsMargins(4, 4, 4, 2)
+        lay.setSpacing(2)
         self.thumb = QLabel(self)
         self.thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.thumb.setMinimumHeight(48)
         lay.addWidget(self.thumb)
 
         row = QHBoxLayout()
         row.setSpacing(2)
+        self.num_label = QLabel(self)
+        self.num_label.setStyleSheet(
+            "color:#8a8171;font-size:8.5pt;font-weight:600;"
+        )
+        row.addWidget(self.num_label)
         self.count_label = QLabel(self)
         self.count_label.setStyleSheet("color:#8a8171;font-size:8.5pt;")
         row.addWidget(self.count_label)
         row.addStretch(1)
-        bg_btn = QToolButton(self)
-        bg_btn.setText("🎨")
-        bg_btn.setToolTip("Change this card's background colour")
-        qconnect(bg_btn.clicked, self._pick_bg)
-        row.addWidget(bg_btn)
+        self.bg_btn = QToolButton(self)
+        self.bg_btn.setToolTip("Change this card's background colour")
+        qconnect(self.bg_btn.clicked, self._pick_bg)
+        row.addWidget(self.bg_btn)
         del_btn = QToolButton(self)
-        del_btn.setText("✕")
+        del_btn.setText("×")
         del_btn.setToolTip("Delete this queued card")
         qconnect(del_btn.clicked, lambda: self.panel.delete_card(self.card.id))
         row.addWidget(del_btn)
         lay.addLayout(row)
         self.refresh()
 
+    def set_index(self, index: int) -> None:
+        self.index = index
+        self.num_label.setText("Card %d" % index)
+
     def refresh(self) -> None:
-        img = self.card.compose()
-        pix = QPixmap.fromImage(img).scaledToWidth(
-            132, Qt.TransformationMode.SmoothTransformation
-        )
-        self.thumb.setPixmap(pix)
+        """Recompose the card content and redraw the thumbnail."""
+        self._composed = self.card.compose() if self.card.snips else None
+        self._render_thumb()
         n = len(self.card.snips)
         self.count_label.setText(
-            "empty — drop snips here" if n == 0 else "%d snip%s" % (n, "" if n == 1 else "s")
+            "· drop snips here" if n == 0
+            else "· %d snip%s" % (n, "" if n == 1 else "s")
         )
+        swatch = QPixmap(14, 14)
+        swatch.fill(self.card.bg)
+        self.bg_btn.setIcon(QIcon(swatch))
+        self.set_index(self.index)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._render_thumb()
+
+    def _render_thumb(self) -> None:
+        """A PowerPoint-style slide: shadow, border, content letterboxed."""
+        width = max(110, self.width() - 14)
+        height = int(width * THUMB_ASPECT)
+        pm = QPixmap(width, height)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+
+        slide = QRectF(0.5, 0.5, width - 4, height - 4)
+        # soft shadow, then the slide itself
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(0, 0, 0, 26))
+        p.drawRoundedRect(slide.translated(2.5, 2.5), 3, 3)
+        p.setBrush(QBrush(self.card.bg))
+        p.setPen(QPen(QColor("#c9c0b0"), 1))
+        p.drawRoundedRect(slide, 3, 3)
+
+        if self._composed is not None:
+            inner = slide.adjusted(5, 5, -5, -5)
+            img = self._composed
+            scale = min(
+                inner.width() / img.width(), inner.height() / img.height(), 1.0
+            )
+            w, h = img.width() * scale, img.height() * scale
+            target = QRectF(
+                inner.x() + (inner.width() - w) / 2,
+                inner.y() + (inner.height() - h) / 2,
+                w,
+                h,
+            )
+            p.drawImage(target, img, QRectF(0, 0, img.width(), img.height()))
+        else:
+            # empty card: a ghost plus sign, like an empty new slide
+            p.setPen(QPen(QColor(0, 0, 0, 45), 2))
+            cx, cy = slide.center().x(), slide.center().y()
+            arm = min(12.0, slide.height() / 5)
+            p.drawLine(QPointF(cx - arm, cy), QPointF(cx + arm, cy))
+            p.drawLine(QPointF(cx, cy - arm), QPointF(cx, cy + arm))
+        p.end()
+        self.thumb.setPixmap(pm)
 
     def _pick_bg(self) -> None:
         c = QColorDialog.getColor(self.card.bg, self)
@@ -136,7 +198,10 @@ class NewCardQueuePanel(QWidget):
         self.scroll = QScrollArea(self)
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.scroll.setMaximumHeight(300)
+        self.scroll.setMinimumHeight(90)
+        self.scroll.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
+        )
         self.scroll.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
@@ -147,7 +212,7 @@ class NewCardQueuePanel(QWidget):
         self.cards_layout.setSpacing(6)
         self.cards_layout.addStretch(1)
         self.scroll.setWidget(inner)
-        lay.addWidget(self.scroll)
+        lay.addWidget(self.scroll, 1)
 
         row = QHBoxLayout()
         add_btn = QPushButton("+ Card", self)
@@ -218,8 +283,16 @@ class NewCardQueuePanel(QWidget):
         self._widgets[card.id] = w
         # keep the trailing stretch at the end
         self.cards_layout.insertWidget(self.cards_layout.count() - 1, w)
+        self._renumber()
+
+    def _renumber(self) -> None:
+        for i, card in enumerate(self.queue.cards, 1):
+            w = self._widgets.get(card.id)
+            if w is not None:
+                w.set_index(i)
 
     def _refresh_buttons(self) -> None:
         n = len(self.queue)
         self.start_btn.setEnabled(n > 0)
         self.start_btn.setText("Start ▸" if n == 0 else "Start ▸ (%d)" % n)
+        self._renumber()

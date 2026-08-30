@@ -4,6 +4,18 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.5.1 — 2026-08-30
+
+- The left toolbar is now freely resizable: drag the divider between the
+  toolbar and the canvas to any width (the ⟨ toggle still snaps it away
+  entirely).
+- Queued new cards are now shown PowerPoint-style: numbered slide
+  thumbnails ("Card 1", "Card 2"…) with a border and soft shadow, the
+  card's snips letterboxed inside on its background colour, and a ghost
+  plus sign for empty cards. The background-colour button is now a swatch
+  showing the card's actual colour. The queue also grows to use all spare
+  toolbar height.
+
 ## v0.5.0 — 2026-08-30
 
 - **Highlighter tool (H):** draws perfectly straight highlight bands with

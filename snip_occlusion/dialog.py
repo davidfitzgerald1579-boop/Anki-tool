@@ -170,6 +170,14 @@ QToolTip {
     border: 1px solid #d8cdbb;
     padding: 4px 6px;
 }
+QSplitter::handle {
+    background: #f2ece1;
+    border-radius: 3px;
+    margin: 24px 1px;
+}
+QSplitter::handle:hover {
+    background: #e0d5c2;
+}
 """
 
 
@@ -229,9 +237,17 @@ class SnipOcclusionDialog(QDialog):
         outer = QHBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
 
+        # sidebar and canvas live in a splitter: drag the divider to make
+        # the toolbar any width you like
+        self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self.splitter.setHandleWidth(7)
+        self.splitter.setChildrenCollapsible(False)
+        outer.addWidget(self.splitter)
+
         # --- left-hand toolbar
         side_widget = QWidget(self)
-        side_widget.setFixedWidth(170)
+        side_widget.setMinimumWidth(150)
+        side_widget.setMaximumWidth(400)
         side = QVBoxLayout(side_widget)
         side.setContentsMargins(0, 0, 6, 0)
         side.setSpacing(4)
@@ -321,19 +337,28 @@ class SnipOcclusionDialog(QDialog):
         qconnect(
             self.queue_panel.start_next_requested, self._start_next_clicked
         )
-        side.addWidget(self.queue_panel)
+        # the queue soaks up all spare sidebar height (scroll area size
+        # hints don't propagate reliably, so an explicit stretch it is)
+        side.addWidget(self.queue_panel, 1)
 
-        side.addStretch(1)
         help_btn = self._side_button("?  Shortcuts", "Shortcuts and tips")
         qconnect(help_btn.clicked, self._show_help)
         side.addWidget(help_btn)
         self._side_widget = side_widget
-        outer.addWidget(side_widget)
+        self.splitter.addWidget(side_widget)
 
-        # thin collapse handle so the toolbar can slide away in full screen
+        # --- right-hand side: collapse handle + canvas + form
+        right_container = QWidget(self)
+        right_h = QHBoxLayout(right_container)
+        right_h.setContentsMargins(0, 0, 0, 0)
+        right_h.setSpacing(4)
+
+        # thin collapse handle so the toolbar can also snap away entirely
         self.collapse_btn = QToolButton(self)
         self.collapse_btn.setText("⟨")
-        self.collapse_btn.setToolTip("Hide / show the toolbar")
+        self.collapse_btn.setToolTip(
+            "Hide / show the toolbar (drag the divider to resize it)"
+        )
         self.collapse_btn.setFixedWidth(18)
         self.collapse_btn.setSizePolicy(
             QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding
@@ -343,11 +368,14 @@ class SnipOcclusionDialog(QDialog):
             "padding:0;}QToolButton:hover{background:#e8dfd0;}"
         )
         qconnect(self.collapse_btn.clicked, self._toggle_sidebar)
-        outer.addWidget(self.collapse_btn)
+        right_h.addWidget(self.collapse_btn)
 
-        # --- right-hand side: canvas + form
         layout = QVBoxLayout()
-        outer.addLayout(layout, 1)
+        right_h.addLayout(layout, 1)
+        self.splitter.addWidget(right_container)
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setSizes([190, 900])
 
         # --- canvas / placeholder stack
         self.stack = QStackedWidget(self)
