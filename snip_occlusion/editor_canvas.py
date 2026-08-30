@@ -83,7 +83,10 @@ class _OverlayItem(QGraphicsItem):
         for s in c.ordered_shapes():
             rect = QRectF(s.x, s.y, s.w, s.h)
             if s.kind == KIND_ERASE:
-                painter.setBrush(QBrush(QColor(s.color or "#ffffff")))
+                if c.xray or s.id in c.peek_ids:
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                else:
+                    painter.setBrush(QBrush(QColor(s.color or "#ffffff")))
                 pen = QPen(QColor(120, 120, 120, 180), 1, Qt.PenStyle.DashLine)
                 pen.setCosmetic(True)
                 painter.setPen(pen)
@@ -114,8 +117,13 @@ class _OverlayItem(QGraphicsItem):
                 painter.restore()
                 continue
 
-            fill = QColor(c.mask_fill)  # fully opaque: masks must hide text
-            painter.setBrush(QBrush(fill))
+            # see-through mode (global toggle or per-box peek): outline
+            # only, so the text underneath stays readable while editing
+            see_through = c.xray or s.id in c.peek_ids
+            if see_through:
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+            else:
+                painter.setBrush(QBrush(QColor(c.mask_fill)))  # opaque
             if s.group:
                 # group membership is shown by a bold shared outline colour
                 idx = badge_order.get(s.group, 1)
@@ -123,7 +131,7 @@ class _OverlayItem(QGraphicsItem):
                     QColor(GROUP_PALETTE[(idx - 1) % len(GROUP_PALETTE)]), 3
                 )
             else:
-                pen = QPen(QColor(0, 0, 0, 110), 1)
+                pen = QPen(QColor(0, 0, 0, 190 if see_through else 110), 1)
             pen.setCosmetic(True)
             painter.setPen(pen)
             if s.kind == KIND_ELLIPSE:
@@ -179,6 +187,7 @@ class OcclusionCanvas(QGraphicsView):
     selection_changed = pyqtSignal()
     tool_changed = pyqtSignal(str)
     send_patch_to_new_card = pyqtSignal(str)  # patch id (context menu path)
+    xray_changed = pyqtSignal(bool)
 
     def __init__(self, config: dict, parent=None):
         super().__init__(parent)
@@ -197,6 +206,8 @@ class OcclusionCanvas(QGraphicsView):
         self.tool: str = TOOL_SELECT
         self.gesture: dict | None = None
         self.handles_visible: bool = False
+        self.xray: bool = False  # global see-through: outlines only
+        self.peek_ids: set = set()  # per-box see-through (right-click)
         self._group_counter = 0
         self._undo: list = []
         self._redo: list = []
@@ -229,6 +240,7 @@ class OcclusionCanvas(QGraphicsView):
         self.shapes = []
         self.selection = set()
         self.gesture = None
+        self.peek_ids = set()
         self._group_counter = 0
         self._undo = []
         self._redo = []
@@ -445,8 +457,27 @@ class OcclusionCanvas(QGraphicsView):
         self._emit_changed()
 
     def _emit_changed(self) -> None:
+        self.peek_ids &= {s.id for s in self.shapes}
         self.shapes_changed.emit()
         self.selection_changed.emit()
+        self.viewport().update()
+
+    # -------------------------------------------------------- see-through
+
+    def set_xray(self, on: bool) -> None:
+        if on != self.xray:
+            self.xray = on
+            self.xray_changed.emit(on)
+            self.viewport().update()
+
+    def toggle_xray(self) -> None:
+        self.set_xray(not self.xray)
+
+    def toggle_peek(self, shape_id: str) -> None:
+        if shape_id in self.peek_ids:
+            self.peek_ids.discard(shape_id)
+        else:
+            self.peek_ids.add(shape_id)
         self.viewport().update()
 
     # ------------------------------------------------------------ copy/paste
@@ -924,6 +955,10 @@ class OcclusionCanvas(QGraphicsView):
                 self.delete_selected()
             return
         menu = QMenu(self)
+        act_peek = menu.addAction(
+            "Stop peeking" if s.id in self.peek_ids else "Peek underneath"
+        )
+        menu.addSeparator()
         act_group = menu.addAction("Group selected\tG")
         act_ungroup = menu.addAction("Ungroup\tU")
         act_del = menu.addAction("Delete\tDel")
@@ -931,7 +966,9 @@ class OcclusionCanvas(QGraphicsView):
             len([i for i in self.selection if self.shape_by_id(i)]) >= 2
         )
         chosen = menu.exec(event.globalPos())
-        if chosen == act_group:
+        if chosen == act_peek:
+            self.toggle_peek(s.id)
+        elif chosen == act_group:
             self.group_selected()
         elif chosen == act_ungroup:
             self.ungroup_selected()
@@ -970,13 +1007,19 @@ class OcclusionCanvas(QGraphicsView):
 
     def _erase_color_menu(self, s: sh.Shape, global_pos) -> None:
         menu = QMenu(self)
+        act_peek = menu.addAction(
+            "Stop peeking" if s.id in self.peek_ids else "Peek underneath"
+        )
+        menu.addSeparator()
         act_majority = menu.addAction("Fill with slide's majority colour")
         act_local = menu.addAction("Sample background around this box")
         act_pick = menu.addAction("Choose colour…")
         menu.addSeparator()
         act_del = menu.addAction("Delete\tDel")
         chosen = menu.exec(global_pos)
-        if chosen == act_majority:
+        if chosen == act_peek:
+            self.toggle_peek(s.id)
+        elif chosen == act_majority:
             self.push_undo()
             s.color = self.majority.name()
             self._emit_changed()
@@ -1037,6 +1080,8 @@ class OcclusionCanvas(QGraphicsView):
             self.set_tool(TOOL_PATCH)
         elif key == Qt.Key.Key_H:
             self.set_tool(TOOL_HIGHLIGHT)
+        elif key == Qt.Key.Key_T:
+            self.toggle_xray()
         elif key == Qt.Key.Key_F or key == Qt.Key.Key_0:
             self.fit()
         elif key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):

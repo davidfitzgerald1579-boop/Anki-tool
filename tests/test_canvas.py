@@ -476,6 +476,61 @@ def test_copy_paste_preserves_internal_grouping(canvas):
     assert grouped[0].group != "g1"  # a fresh group, not joined to the old
 
 
+def _rendered_color_at(canvas, scene_x, scene_y):
+    """Colour of the rendered viewport at a scene point."""
+    img = canvas.grab().toImage()
+    dpr = img.devicePixelRatio()
+    vp = canvas.mapFromScene(QPointF(scene_x, scene_y))
+    return img.pixelColor(int(vp.x() * dpr), int(vp.y() * dpr))
+
+
+def test_xray_mode_shows_text_under_all_boxes(canvas, qapp):
+    # a mask over a text-free part of the pink callout (y 382..406)
+    s = add_shape(canvas, 60, 382, w=200, h=24)
+    canvas.resetTransform()  # 1:1 so sampled pixels are exact
+    canvas.centerOn(160, 394)
+    canvas.show()
+    qapp.processEvents()
+    covered = _rendered_color_at(canvas, 160, 394)
+    # opaque: the mask colour, nothing pink shows through
+    assert abs(covered.red() - 0xFF) < 25 and abs(covered.green() - 0xEB) < 30
+    canvas.toggle_xray()
+    assert canvas.xray
+    revealed = _rendered_color_at(canvas, 160, 394)
+    # see-through: the pink callout (#f8d7da) is visible again
+    assert abs(revealed.red() - 0xF8) < 25
+    assert abs(revealed.green() - 0xD7) < 30
+    assert abs(revealed.blue() - 0xDA) < 30
+    canvas.toggle_xray()
+    assert not canvas.xray
+    back = _rendered_color_at(canvas, 160, 394)
+    assert abs(back.green() - 0xEB) < 30  # opaque again
+
+
+def test_peek_shows_under_one_box_only(canvas, qapp):
+    a = add_shape(canvas, 60, 382, w=100, h=24)  # over pink callout
+    b = add_shape(canvas, 200, 382, w=100, h=24)  # also over the callout
+    canvas.resetTransform()
+    canvas.centerOn(180, 394)
+    canvas.show()
+    qapp.processEvents()
+    canvas.toggle_peek(a.id)
+    assert a.id in canvas.peek_ids
+    under_a = _rendered_color_at(canvas, 110, 394)
+    under_b = _rendered_color_at(canvas, 250, 394)
+    assert abs(under_a.red() - 0xF8) < 25 and abs(under_a.blue() - 0xDA) < 30
+    assert abs(under_b.green() - 0xEB) < 30  # b stays opaque
+    canvas.toggle_peek(a.id)
+    assert a.id not in canvas.peek_ids
+    # peeking is view-only: cards and baked image are unaffected
+    canvas.toggle_peek(b.id)
+    assert len(target_groups(canvas.shapes)) == 2
+    # deleting a shape cleans up its peek state
+    canvas.selection = {b.id}
+    canvas.delete_selected()
+    assert b.id not in canvas.peek_ids
+
+
 def test_move_is_clamped_to_image(canvas):
     s = add_shape(canvas, 10, 10, w=50, h=30)
     press(canvas, 20, 20)

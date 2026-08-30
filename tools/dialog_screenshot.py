@@ -97,7 +97,14 @@ def main() -> None:
     dlg.grab().save(str(out_dir / "dialog.png"))
     print("wrote", out_dir / "dialog.png")
 
-    # second shot: sidebar collapsed for full-screen editing
+    # see-through mode shot
+    canvas.set_xray(True)
+    app.processEvents()
+    dlg.grab().save(str(out_dir / "dialog_xray.png"))
+    print("wrote", out_dir / "dialog_xray.png")
+    canvas.set_xray(False)
+
+    # sidebar collapsed for full-screen editing
     dlg._toggle_sidebar()
     app.processEvents()
     canvas.fit()

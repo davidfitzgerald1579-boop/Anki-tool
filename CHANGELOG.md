@@ -4,6 +4,15 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.6.0 — 2026-08-30
+
+- **See-through mode (T / 👁 button):** every box (masks and cover-ups)
+  renders as an outline only, so the text underneath stays readable while
+  editing. Toggle off to go back to opaque. View-only — cards and the
+  saved image are unaffected.
+- **Peek at one box:** right-click any box → "Peek underneath" to see
+  through just that box; right-click → "Stop peeking" to restore it.
+
 ## v0.5.1 — 2026-08-30
 
 - The left toolbar is now freely resizable: drag the divider between the

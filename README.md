@@ -105,6 +105,8 @@ Anki add-ons folder (Tools → Add-ons → View Files) and restart Anki.
 | S / R / H / C / P | Select / Rectangle / Highlighter / Cover-up / Snip patch |
 | Double-click a word | Occlude exactly that word (side handles snap by word) |
 | Ctrl+C / Ctrl+V | Copy selected shapes / paste beside them |
+| T | See-through mode: outlines only, text visible underneath |
+| Right-click a box | Peek underneath just that box (and group/colour options) |
 | Click | Select a shape |
 | Shift+click | Add/remove shape from selection (never moves it) |
 | Drag on empty area | Rubber-band select |

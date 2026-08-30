@@ -44,6 +44,11 @@ Click = select one &middot; Shift+click = add/remove from selection \
 Drag on empty area = rubber-band select &middot; Ctrl+A = select all<br>
 Ctrl+C copies the selected boxes &middot; Ctrl+V pastes them beside the \
 originals (never overlapping)<br><br>
+<b>Seeing underneath</b><br>
+<b>T</b> (or the 👁 button) shows every box as an outline only so the \
+text underneath is visible. Right-click one box &rarr; "Peek underneath" \
+to see under just that box; right-click again to stop. View-only - \
+cards are unaffected.<br><br>
 <b>Moving</b><br>
 Drag a shape = move <i>only that shape</i> &middot; \
 Ctrl+drag = move all selected shapes together<br>
@@ -300,6 +305,16 @@ class SnipOcclusionDialog(QDialog):
             qconnect(btn.clicked, lambda _=False, f=cb: f())
             side.addWidget(btn)
 
+        self.xray_btn = self._side_button(
+            "👁 See-through",
+            "Show every box as an outline only, so the text underneath is "
+            "visible while you edit (T). Right-click a single box to peek "
+            "under just that one.",
+        )
+        self.xray_btn.setCheckable(True)
+        qconnect(self.xray_btn.clicked, self._xray_clicked)
+        side.addWidget(self.xray_btn)
+
         side.addWidget(self._separator())
         self.swatch_btn = self._side_button(
             "Fill: auto",
@@ -401,6 +416,7 @@ class SnipOcclusionDialog(QDialog):
         qconnect(
             self.canvas.send_patch_to_new_card, self._send_patch_to_new_card
         )
+        qconnect(self.canvas.xray_changed, self.xray_btn.setChecked)
 
         # --- bottom form
         form = QGridLayout()
@@ -565,6 +581,10 @@ class SnipOcclusionDialog(QDialog):
 
     def _fit(self) -> None:
         self.canvas.fit()
+        self.canvas.setFocus()
+
+    def _xray_clicked(self, checked: bool) -> None:
+        self.canvas.set_xray(checked)
         self.canvas.setFocus()
 
     def _toggle_fullscreen(self) -> None:
