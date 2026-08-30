@@ -1,0 +1,10 @@
+{
+    "provider": "ollama",
+    "model": "llama3.1:8b",
+    "ollama_url": "http://localhost:11434",
+    "openai_base_url": "http://localhost:1234/v1",
+    "api_key": "",
+    "note_type": "Basic",
+    "max_cards": 15,
+    "timeout_seconds": 300
+}

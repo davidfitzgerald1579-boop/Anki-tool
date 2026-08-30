@@ -1,5 +1,7 @@
 __pycache__/
 *.pyc
+meta.json
+*.ankiaddon
 dist/
 docs/_slide.png
 .pytest_cache/

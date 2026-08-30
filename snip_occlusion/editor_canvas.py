@@ -973,12 +973,14 @@ class OcclusionCanvas(QGraphicsView):
             self._highlight_color_menu(s, event.globalPosition().toPoint())
         elif s is None:
             # double-click a word: in the Highlighter tool it highlights
-            # the word; in every other tool it occludes it with a mask
-            kind = (
-                KIND_HIGHLIGHT
-                if self.tool == TOOL_HIGHLIGHT
-                else KIND_RECT
-            )
+            # the word, in the Cover-up tool it erases it; in every other
+            # tool it occludes it with a mask
+            if self.tool == TOOL_HIGHLIGHT:
+                kind = KIND_HIGHLIGHT
+            elif self.tool == TOOL_ERASE:
+                kind = KIND_ERASE
+            else:
+                kind = KIND_RECT
             self.create_word_box(pos.x(), pos.y(), kind=kind)
         event.accept()
 
@@ -993,6 +995,8 @@ class OcclusionCanvas(QGraphicsView):
         (x, y, w, h), _line = found
         self.push_undo()
         s = sh.Shape(kind=kind, x=x, y=y, w=w, h=h, snap=SNAP_WORD)
+        if kind == KIND_ERASE:
+            s.color = self.default_erase_color(s)
         self.shapes.append(s)
         self.selection = {s.id}
         self._emit_changed()

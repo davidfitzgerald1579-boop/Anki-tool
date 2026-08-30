@@ -447,6 +447,33 @@ def test_double_click_in_highlighter_tool_highlights_word(canvas):
     assert brightest.red() > 200 and brightest.blue() < 180  # yellow tint
 
 
+def test_double_click_in_coverup_tool_erases_word(canvas):
+    from PyQt6.QtGui import QMouseEvent
+
+    canvas.set_tool(TOOL_ERASE)
+    vp = QPointF(canvas.mapFromScene(QPointF(70, 122)))
+    ev2 = QMouseEvent(
+        QEvent.Type.MouseButtonDblClick, vp, vp, LEFT, LEFT, NOMOD
+    )
+    canvas.mouseDoubleClickEvent(ev2)
+    assert len(canvas.shapes) == 1
+    s = canvas.shapes[0]
+    assert s.kind == "erase"  # covered up, not blocked out
+    assert s.snap == SNAP_WORD  # side handles still snap by word
+    assert target_groups(canvas.shapes) == []  # never a card
+    # the fill colour was assigned on creation (majority = cream bg)
+    fill = s.color.lower()
+    br, bg_, bb = int(BG[1:3], 16), int(BG[3:5], 16), int(BG[5:7], 16)
+    fr, fg, fb = int(fill[1:3], 16), int(fill[3:5], 16), int(fill[5:7], 16)
+    assert abs(fr - br) <= 12 and abs(fg - bg_) <= 12 and abs(fb - bb) <= 12
+    # baked pixels: the word is gone - nothing dark remains inside the box
+    baked = canvas.bake_image()
+    for yy in range(int(s.y), int(s.y + s.h)):
+        for xx in range(int(s.x), int(s.x + s.w)):
+            c = baked.pixelColor(xx, yy)
+            assert c.red() + c.green() + c.blue() > 500
+
+
 def test_word_box_resize_snaps_to_whole_words(canvas):
     s = canvas.create_word_box(70, 122)
     assert s is not None
