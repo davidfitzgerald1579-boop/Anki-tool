@@ -32,8 +32,8 @@ _HELP_TEXT = """<b>Tools</b><br>
 <b>C</b> Cover-up (erase text) &nbsp; <b>P</b> Snip patch<br><br>
 <b>Word occlusion / highlighting</b><br>
 <b>Double-click any word</b> to occlude exactly that word - or, in the \
-Highlighter tool, to highlight it instead (hyphenated words count as \
-one). Drag its side handles to swallow or release neighbouring words - \
+Highlighter tool, to highlight it instead, and in the Cover-up tool, to \
+erase it (hyphenated words count as one). Drag its side handles to swallow or release neighbouring words - \
 whole words only, never half a word. Top/bottom handles resize freely; \
 the middle of the box always drags to move. If a click grabs the wrong \
 amount, press <b>Ctrl+D</b> to copy a debug picture of what was \
@@ -316,7 +316,9 @@ class SnipOcclusionDialog(QDialog):
                                             "Right-click one to change "
                                             "colour"),
             (TOOL_ERASE, "⌫ Cover-up", "Erase slide text: draws a box filled "
-                                        "with the background colour (C)"),
+                                        "with the background colour (C). Tip: "
+                                        "double-click any word to erase "
+                                        "exactly that word"),
             (TOOL_PATCH, "✂ Snip patch", "Cut out a piece of the image you "
                                          "want to KEEP as a movable, "
                                          "pixel-perfect patch (P)"),

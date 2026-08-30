@@ -4,6 +4,14 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.9.1 — 2026-08-30
+
+- **Double-click erases in the Cover-up tool.** With Cover-up (C) active,
+  double-clicking a word now covers up exactly that word — filled with
+  the background colour and baked into the image — instead of occluding
+  it with a mask. (Matches the Highlighter's double-click behaviour from
+  v0.8.0; every other tool still occludes on double-click.)
+
 ## v0.9.0 — 2026-08-30
 
 - **AI-suggested cards from your snip.** In the text card dialog, the
