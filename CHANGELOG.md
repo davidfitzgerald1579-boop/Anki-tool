@@ -4,6 +4,19 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.9.0 — 2026-08-30
+
+- **AI-suggested cards from your snip.** In the text card dialog, the
+  "✨ Suggest cards" button sends your most recent snip's OCR text to the
+  Claude API (with your own API key, set in the add-on config) and shows
+  drafted question/answer pairs — e.g. slide text "Private members bills
+  are brought forward by individual MPs" becomes Q: "Who can bring
+  forward private members' bills?" / A: "Individual MPs". Pick a
+  favourite with "Use →": it opens prefilled in its own window to tweak
+  and add, while the suggestion list stays behind so you can take one,
+  two, or three. Generation runs in the background; the slide text is
+  sent to Anthropic only when you click the button.
+
 ## v0.8.0 — 2026-08-30
 
 - **Double-click highlights in the Highlighter tool.** With the

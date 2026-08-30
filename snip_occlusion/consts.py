@@ -74,6 +74,9 @@ DEFAULT_CONFIG = {
     "tesseract_path": "",
     "tesseract_user_words": "",
     "ocr_corrections": {},
+    "anthropic_api_key": "",
+    "qgen_model": "claude-opus-5",
+    "qgen_max_cards": 8,
 }
 
 # Distinct colors used for group badges in the editor

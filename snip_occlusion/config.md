@@ -34,6 +34,14 @@
 - `ocr_corrections`: map of recurring OCR misreads to their fixes,
   applied to every future card, e.g. `{"K80": "KBD", "UTlAC": "UTIAC"}`.
   Use the editor's "Text preview" button to find misreads worth adding.
+- `anthropic_api_key`: your Claude API key (from console.anthropic.com),
+  used only by the text card dialog's "Suggest cards" button. When you
+  click it, your snip's OCR text is sent to Anthropic's API to draft
+  question/answer cards; nothing is sent otherwise. Default: empty
+  (feature off).
+- `qgen_model`: the Claude model used for card suggestions. Default:
+  `"claude-opus-5"` (highest quality; a slide costs roughly a cent).
+- `qgen_max_cards`: maximum suggested cards per slide. Default: `8`.
 
 Note: `mask_fill` and `target_fill` are written into the note type's CSS
 when the note type is first created. To restyle existing cards, edit the

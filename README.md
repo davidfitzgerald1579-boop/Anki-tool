@@ -127,6 +127,12 @@ all its boxes and groups for reworking; Save Changes updates every card
 sharing that slide, adds cards for new boxes, and asks before deleting
 cards whose boxes were removed.
 
+**AI-suggested cards:** in the text card dialog, "✨ Suggest cards"
+drafts Q/A pairs from your last snip's OCR text via the Claude API
+(bring your own API key — `anthropic_api_key` in the config). Each
+"Use →" opens the draft in its own window; the list stays behind so you
+can pick several.
+
 **Text cards in your own words:** press **Ctrl+Shift+T** (or the 📝
 button in the editor) for a minimal Front/Back/Notes card with
 bold/italic/underline and font size; "Copy text from previous snip"
