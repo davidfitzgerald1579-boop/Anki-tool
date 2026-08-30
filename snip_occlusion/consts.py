@@ -28,8 +28,9 @@ KIND_RECT = "rect"
 KIND_ELLIPSE = "ellipse"  # legacy: no longer drawable, still renders on old notes
 KIND_ERASE = "erase"
 KIND_PATCH = "patch"  # a pixel-exact cutout of the image, movable
+KIND_HIGHLIGHT = "highlight"  # translucent highlighter band, baked in
 
-# Kinds that become occlusion masks / cards (erase + patch are image surgery)
+# Kinds that become occlusion masks / cards (the rest are image surgery)
 MASK_KINDS = (KIND_RECT, KIND_ELLIPSE)
 
 # Editor tools
@@ -37,6 +38,20 @@ TOOL_SELECT = "select"
 TOOL_RECT = "rect"
 TOOL_ERASE = "erase"
 TOOL_PATCH = "patch"
+TOOL_HIGHLIGHT = "highlight"
+
+# Snap behaviours
+SNAP_WORD = "word"  # rect created by double-clicking a word; resize snaps
+                    # to whole words on its text line
+
+# Quick colours offered in the highlighter's right-click menu (light tones
+# multiply nicely: background takes the colour, dark text stays dark)
+HIGHLIGHT_QUICK_COLORS = [
+    ("Yellow", "#ffe94d"),
+    ("Green", "#b9f6a5"),
+    ("Pink", "#ffb3de"),
+    ("Blue", "#a5d8ff"),
+]
 
 # Geometry
 MIN_SHAPE_PX = 6  # shapes smaller than this on creation are discarded
@@ -46,6 +61,7 @@ DEFAULT_CONFIG = {
     "mask_fill": "#FFEBA2",
     "target_fill": "#FF7E7E",
     "erase_color_mode": "majority",  # "majority" or "local"
+    "highlight_fill": "#ffe94d",
     "shortcut_open": "Ctrl+Shift+O",
     "close_after_add": False,
     "default_mode": MODE_HIDE_ALL,

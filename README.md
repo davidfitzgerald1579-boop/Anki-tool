@@ -31,6 +31,9 @@ Occlusion keeps everything that works and fixes what doesn't:
 | | **A snip-patch tool**: cut out the one sentence you want to *keep* as a movable, pixel-perfect patch — drag it aside, cover up the rest of the paragraph, drag it back on top. Patches are copied from the original image with no rescaling, so there is zero quality loss. |
 | | **Searchable image cards (OCR)**: when cards are added, the text on the image is read (Windows' built-in OCR, or Tesseract) and stored invisibly in a "Search Text" field, so Anki's browser and deck-search add-ons can find them. A "Text preview" button shows what was read; an `ocr_corrections` config map fixes recurring misreads permanently. |
 | | **A new-card queue**: spin a sentence off to its own card — drag a snip patch off the canvas onto a queued card (or right-click → "Send to new card"). Multiple snips stack on a background matching the slide colour; queued cards load into the editor for masking after you add the current slide's cards. |
+| | **A highlighter (H)**: perfectly straight highlight bands, drawn and edited exactly like boxes, painted in multiply mode so text stays readable underneath. Right-click for colours. Baked into the image, never a card. |
+| | **Double-click word occlusion**: double-click any word to occlude exactly that word (hyphenated words count as one) — the box covers it fully and never touches neighbours. Dragging its side handles snaps whole-word-by-whole-word. Pixel analysis, no OCR. |
+| | **Copy/paste boxes**: Ctrl+C / Ctrl+V duplicates selected shapes beside the originals, never overlapping; repeated pastes chain sideways. |
 
 Plus editor quality-of-life: a left-hand toolbar, fully opaque masks, the
 image always fits the window (until you zoom yourself), smooth high-quality
@@ -99,7 +102,9 @@ Anki add-ons folder (Tools → Add-ons → View Files) and restart Anki.
 
 | Keys | Action |
 | --- | --- |
-| S / R / C / P | Select / Rectangle / Cover-up / Snip patch tool |
+| S / R / H / C / P | Select / Rectangle / Highlighter / Cover-up / Snip patch |
+| Double-click a word | Occlude exactly that word (side handles snap by word) |
+| Ctrl+C / Ctrl+V | Copy selected shapes / paste beside them |
 | Click | Select a shape |
 | Shift+click | Add/remove shape from selection (never moves it) |
 | Drag on empty area | Rubber-band select |

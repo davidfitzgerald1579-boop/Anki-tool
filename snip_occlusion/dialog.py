@@ -19,6 +19,7 @@ from .consts import (
     MODE_HIDE_ALL,
     MODE_HIDE_ONE,
     TOOL_ERASE,
+    TOOL_HIGHLIGHT,
     TOOL_PATCH,
     TOOL_RECT,
     TOOL_SELECT,
@@ -27,12 +28,22 @@ from .editor_canvas import OcclusionCanvas
 from .shapes import target_groups
 
 _HELP_TEXT = """<b>Tools</b><br>
-<b>S</b> Select &nbsp; <b>R</b> Box &nbsp; \
+<b>S</b> Select &nbsp; <b>R</b> Box &nbsp; <b>H</b> Highlighter &nbsp; \
 <b>C</b> Cover-up (erase text) &nbsp; <b>P</b> Snip patch<br><br>
+<b>Word occlusion</b><br>
+<b>Double-click any word</b> to occlude exactly that word (hyphenated \
+words count as one). Drag its side handles to swallow or release \
+neighbouring words - whole words only, never half a word.<br><br>
+<b>Highlighter</b><br>
+Draws a perfectly straight band; the text stays readable underneath. \
+Right-click a highlight for colours. Baked into the image, never a \
+card.<br><br>
 <b>Selection</b><br>
 Click = select one &middot; Shift+click = add/remove from selection \
 (never moves anything)<br>
-Drag on empty area = rubber-band select &middot; Ctrl+A = select all<br><br>
+Drag on empty area = rubber-band select &middot; Ctrl+A = select all<br>
+Ctrl+C copies the selected boxes &middot; Ctrl+V pastes them beside the \
+originals (never overlapping)<br><br>
 <b>Moving</b><br>
 Drag a shape = move <i>only that shape</i> &middot; \
 Ctrl+drag = move all selected shapes together<br>
@@ -238,7 +249,14 @@ class SnipOcclusionDialog(QDialog):
         self.tool_buttons = {}
         for tool, label, tip in [
             (TOOL_SELECT, "Select", "Select / move / resize (S)"),
-            (TOOL_RECT, "▭ Box", "Draw occlusion rectangle (R)"),
+            (TOOL_RECT, "▭ Box", "Draw occlusion rectangle (R). Tip: "
+                                 "double-click any word to occlude exactly "
+                                 "that word"),
+            (TOOL_HIGHLIGHT, "🖍 Highlight", "Draw a straight highlighter "
+                                            "band across the page — text "
+                                            "stays readable underneath (H). "
+                                            "Right-click one to change "
+                                            "colour"),
             (TOOL_ERASE, "⌫ Cover-up", "Erase slide text: draws a box filled "
                                         "with the background colour (C)"),
             (TOOL_PATCH, "✂ Snip patch", "Cut out a piece of the image you "

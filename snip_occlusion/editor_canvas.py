@@ -20,16 +20,21 @@ import math
 
 from .qtshim import *  # noqa: F401,F403
 from . import shapes as sh
+from . import wordsnap
 from .color_utils import local_background, majority_color
 from .consts import (
     GROUP_PALETTE,
+    HIGHLIGHT_QUICK_COLORS,
     KIND_ELLIPSE,
     KIND_ERASE,
+    KIND_HIGHLIGHT,
     KIND_PATCH,
     KIND_RECT,
     MASK_KINDS,
     MIN_SHAPE_PX,
+    SNAP_WORD,
     TOOL_ERASE,
+    TOOL_HIGHLIGHT,
     TOOL_PATCH,
     TOOL_RECT,
     TOOL_SELECT,
@@ -96,6 +101,17 @@ class _OverlayItem(QGraphicsItem):
                 painter.setPen(pen)
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawRect(rect)
+                continue
+
+            if s.kind == KIND_HIGHLIGHT:
+                # multiply, like real highlighter ink: the background takes
+                # the colour, dark text stays dark and readable
+                painter.save()
+                painter.setCompositionMode(
+                    QPainter.CompositionMode.CompositionMode_Multiply
+                )
+                painter.fillRect(rect, QColor(s.color or c.highlight_fill))
+                painter.restore()
                 continue
 
             fill = QColor(c.mask_fill)  # fully opaque: masks must hide text
@@ -168,6 +184,7 @@ class OcclusionCanvas(QGraphicsView):
         super().__init__(parent)
         self.config = config
         self.mask_fill = config.get("mask_fill", "#FFEBA2")
+        self.highlight_fill = config.get("highlight_fill", "#ffe94d")
         self.drag_threshold = float(config.get("drag_threshold_px", 5))
         self.nudge_step = int(config.get("nudge_step", 1))
         self.nudge_step_large = int(config.get("nudge_step_large", 10))
@@ -186,6 +203,9 @@ class OcclusionCanvas(QGraphicsView):
         self._last_undo_tag: str | None = None
         self._pan_origin: QPoint | None = None
         self._user_zoomed = False
+        self._shape_clipboard: str | None = None
+        self._clipboard_bbox: QRectF | None = None  # where the copy came from
+        self._paste_anchor: QRectF | None = None  # where the last paste went
 
         self._scene = QGraphicsScene(self)
         self.setScene(self._scene)
@@ -279,6 +299,14 @@ class OcclusionCanvas(QGraphicsView):
                     round(s.sx or 0), round(s.sy or 0), round(s.w), round(s.h)
                 ),
             )
+        painter.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_Multiply
+        )
+        for s in sh.highlight_shapes(self.shapes):
+            painter.fillRect(
+                QRectF(s.x, s.y, s.w, s.h),
+                QColor(s.color or self.highlight_fill),
+            )
         painter.end()
         return img
 
@@ -331,6 +359,16 @@ class OcclusionCanvas(QGraphicsView):
         self.selection = set()
         self._emit_changed()
 
+    def _new_group_id(self) -> str:
+        # skip ids already in use (shapes can arrive via undo/paste with
+        # group ids the counter never saw)
+        used = {s.group for s in self.shapes if s.group}
+        while True:
+            self._group_counter += 1
+            gid = "g%d" % self._group_counter
+            if gid not in used:
+                return gid
+
     def group_selected(self) -> bool:
         members = [
             s
@@ -340,8 +378,7 @@ class OcclusionCanvas(QGraphicsView):
         if len(members) < 2:
             return False
         self.push_undo()
-        self._group_counter += 1
-        gid = "g%d" % self._group_counter
+        gid = self._new_group_id()
         for s in members:
             s.group = gid
         self._emit_changed()
@@ -411,6 +448,78 @@ class OcclusionCanvas(QGraphicsView):
         self.shapes_changed.emit()
         self.selection_changed.emit()
         self.viewport().update()
+
+    # ------------------------------------------------------------ copy/paste
+
+    def copy_selection(self) -> None:
+        sel = [s for s in self.shapes if s.id in self.selection]
+        if not sel:
+            return
+        self._shape_clipboard = sh.serialize(sel)
+        xs = [s.x for s in sel]
+        ys = [s.y for s in sel]
+        bbox = QRectF(
+            min(xs),
+            min(ys),
+            max(s.x + s.w for s in sel) - min(xs),
+            max(s.y + s.h for s in sel) - min(ys),
+        )
+        self._clipboard_bbox = bbox
+        self._paste_anchor = QRectF(bbox)
+
+    def paste_clipboard(self) -> None:
+        """Paste copied shapes near — but not overlapping — the originals.
+
+        Repeated pastes chain off the previous paste, so Ctrl+V twice gives
+        two boxes side by side rather than two stacked clones.
+        """
+        if not self._shape_clipboard or self.image is None:
+            return
+        clones = sh.deserialize(self._shape_clipboard)
+        if not clones:
+            return
+        # place beside the LAST paste (or the original, for the first one),
+        # translating the clones from where they were copied
+        step_x, step_y = self._paste_offset(self._paste_anchor)
+        dx = self._paste_anchor.x() + step_x - self._clipboard_bbox.x()
+        dy = self._paste_anchor.y() + step_y - self._clipboard_bbox.y()
+        group_map: dict = {}
+        for s in clones:
+            s.id = sh.new_id()
+            if s.group:
+                if s.group not in group_map:
+                    group_map[s.group] = self._new_group_id()
+                s.group = group_map[s.group]
+            s.x, s.y, s.w, s.h = sh.clamp_rect_in(
+                s.x + dx, s.y + dy, s.w, s.h, *self.move_bounds(s)
+            )
+        self.push_undo()
+        self.shapes.extend(clones)
+        self.selection = {s.id for s in clones}
+        xs = [s.x for s in clones]
+        ys = [s.y for s in clones]
+        self._paste_anchor = QRectF(
+            min(xs),
+            min(ys),
+            max(s.x + s.w for s in clones) - min(xs),
+            max(s.y + s.h for s in clones) - min(ys),
+        )
+        self._emit_changed()
+
+    def _paste_offset(self, anchor: QRectF):
+        """Offset placing the paste beside the anchor: right, below, left,
+        above — whichever keeps it fully on the image."""
+        gap = 14.0
+        img = QRectF(0, 0, self.image.width(), self.image.height())
+        for dx, dy in (
+            (anchor.width() + gap, 0.0),
+            (0.0, anchor.height() + gap),
+            (-(anchor.width() + gap), 0.0),
+            (0.0, -(anchor.height() + gap)),
+        ):
+            if img.contains(anchor.translated(dx, dy)):
+                return dx, dy
+        return gap, gap  # cramped image: nudge diagonally, clamped later
 
     # ------------------------------------------------------------------ undo
 
@@ -557,14 +666,21 @@ class OcclusionCanvas(QGraphicsView):
                 "orig": (s.x, s.y, s.w, s.h),
                 "moved": False,
             }
+            if s.snap == SNAP_WORD:
+                # cache the word layout of the shape's text line once, so
+                # the resize can snap edge drags to whole words live
+                self.gesture["wordline"] = wordsnap.analyze_line(
+                    self.image, s.x + s.w / 2, s.y + s.h / 2
+                )
             event.accept()
             return
 
-        if self.tool in (TOOL_RECT, TOOL_ERASE, TOOL_PATCH):
+        if self.tool in (TOOL_RECT, TOOL_ERASE, TOOL_PATCH, TOOL_HIGHLIGHT):
             kind = {
                 TOOL_RECT: KIND_RECT,
                 TOOL_ERASE: KIND_ERASE,
                 TOOL_PATCH: KIND_PATCH,
+                TOOL_HIGHLIGHT: KIND_HIGHLIGHT,
             }[self.tool]
             self.gesture = {
                 "type": "draw",
@@ -748,14 +864,32 @@ class OcclusionCanvas(QGraphicsView):
         event.accept()
 
     def mouseDoubleClickEvent(self, event) -> None:
-        # double-click an erase rect to re-pick its colour
         if self.image is None:
             return
         pos = self.mapToScene(event.position().toPoint())
         s = self.shape_at(pos)
         if s is not None and s.kind == KIND_ERASE:
+            # double-click an erase rect to re-pick its colour
             self._erase_color_menu(s, event.globalPosition().toPoint())
+        elif s is not None and s.kind == KIND_HIGHLIGHT:
+            self._highlight_color_menu(s, event.globalPosition().toPoint())
+        elif s is None:
+            # double-click a word on the slide: occlude exactly that word
+            self.create_word_box(pos.x(), pos.y())
         event.accept()
+
+    def create_word_box(self, cx: float, cy: float) -> sh.Shape | None:
+        """Mask box snapped to the word under (cx, cy); see wordsnap.py."""
+        found = wordsnap.word_box_at(self.image, cx, cy)
+        if found is None:
+            return None
+        (x, y, w, h), _line = found
+        self.push_undo()
+        s = sh.Shape(kind=KIND_RECT, x=x, y=y, w=w, h=h, snap=SNAP_WORD)
+        self.shapes.append(s)
+        self.selection = {s.id}
+        self._emit_changed()
+        return s
 
     def contextMenuEvent(self, event) -> None:
         if self.image is None:
@@ -770,6 +904,9 @@ class OcclusionCanvas(QGraphicsView):
             self.viewport().update()
         if s.kind == KIND_ERASE:
             self._erase_color_menu(s, event.globalPos())
+            return
+        if s.kind == KIND_HIGHLIGHT:
+            self._highlight_color_menu(s, event.globalPos())
             return
         if s.kind == KIND_PATCH:
             menu = QMenu(self)
@@ -798,6 +935,36 @@ class OcclusionCanvas(QGraphicsView):
             self.group_selected()
         elif chosen == act_ungroup:
             self.ungroup_selected()
+        elif chosen == act_del:
+            self.delete_selected()
+
+    def _highlight_color_menu(self, s: sh.Shape, global_pos) -> None:
+        menu = QMenu(self)
+        quick = []
+        for label, color in HIGHLIGHT_QUICK_COLORS:
+            act = menu.addAction(label)
+            pix = QPixmap(14, 14)
+            pix.fill(QColor(color))
+            act.setIcon(QIcon(pix))
+            quick.append((act, color))
+        act_pick = menu.addAction("Choose colour…")
+        menu.addSeparator()
+        act_del = menu.addAction("Delete\tDel")
+        chosen = menu.exec(global_pos)
+        for act, color in quick:
+            if chosen == act:
+                self.push_undo()
+                s.color = color
+                self._emit_changed()
+                return
+        if chosen == act_pick:
+            c = QColorDialog.getColor(
+                QColor(s.color or self.highlight_fill), self
+            )
+            if c.isValid():
+                self.push_undo()
+                s.color = c.name()
+                self._emit_changed()
         elif chosen == act_del:
             self.delete_selected()
 
@@ -852,6 +1019,10 @@ class OcclusionCanvas(QGraphicsView):
             self.redo()
         elif ctrl and key == Qt.Key.Key_A:
             self.select_all()
+        elif ctrl and key == Qt.Key.Key_C:
+            self.copy_selection()
+        elif ctrl and key == Qt.Key.Key_V:
+            self.paste_clipboard()
         elif key == Qt.Key.Key_G:
             self.group_selected()
         elif key == Qt.Key.Key_U:
@@ -864,6 +1035,8 @@ class OcclusionCanvas(QGraphicsView):
             self.set_tool(TOOL_ERASE)
         elif key == Qt.Key.Key_P:
             self.set_tool(TOOL_PATCH)
+        elif key == Qt.Key.Key_H:
+            self.set_tool(TOOL_HIGHLIGHT)
         elif key == Qt.Key.Key_F or key == Qt.Key.Key_0:
             self.fit()
         elif key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
@@ -970,6 +1143,15 @@ class OcclusionCanvas(QGraphicsView):
             x0, x1 = x1, x0
         if y1 < y0:
             y0, y1 = y1, y0
+
+        line = g.get("wordline")
+        if s.snap == SNAP_WORD and line is not None:
+            # word boxes resize word-by-word: every word the drag touches
+            # is covered completely, none is ever half-covered
+            s.x, s.y, s.w, s.h = wordsnap.snap_box(
+                line, x0, x1, anchor_cx=ox + ow / 2
+            )
+            return
         s.x, s.y = x0, y0
         s.w, s.h = max(x1 - x0, MIN_SHAPE_PX), max(y1 - y0, MIN_SHAPE_PX)
 
@@ -994,6 +1176,11 @@ class OcclusionCanvas(QGraphicsView):
                 # selection-marquee look while choosing what to snip out
                 painter.setBrush(QBrush(QColor(70, 130, 220, 40)))
                 pen = QPen(QColor(70, 130, 220), 1, Qt.PenStyle.DashLine)
+            elif g["kind"] == KIND_HIGHLIGHT:
+                fill = QColor(self.highlight_fill)
+                fill.setAlpha(120)
+                painter.setBrush(QBrush(fill))
+                pen = QPen(QColor(0, 0, 0, 60), 1)
             else:
                 fill = QColor(self.mask_fill)
                 fill.setAlpha(180)  # see-through while aiming; opaque once placed

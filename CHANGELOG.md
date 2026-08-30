@@ -4,6 +4,26 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.5.0 — 2026-08-30
+
+- **Highlighter tool (H):** draws perfectly straight highlight bands with
+  the same drag/resize/move behaviour as boxes. Painted in multiply mode,
+  so the page takes the colour while the text stays dark and readable —
+  like a real highlighter. Right-click a highlight for quick colours
+  (yellow/green/pink/blue) or a custom one. Baked into the image; never
+  becomes a card.
+- **Double-click word occlusion:** double-click any word on the slide and
+  a mask box appears covering exactly that word — full height, padded,
+  and never touching a neighbouring word (hyphenated words count as one
+  word). Dragging its side handles then snaps word-by-word: whole words
+  are swallowed or released, never half-covered. Pure pixel analysis, no
+  OCR involved.
+- **Copy & paste boxes:** Ctrl+C copies the selected shapes, Ctrl+V
+  pastes identical clones beside the originals — near but never
+  overlapping — and repeated pastes chain sideways instead of stacking.
+  Grouped selections keep their internal grouping as a fresh group.
+- Fixed a latent group-id collision when grouping after undo/paste.
+
 ## v0.4.0 — 2026-08-30
 
 - **Searchable cards (OCR).** When cards are added, the text on the

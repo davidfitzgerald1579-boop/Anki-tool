@@ -7,6 +7,9 @@
   Default: `"#FFEBA2"`.
 - `target_fill`: colour of the highlighted target mask on cards.
   Default: `"#FF7E7E"`.
+- `highlight_fill`: default highlighter colour. Light tones work best —
+  the highlight multiplies with the page, so the background takes the
+  colour while text stays dark. Default: `"#ffe94d"`.
 - `erase_color_mode`: default fill for new cover-up boxes. `"majority"`
   uses the slide's overall majority colour (recommended for BPP slides);
   `"local"` samples the background immediately around each box. You can

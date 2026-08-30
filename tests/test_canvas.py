@@ -10,7 +10,9 @@ from PyQt6.QtGui import QKeyEvent, QMouseEvent
 
 from snip_occlusion.consts import (
     DEFAULT_CONFIG,
+    SNAP_WORD,
     TOOL_ERASE,
+    TOOL_HIGHLIGHT,
     TOOL_PATCH,
     TOOL_RECT,
     TOOL_SELECT,
@@ -376,6 +378,102 @@ def test_take_patch_extracts_exact_pixels_and_removes_shape(canvas):
     assert canvas.shapes == []  # removed from the canvas
     canvas.undo()
     assert len(canvas.shapes) == 1  # but restorable
+
+
+def test_highlight_draws_straight_band_and_bakes_multiply(canvas):
+    canvas.set_tool(TOOL_HIGHLIGHT)
+    drag(canvas, 40, 115, 500, 140)  # across a text line
+    assert len(canvas.shapes) == 1
+    s = canvas.shapes[0]
+    assert s.kind == "highlight"
+    baked = canvas.bake_image()
+    # background inside the band takes the highlight colour (multiply)
+    bg_px = baked.pixelColor(450, 127)  # background area inside the band
+    hl = canvas.highlight_fill
+    hr, hg = int(hl[1:3], 16), int(hl[3:5], 16)
+    assert abs(bg_px.red() - hr) < 30 and abs(bg_px.green() - hg) < 40
+    assert bg_px.blue() < 160  # clearly tinted, no longer near-white
+    # highlights never become cards and cannot be grouped
+    assert target_groups(canvas.shapes) == []
+    other = add_shape(canvas, 100, 300)
+    canvas.selection = {s.id, other.id}
+    assert not canvas.group_selected()
+
+
+def test_double_click_word_creates_snapped_mask(canvas):
+    from PyQt6.QtGui import QMouseEvent
+
+    # double-click inside a word of the fixture's first body line
+    vp = QPointF(canvas.mapFromScene(QPointF(70, 122)))
+    ev2 = QMouseEvent(
+        QEvent.Type.MouseButtonDblClick, vp, vp, LEFT, LEFT, NOMOD
+    )
+    canvas.mouseDoubleClickEvent(ev2)
+    assert len(canvas.shapes) == 1
+    s = canvas.shapes[0]
+    assert s.kind == "rect" and s.snap == SNAP_WORD
+    assert canvas.selection == {s.id}
+    # covers the word fully with padding, inside a sane line height
+    assert s.h < 40 and s.w > 5
+    assert s.y < 122 < s.y + s.h
+    assert target_groups(canvas.shapes) == [s.effective_group()]  # is a card
+
+
+def test_word_box_resize_snaps_to_whole_words(canvas):
+    s = canvas.create_word_box(70, 122)
+    assert s is not None
+    orig_right = s.x + s.w
+    # drag the right handle far right: box must land exactly on a word
+    # boundary (right edge sits in a gap - no ink at the edge column)
+    press(canvas, s.x + s.w, s.y + s.h / 2)
+    move(canvas, s.x + 260, s.y + s.h / 2)
+    release(canvas, s.x + 260, s.y + s.h / 2)
+    assert s.x + s.w > orig_right + 20  # grew by at least one word
+    import snip_occlusion.wordsnap as ws
+
+    line = ws.analyze_line(canvas.image, s.x + s.w / 2, s.y + s.h / 2)
+    for x0, x1 in line.runs:
+        # every word is either fully inside or fully outside the box
+        inside = x0 >= s.x and x1 <= s.x + s.w
+        outside = x1 < s.x or x0 > s.x + s.w
+        assert inside or outside
+
+
+def test_copy_paste_places_clone_beside_original(canvas):
+    a = add_shape(canvas, 100, 100, w=80, h=40, group="g1")
+    canvas.selection = {a.id}
+    canvas.copy_selection()
+    canvas.paste_clipboard()
+    assert len(canvas.shapes) == 2
+    clone = [s for s in canvas.shapes if s.id != a.id][0]
+    assert clone.id != a.id
+    assert (clone.w, clone.h) == (a.w, a.h)
+    assert clone.group != "g1"  # pasted box is not sucked into the group
+    # near but NOT overlapping
+    assert not clone.intersects(a.x, a.y, a.w, a.h)
+    assert abs(clone.x - a.x) <= a.w + 20 and abs(clone.y - a.y) <= a.h + 20
+    # a second paste lands beside the first clone, not on top of it
+    canvas.paste_clipboard()
+    assert len(canvas.shapes) == 3
+    c2 = canvas.shapes[-1]
+    assert not c2.intersects(clone.x, clone.y, clone.w, clone.h)
+    assert not c2.intersects(a.x, a.y, a.w, a.h)
+
+
+def test_copy_paste_preserves_internal_grouping(canvas):
+    a = add_shape(canvas, 100, 100, group="g1")
+    b = add_shape(canvas, 300, 100, group="g1")
+    c = add_shape(canvas, 100, 200)
+    canvas.selection = {a.id, b.id, c.id}
+    canvas.copy_selection()
+    canvas.paste_clipboard()
+    clones = [s for s in canvas.shapes if s.id not in {a.id, b.id, c.id}]
+    assert len(clones) == 3
+    grouped = [s for s in clones if s.group]
+    lone = [s for s in clones if not s.group]
+    assert len(grouped) == 2 and len(lone) == 1
+    assert grouped[0].group == grouped[1].group
+    assert grouped[0].group != "g1"  # a fresh group, not joined to the old
 
 
 def test_move_is_clamped_to_image(canvas):

@@ -37,6 +37,9 @@ def main() -> None:
     erase = Shape(kind="erase", x=38, y=282, w=475, h=28)
     erase.color = canvas.default_erase_color(erase)
     canvas.shapes.append(erase)
+    canvas.shapes.append(
+        Shape(kind="highlight", x=40, y=150, w=560, h=34)
+    )
     # a snip patch: a sentence cut out and parked outside the slide
     canvas.shapes.append(
         Shape(kind="patch", x=830, y=380, w=250, h=26, sx=40, sy=284)

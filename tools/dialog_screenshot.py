@@ -74,6 +74,9 @@ def main() -> None:
     erase = Shape(kind="erase", x=38, y=282, w=475, h=28)
     erase.color = canvas.default_erase_color(erase)
     canvas.shapes.append(erase)
+    canvas.shapes.append(
+        Shape(kind="highlight", x=40, y=150, w=560, h=34)
+    )
     canvas._group_counter = 2
     canvas.selection = {shapes[1].id}
 
