@@ -4,6 +4,26 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.6.2 — 2026-08-30
+
+- **Word detection rebuilt around dark strokes.** "Ink" now means pixels
+  substantially darker than the local background, so BPP's yellow
+  highlight bands (which wrap across line breaks and filled the gap
+  between lines), pink callout backgrounds, and decorative dots are
+  invisible to the detector — double-click no longer grabs paragraphs
+  where highlights bridge lines. Works on highlighted words too.
+- **Boxes can be grabbed and moved in every tool**: click-hold-drag a
+  mask in the Box tool, a highlight in the Highlighter, etc. Drawing
+  still starts anywhere else, including on top of other kinds.
+- **The middle of a box always moves it.** Resize handles now live only
+  on the border ring — on small boxes (like word boxes) they previously
+  blanketed the whole surface, which made word boxes feel jumpy or dead
+  when dragged.
+- **Word boxes resize vertically like normal boxes**; only their left
+  and right edges snap word-by-word.
+- **Ctrl+D** copies an annotated picture of the last word-detection
+  (line in blue, words in red, click in green) for easy bug reports.
+
 ## v0.6.1 — 2026-08-30
 
 - Fixed double-click word occlusion grabbing a whole section on tightly

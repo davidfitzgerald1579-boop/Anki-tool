@@ -33,7 +33,13 @@ _HELP_TEXT = """<b>Tools</b><br>
 <b>Word occlusion</b><br>
 <b>Double-click any word</b> to occlude exactly that word (hyphenated \
 words count as one). Drag its side handles to swallow or release \
-neighbouring words - whole words only, never half a word.<br><br>
+neighbouring words - whole words only, never half a word. Top/bottom \
+handles resize freely; the middle of the box always drags to move. \
+If a click grabs the wrong amount, press <b>Ctrl+D</b> to copy a \
+debug picture of what was detected (to report it).<br><br>
+<b>Moving</b> works in every tool: click and hold any box of the \
+current tool's kind and drag it. Handles live on the border; the \
+middle always moves.<br><br>
 <b>Highlighter</b><br>
 Draws a perfectly straight band; the text stays readable underneath. \
 Right-click a highlight for colours. Baked into the image, never a \
@@ -517,6 +523,10 @@ class SnipOcclusionDialog(QDialog):
         return True
 
     def _on_clipboard_changed(self) -> None:
+        if getattr(self.canvas, "_own_clipboard_write", False):
+            # a debug image we placed there ourselves - not a new snip
+            self.canvas._own_clipboard_write = False
+            return
         md = self._clipboard.mimeData()
         if md is None or not md.hasImage():
             return

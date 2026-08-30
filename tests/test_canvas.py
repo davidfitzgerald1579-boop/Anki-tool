@@ -531,6 +531,67 @@ def test_peek_shows_under_one_box_only(canvas, qapp):
     assert b.id not in canvas.peek_ids
 
 
+def test_box_tool_moves_existing_mask_without_drawing(canvas):
+    s = add_shape(canvas, 100, 100, w=80, h=40)
+    canvas.set_tool(TOOL_RECT)
+    press(canvas, 140, 120)  # dead centre of the box
+    move(canvas, 190, 160)
+    release(canvas, 190, 160)
+    assert len(canvas.shapes) == 1  # moved, did not draw a new box
+    assert abs(s.x - 150) <= 1.5 and abs(s.y - 140) <= 1.5
+
+
+def test_box_tool_draws_over_highlight_without_moving_it(canvas):
+    from snip_occlusion.shapes import Shape
+
+    hl = Shape(kind="highlight", x=50, y=100, w=500, h=40)
+    canvas.shapes.append(hl)
+    canvas.set_tool(TOOL_RECT)
+    drag(canvas, 100, 110, 260, 130)  # starts ON the highlight
+    assert len(canvas.shapes) == 2  # a mask was drawn
+    assert (hl.x, hl.y) == (50, 100)  # the highlight did not move
+    mask = [s for s in canvas.shapes if s.kind == "rect"][0]
+    assert abs(mask.x - 100) < 3
+
+
+def test_small_selected_box_centre_press_moves_not_resizes(canvas):
+    canvas.resetTransform()  # 1:1 so screen px == scene px
+    s = add_shape(canvas, 100, 100, w=26, h=12)
+    canvas.selection = {s.id}
+    press(canvas, 113, 106)  # centre: must be move territory, not a handle
+    assert canvas.gesture is not None
+    assert canvas.gesture["type"] == "maybe-move"
+    move(canvas, 143, 126)
+    release(canvas, 143, 126)
+    assert abs(s.x - 130) <= 1.5 and abs(s.y - 120) <= 1.5
+    assert (s.w, s.h) == (26, 12)
+
+
+def test_word_box_centre_drag_moves_smoothly(canvas):
+    s = canvas.create_word_box(70, 122)
+    assert s is not None
+    orig = (s.x, s.y, s.w, s.h)
+    press(canvas, s.x + s.w / 2, s.y + s.h / 2)
+    move(canvas, s.x + s.w / 2 + 60, s.y + s.h / 2 + 40)
+    release(canvas, s.x + s.w / 2 + 60, s.y + s.h / 2 + 40)
+    assert abs(s.x - (orig[0] + 60)) <= 2 and abs(s.y - (orig[1] + 40)) <= 2
+    assert (s.w, s.h) == (orig[2], orig[3])  # a move, not a snap-resize
+
+
+def test_word_box_vertical_resize_is_free(canvas):
+    canvas.resetTransform()
+    canvas.centerOn(120, 122)
+    s = canvas.create_word_box(70, 122)
+    assert s is not None
+    orig = (s.x, s.y, s.w, s.h)
+    press(canvas, s.x + s.w / 2, s.y)  # top-middle handle
+    assert canvas.gesture and canvas.gesture["type"] == "resize"
+    move(canvas, s.x + s.w / 2, s.y - 15)
+    release(canvas, s.x + s.w / 2, s.y - 15)
+    assert s.h > orig[3] + 10  # grew upward freely
+    assert abs(s.x - orig[0]) <= 1.5 and abs(s.w - orig[2]) <= 1.5
+
+
 def test_move_is_clamped_to_image(canvas):
     s = add_shape(canvas, 10, 10, w=50, h=30)
     press(canvas, 20, 20)

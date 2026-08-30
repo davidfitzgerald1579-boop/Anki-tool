@@ -76,16 +76,15 @@ def test_word_box_never_overlaps_neighbour_ink(qapp):
         found = wordsnap.word_box_at(img, cx, cy)
         assert found is not None, "no box for word %d" % i
         (x, y, w, h), line = found
-        # columns just outside the box hold no ink on this line
+        # columns just outside the box hold no ink (nothing much darker
+        # than the white background) on this line
         for probe_x in (int(x) - 1, int(x + w) + 1):
             if probe_x < 0 or probe_x >= img.width():
                 continue
             for probe_y in range(line.top, line.bottom + 1):
                 c = img.pixelColor(probe_x, probe_y)
-                dist = (
-                    abs(c.red() - 255) + abs(c.green() - 255) + abs(c.blue() - 255)
-                )
-                assert dist <= wordsnap.INK_THRESHOLD
+                luma = (c.red() * 299 + c.green() * 587 + c.blue() * 114) / 1000
+                assert 255 - luma <= wordsnap.LUMA_MARGIN
 
 
 def test_snap_box_swallows_and_releases_whole_words(qapp):
@@ -168,6 +167,63 @@ def test_tight_leading_lines_do_not_merge(qapp):
 
 
 from PyQt6.QtCore import QPointF  # noqa: E402
+
+
+def test_wrapped_highlight_does_not_merge_lines(qapp):
+    """Regression: BPP highlights words in yellow, and a highlight that
+    wraps at a line break fills the whole gap between the two lines with
+    colour. Ink must mean dark strokes only, so the highlight band is
+    invisible to line detection."""
+    font = QFont("Arial", 15)
+    fm = QFontMetrics(font)
+    line1 = "hear appeals on a wide range of cases"
+    line2 = "All Court of Appeal judges are senior"
+    b1 = 40
+    b2 = b1 + fm.height() + 2
+
+    # x-extent of "Appeal judges" on line 2 - the highlighted words
+    x = 20.0
+    coords = {}
+    for word in line2.split(" "):
+        adv = fm.horizontalAdvance(word)
+        coords[word] = (x, x + adv)
+        x += adv + fm.horizontalAdvance(" ")
+    hl_x0 = coords["Appeal"][0] - 4
+    hl_x1 = coords["judges"][1] + 4
+
+    img = QImage(760, 120, QImage.Format.Format_RGB32)
+    img.fill(QColor("#ffffff"))
+    p = QPainter(img)
+    # the yellow band spans from inside line 1 down through line 2,
+    # bridging the entire inter-line gap (like a wrapped highlight)
+    p.fillRect(
+        QRectF(hl_x0, b1 - 8, hl_x1 - hl_x0, (b2 + 5) - (b1 - 8)),
+        QColor("#ffe94d"),
+    )
+    p.setPen(QColor("#222222"))
+    p.setFont(font)
+    p.drawText(QPointF(20, b1), line1)
+    p.drawText(QPointF(20, b2), line2)
+    p.end()
+
+    # click an unhighlighted word on line 2 ("senior")
+    cx = (coords["senior"][0] + coords["senior"][1]) / 2
+    found = wordsnap.word_box_at(img, cx, b2 - fm.ascent() / 2)
+    assert found is not None
+    (bx, by, bw, bh), line = found
+    assert bh <= fm.height() + 12  # one line, not a merged section
+    assert by > b1  # stays on line 2
+    assert bw < fm.horizontalAdvance("are senior")  # one word only
+
+    # click a word INSIDE the yellow highlight ("judges")
+    cx2 = (coords["judges"][0] + coords["judges"][1]) / 2
+    found2 = wordsnap.word_box_at(img, cx2, b2 - fm.ascent() / 2)
+    assert found2 is not None
+    (jx, jy, jw, jh), _ = found2
+    assert jh <= fm.height() + 12
+    assert jx <= coords["judges"][0] + 3
+    assert jx + jw >= coords["judges"][1] - 3
+    assert jw < fm.horizontalAdvance("Appeal judges")
 
 
 def test_no_word_in_empty_area(qapp):

@@ -16,7 +16,12 @@ from dataclasses import dataclass
 from .color_utils import majority_color
 from .qtshim import QImage
 
-INK_THRESHOLD = 90  # manhattan RGB distance from background to count as ink
+# Ink means DARK STROKES, not "different from the background": BPP slides
+# put yellow highlight bands and pink callout boxes behind the text, and a
+# wrapped highlight fills the gap between two lines. Those are backgrounds,
+# not ink - only pixels substantially darker than the local background
+# count, so highlights/callouts/decorative dots are invisible here.
+LUMA_MARGIN = 60  # luminance difference from background to count as ink
 BAND_HALF = 90  # rows examined above/below the click
 MAX_LINE_H = 140  # sanity cap on a text line's height
 MIN_RUN_W = 2  # ignore single-column specks
@@ -50,13 +55,19 @@ class Line:
         return self.bottom - self.top + 1
 
 
+def _luma_1000(r: int, g: int, b: int) -> int:
+    return r * 299 + g * 587 + b * 114  # standard weights, x1000
+
+
 def _ink_rows(img: QImage, y0: int, y1: int):
     """Boolean ink map for rows y0..y1 (exclusive), full image width."""
     crop = img.copy(0, y0, img.width(), y1 - y0).convertToFormat(
         QImage.Format.Format_RGB32
     )
     bg = majority_color(crop)
-    br, bgc, bb = bg.red(), bg.green(), bg.blue()
+    bg_luma = _luma_1000(bg.red(), bg.green(), bg.blue())
+    dark_background = bg_luma < 128000  # rare: light text on a dark slide
+    margin = LUMA_MARGIN * 1000
     ptr = crop.constBits()
     ptr.setsize(crop.sizeInBytes())
     data = bytes(ptr)
@@ -68,11 +79,11 @@ def _ink_rows(img: QImage, y0: int, y1: int):
         row = bytearray(w)
         for c in range(w):
             o = base + c * 4  # Format_RGB32 little-endian: B, G, R, A
-            if (
-                abs(data[o + 2] - br)
-                + abs(data[o + 1] - bgc)
-                + abs(data[o] - bb)
-            ) > INK_THRESHOLD:
+            luma = _luma_1000(data[o + 2], data[o + 1], data[o])
+            if dark_background:
+                if luma - bg_luma > margin:
+                    row[c] = 1
+            elif bg_luma - luma > margin:
                 row[c] = 1
         rows.append(row)
     return rows

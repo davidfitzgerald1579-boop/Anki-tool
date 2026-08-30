@@ -217,6 +217,8 @@ class OcclusionCanvas(QGraphicsView):
         self._shape_clipboard: str | None = None
         self._clipboard_bbox: QRectF | None = None  # where the copy came from
         self._paste_anchor: QRectF | None = None  # where the last paste went
+        self._last_word_click: tuple | None = None
+        self._own_clipboard_write = False  # debug images we put on clipboard
 
         self._scene = QGraphicsScene(self)
         self.setScene(self._scene)
@@ -480,6 +482,45 @@ class OcclusionCanvas(QGraphicsView):
             self.peek_ids.add(shape_id)
         self.viewport().update()
 
+    def copy_wordsnap_debug(self) -> None:
+        """Copy an annotated view of the last word-detection to the
+        clipboard: blue = detected line, red = detected words, green cross
+        = the click. For diagnosing double-click misfires on real slides."""
+        if self.image is None or self._last_word_click is None:
+            return
+        cx, cy = self._last_word_click
+        line = wordsnap.analyze_line(self.image, cx, cy)
+        img = self.image.copy()
+        p = QPainter(img)
+        if line is not None:
+            pen = QPen(QColor("#1a73e8"), 2)
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawRect(
+                QRectF(1, line.top - 1, img.width() - 3, line.height + 2)
+            )
+            p.setPen(QPen(QColor("#e6194b"), 2))
+            for rx0, rx1 in line.runs:
+                p.drawRect(
+                    QRectF(rx0 - 1, line.top - 3, rx1 - rx0 + 3, line.height + 6)
+                )
+        p.setPen(QPen(QColor("#00a000"), 3))
+        p.drawLine(QPointF(cx - 12, cy), QPointF(cx + 12, cy))
+        p.drawLine(QPointF(cx, cy - 12), QPointF(cx, cy + 12))
+        p.end()
+        y0 = max(0, int(cy) - wordsnap.BAND_HALF - 20)
+        y1 = min(img.height(), int(cy) + wordsnap.BAND_HALF + 20)
+        self._own_clipboard_write = True
+        QApplication.clipboard().setImage(
+            img.copy(0, y0, img.width(), y1 - y0)
+        )
+        QToolTip.showText(
+            QCursor.pos(),
+            "Word-detection debug image copied to clipboard — paste it "
+            "into the chat.",
+            self,
+        )
+
     # ------------------------------------------------------------ copy/paste
 
     def copy_selection(self) -> None:
@@ -661,6 +702,14 @@ class OcclusionCanvas(QGraphicsView):
             # resample the pixels and lose the 1:1 snip quality
             return None
         size = HANDLE_SCREEN_PX / self.view_scale() * 1.5  # generous hit area
+        # the centre of a shape is ALWAYS move territory: on a small box
+        # (e.g. a word box) the handle zones would otherwise blanket the
+        # whole surface and make it impossible to grab and move
+        mx = min(size / 2, s.w / 3)
+        my = min(size / 2, s.h / 3)
+        inner = QRectF(s.x + mx, s.y + my, s.w - 2 * mx, s.h - 2 * my)
+        if inner.contains(pos):
+            return None
         for code, hr in enumerate(self.handle_rects(s, size)):
             if hr.contains(pos):
                 return code
@@ -707,6 +756,20 @@ class OcclusionCanvas(QGraphicsView):
             return
 
         if self.tool in (TOOL_RECT, TOOL_ERASE, TOOL_PATCH, TOOL_HIGHLIGHT):
+            # click-and-hold on a shape of the tool's own kind grabs and
+            # moves it instead of drawing on top of it; other kinds are
+            # ignored so e.g. a mask can still be drawn over a highlight
+            grabs = {
+                TOOL_RECT: MASK_KINDS,
+                TOOL_ERASE: (KIND_ERASE,),
+                TOOL_PATCH: (KIND_PATCH,),
+                TOOL_HIGHLIGHT: (KIND_HIGHLIGHT,),
+            }[self.tool]
+            hit = self.shape_at(pos)
+            if hit is not None and hit.kind in grabs:
+                self._press_on_shape(hit, pos, shift, ctrl)
+                event.accept()
+                return
             kind = {
                 TOOL_RECT: KIND_RECT,
                 TOOL_ERASE: KIND_ERASE,
@@ -724,38 +787,7 @@ class OcclusionCanvas(QGraphicsView):
 
         s = self.shape_at(pos)
         if s is not None:
-            if shift:
-                # Shift+click ONLY toggles selection - it can never drag, so
-                # building up a group selection can't nudge shapes around.
-                if s.id in self.selection:
-                    self.selection.discard(s.id)
-                else:
-                    self.selection.add(s.id)
-                self.selection_changed.emit()
-                self.viewport().update()
-                event.accept()
-                return
-            if s.id not in self.selection:
-                self.selection = {s.id}
-                self.selection_changed.emit()
-                self.viewport().update()
-            # Plain drag moves only the pressed shape; Ctrl+drag moves the
-            # whole selection deliberately.
-            ids = sorted(self.selection) if ctrl else [s.id]
-            self.gesture = {
-                "type": "maybe-move",
-                "press": pos,
-                "ids": ids,
-                "orig": {
-                    sid: (
-                        self.shape_by_id(sid).x,
-                        self.shape_by_id(sid).y,
-                    )
-                    for sid in ids
-                    if self.shape_by_id(sid)
-                },
-                "moved": False,
-            }
+            self._press_on_shape(s, pos, shift, ctrl)
             event.accept()
             return
 
@@ -767,6 +799,41 @@ class OcclusionCanvas(QGraphicsView):
             "additive": shift,
         }
         event.accept()
+
+    def _press_on_shape(
+        self, s: sh.Shape, pos: QPointF, shift: bool, ctrl: bool
+    ) -> None:
+        if shift:
+            # Shift+click ONLY toggles selection - it can never drag, so
+            # building up a group selection can't nudge shapes around.
+            if s.id in self.selection:
+                self.selection.discard(s.id)
+            else:
+                self.selection.add(s.id)
+            self.selection_changed.emit()
+            self.viewport().update()
+            return
+        if s.id not in self.selection:
+            self.selection = {s.id}
+            self.selection_changed.emit()
+            self.viewport().update()
+        # Plain drag moves only the pressed shape; Ctrl+drag moves the
+        # whole selection deliberately.
+        ids = sorted(self.selection) if ctrl else [s.id]
+        self.gesture = {
+            "type": "maybe-move",
+            "press": pos,
+            "ids": ids,
+            "orig": {
+                sid: (
+                    self.shape_by_id(sid).x,
+                    self.shape_by_id(sid).y,
+                )
+                for sid in ids
+                if self.shape_by_id(sid)
+            },
+            "moved": False,
+        }
 
     def mouseMoveEvent(self, event) -> None:
         if self._pan_origin is not None:
@@ -911,6 +978,7 @@ class OcclusionCanvas(QGraphicsView):
 
     def create_word_box(self, cx: float, cy: float) -> sh.Shape | None:
         """Mask box snapped to the word under (cx, cy); see wordsnap.py."""
+        self._last_word_click = (cx, cy)  # for the Ctrl+D debug snapshot
         found = wordsnap.word_box_at(self.image, cx, cy)
         if found is None:
             return None
@@ -1082,6 +1150,8 @@ class OcclusionCanvas(QGraphicsView):
             self.set_tool(TOOL_HIGHLIGHT)
         elif key == Qt.Key.Key_T:
             self.toggle_xray()
+        elif ctrl and key == Qt.Key.Key_D:
+            self.copy_wordsnap_debug()
         elif key == Qt.Key.Key_F or key == Qt.Key.Key_0:
             self.fit()
         elif key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
@@ -1190,15 +1260,24 @@ class OcclusionCanvas(QGraphicsView):
             y0, y1 = y1, y0
 
         line = g.get("wordline")
-        if s.snap == SNAP_WORD and line is not None:
-            # word boxes resize word-by-word: every word the drag touches
-            # is covered completely, none is ever half-covered
-            s.x, s.y, s.w, s.h = wordsnap.snap_box(
+        if (
+            s.snap == SNAP_WORD
+            and line is not None
+            and h in (H_L, H_R, H_TL, H_TR, H_BL, H_BR)
+        ):
+            # word boxes resize word-by-word HORIZONTALLY: every word the
+            # drag touches is covered completely, none half-covered. The
+            # vertical extent stays under the user's control (top/bottom
+            # handles resize freely, side handles leave height alone).
+            bx, _by, bw, _bh = wordsnap.snap_box(
                 line, x0, x1, anchor_cx=ox + ow / 2
             )
-            return
-        s.x, s.y = x0, y0
-        s.w, s.h = max(x1 - x0, MIN_SHAPE_PX), max(y1 - y0, MIN_SHAPE_PX)
+            s.x, s.w = bx, bw
+        else:
+            s.x = x0
+            s.w = max(x1 - x0, MIN_SHAPE_PX)
+        s.y = y0
+        s.h = max(y1 - y0, MIN_SHAPE_PX)
 
     # Public paint hook: draw the in-progress shape via the overlay
     def draw_gesture_shape(self, painter: QPainter) -> None:
