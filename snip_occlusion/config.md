@@ -19,6 +19,16 @@
   (Hide One, Guess One). Default: `"hag1"`.
 - `nudge_step` / `nudge_step_large`: pixels moved by arrow keys /
   Shift+arrow keys. Defaults: `1` / `10`.
+- `ocr_backend`: engine used to read the card image's text into the
+  hidden, searchable "Search Text" field. `"auto"` (default) uses the OCR
+  built into Windows 10/11, falling back to Tesseract if installed;
+  `"windows"`, `"tesseract"`, or `"none"` force a choice.
+- `tesseract_path`: full path to `tesseract.exe` if it isn't on PATH.
+- `tesseract_user_words`: optional path to a text file of extra
+  vocabulary (one word per line, e.g. legal terms) to bias Tesseract.
+- `ocr_corrections`: map of recurring OCR misreads to their fixes,
+  applied to every future card, e.g. `{"K80": "KBD", "UTlAC": "UTIAC"}`.
+  Use the editor's "Text preview" button to find misreads worth adding.
 
 Note: `mask_fill` and `target_fill` are written into the note type's CSS
 when the note type is first created. To restyle existing cards, edit the

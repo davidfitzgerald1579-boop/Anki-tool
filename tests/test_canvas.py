@@ -315,6 +315,9 @@ def test_patch_can_be_parked_outside_the_image(canvas):
     canvas.set_tool(TOOL_PATCH)
     drag(canvas, 100, 100, 250, 140)
     p = canvas.shapes[0]
+    # zoom out so the parking area around the slide is on screen (a drag
+    # that leaves the widget becomes a drag-and-drop to the queue instead)
+    canvas.zoom(0.5)
     # drag it far left, well past the image edge
     press(canvas, p.x + 10, p.y + 10)
     move(canvas, p.x - 220, p.y + 10)
@@ -332,9 +335,11 @@ def test_fit_keeps_parked_patch_visible(canvas, qapp):
     canvas.set_tool(TOOL_PATCH)
     drag(canvas, 100, 100, 250, 140)
     p = canvas.shapes[0]
+    canvas.zoom(0.5)
     press(canvas, p.x + 10, p.y + 10)
     move(canvas, p.x - 200, p.y + 10)
     release(canvas, p.x - 200, p.y + 10)
+    assert p.x < -50  # actually parked outside before fitting
     canvas.fit()
     qapp.processEvents()
     vp = canvas.viewport().rect()
@@ -357,6 +362,20 @@ def test_resize_works_inside_box_tool(canvas):
     # drawing away from the handles still draws
     drag(canvas, 300, 300, 380, 340)
     assert len(canvas.shapes) == 2
+
+
+def test_take_patch_extracts_exact_pixels_and_removes_shape(canvas):
+    canvas.set_tool(TOOL_PATCH)
+    drag(canvas, 100, 100, 300, 160)
+    p = canvas.shapes[0]
+    img = canvas.take_patch(p.id)
+    assert img.width() == round(p.w) and img.height() == round(p.h)
+    assert img.pixelColor(10, 10) == canvas.image.pixelColor(
+        round(p.sx) + 10, round(p.sy) + 10
+    )
+    assert canvas.shapes == []  # removed from the canvas
+    canvas.undo()
+    assert len(canvas.shapes) == 1  # but restorable
 
 
 def test_move_is_clamped_to_image(canvas):

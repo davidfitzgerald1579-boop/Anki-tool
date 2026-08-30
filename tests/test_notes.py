@@ -93,6 +93,47 @@ def test_rendered_card_contains_masks_and_scripts(col):
     assert 'IO_SIDE = "a"' in a
 
 
+def test_search_text_field_saved_and_searchable(col):
+    deck_id = col.decks.id("Default")
+    notes_mod.add_occlusion_notes(
+        col, deck_id, "x.png", sample_shapes(), 800, 500,
+        MODE_HIDE_ALL, "", "", "", "#FFEBA2", "#FF7E7E",
+        search_text="The Administrative Court reviews lawfulness",
+    )
+    nids = col.find_notes("")
+    for nid in nids:
+        assert "Administrative" in col.get_note(nid)["Search Text"]
+    # Anki search finds the image-only cards via the hidden field
+    assert set(col.find_notes("lawfulness")) == set(nids)
+
+
+def test_old_note_type_upgraded_in_place_with_new_field(col):
+    # simulate a note type created by v0.3 (no "Search Text" field)
+    mm = col.models
+    old = mm.new(MODEL_NAME)
+    for fname in FIELDS:
+        if fname == "Search Text":
+            continue
+        mm.add_field(old, mm.new_field(fname))
+    t = mm.new_template("Occlusion Card")
+    t["qfmt"] = "{{Image}}"
+    t["afmt"] = "{{Image}}"
+    mm.add_template(old, t)
+    mm.add(old)
+    old = mm.by_name(MODEL_NAME)
+    note = col.new_note(old)
+    note["Occlusion ID"] = "legacy-1"
+    col.add_note(note, col.decks.id("Default"))
+
+    nt = notes_mod.ensure_note_type(col, "#FFEBA2", "#FF7E7E")
+    # upgraded in place: same id, no "Snip Occlusion 2", field added
+    assert nt["id"] == old["id"]
+    assert mm.by_name(MODEL_NAME + " 2") is None
+    assert "Search Text" in {f["name"] for f in nt["flds"]}
+    legacy = col.get_note(col.find_notes("legacy-1")[0])
+    assert legacy["Search Text"] == ""
+
+
 def test_incompatible_existing_model_gets_suffixed_name(col):
     mm = col.models
     bogus = mm.new(MODEL_NAME)

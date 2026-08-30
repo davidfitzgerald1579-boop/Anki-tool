@@ -12,7 +12,11 @@ FIELDS = [
     "Masks",
     "Target",
     "Mode",
+    "Search Text",  # OCR of the card image; searchable, never displayed
 ]
+
+# Fields that identify a note type as ours (for in-place field upgrades)
+MARKER_FIELDS = {"Occlusion ID", "Masks", "Target", "Mode"}
 CARD_NAME = "Occlusion Card"
 
 # Card generation modes
@@ -47,6 +51,10 @@ DEFAULT_CONFIG = {
     "default_mode": MODE_HIDE_ALL,
     "nudge_step": 1,
     "nudge_step_large": 10,
+    "ocr_backend": "auto",  # "auto" | "windows" | "tesseract" | "none"
+    "tesseract_path": "",
+    "tesseract_user_words": "",
+    "ocr_corrections": {},
 }
 
 # Distinct colors used for group badges in the editor

@@ -11,6 +11,8 @@ from aqt.utils import showWarning, tooltip
 
 from .qtshim import *  # noqa: F401,F403
 from . import notes as notes_mod
+from . import ocr
+from .newcard_panel import NewCardQueuePanel
 from .consts import (
     ADDON_NAME,
     DEFAULT_CONFIG,
@@ -46,10 +48,21 @@ Press <b>P</b>, drag over the text you want to KEEP - it becomes a movable \
 pixel-perfect cutout. Drag it aside, cover the paragraph with <b>C</b>, \
 then drag the cutout back on top. Right-click it to snap it home. Patches \
 are baked into the image, never resized, never part of a card.<br><br>
+<b>New card queue</b> (spin a sentence off to its own card)<br>
+Drag a snip patch off the window and drop it on a queued card, or \
+right-click it &rarr; "Send to new card". Several snips can be dropped on \
+one card; they stack on a background matching the slide (🎨 to change). \
+"Start" loads the next queued card into the editor to draw its boxes; \
+queued cards also load automatically after you press Add Cards.<br><br>
+<b>Search text (OCR)</b><br>
+When cards are added, the text on the image is read automatically and \
+stored invisibly on each card so deck search can find it. Use "Text \
+preview" to check what is being read; fix recurring misreads via \
+"ocr_corrections" in the add-on config.<br><br>
 <b>Other</b><br>
 Ctrl+Z / Ctrl+Y undo &middot; redo &middot; Del = delete &middot; \
 Ctrl+wheel = zoom &middot; F = fit &middot; middle-drag = pan &middot; \
-F11 = full screen<br>
+F11 = full screen &middot; ⟨ hides the toolbar<br>
 Ctrl+Enter = Add Cards"""
 
 
@@ -164,7 +177,7 @@ class SnipOcclusionDialog(QDialog):
         super().__init__(parent or mw)
         self.config = get_config()
         self.setWindowTitle(ADDON_NAME)
-        self.setMinimumSize(900, 620)
+        self.setMinimumSize(960, 680)
         # give the dialog real minimize/maximize buttons so the image can be
         # edited at full size; F11 toggles borderless full screen
         self.setWindowFlags(
@@ -190,7 +203,7 @@ class SnipOcclusionDialog(QDialog):
         btn.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
-        btn.setMinimumHeight(32)
+        btn.setMinimumHeight(28)
         btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         return btn
 
@@ -274,11 +287,45 @@ class SnipOcclusionDialog(QDialog):
         self.swatch_btn.setMenu(swatch_menu)
         side.addWidget(self.swatch_btn)
 
+        ocr_btn = self._side_button(
+            "🔍 Text preview",
+            "Show the text OCR reads from the current image - the same text "
+            "that will be stored (invisibly) on the cards so deck search "
+            "can find them. Use it to spot misreads worth adding to the "
+            "corrections list in the add-on config.",
+        )
+        qconnect(ocr_btn.clicked, self._show_ocr_preview)
+        side.addWidget(ocr_btn)
+
+        side.addWidget(self._separator())
+        self.queue_panel = NewCardQueuePanel(self)
+        self.queue_panel.patch_drop_handler = self._on_patch_dropped_to_card
+        qconnect(
+            self.queue_panel.start_next_requested, self._start_next_clicked
+        )
+        side.addWidget(self.queue_panel)
+
         side.addStretch(1)
         help_btn = self._side_button("?  Shortcuts", "Shortcuts and tips")
         qconnect(help_btn.clicked, self._show_help)
         side.addWidget(help_btn)
+        self._side_widget = side_widget
         outer.addWidget(side_widget)
+
+        # thin collapse handle so the toolbar can slide away in full screen
+        self.collapse_btn = QToolButton(self)
+        self.collapse_btn.setText("⟨")
+        self.collapse_btn.setToolTip("Hide / show the toolbar")
+        self.collapse_btn.setFixedWidth(18)
+        self.collapse_btn.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding
+        )
+        self.collapse_btn.setStyleSheet(
+            "QToolButton{border:none;background:#f2ece1;border-radius:4px;"
+            "padding:0;}QToolButton:hover{background:#e8dfd0;}"
+        )
+        qconnect(self.collapse_btn.clicked, self._toggle_sidebar)
+        outer.addWidget(self.collapse_btn)
 
         # --- right-hand side: canvas + form
         layout = QVBoxLayout()
@@ -305,6 +352,9 @@ class SnipOcclusionDialog(QDialog):
 
         qconnect(self.canvas.shapes_changed, self._refresh_counts)
         qconnect(self.canvas.tool_changed, self._tool_synced)
+        qconnect(
+            self.canvas.send_patch_to_new_card, self._send_patch_to_new_card
+        )
 
         # --- bottom form
         form = QGridLayout()
@@ -400,6 +450,8 @@ class SnipOcclusionDialog(QDialog):
         self._update_swatch()
         self._refresh_counts()
         self.clip_btn.setStyleSheet("")
+        # new queue cards default to this slide's background colour
+        self.queue_panel.default_bg = self.canvas.majority
         return True
 
     def _on_clipboard_changed(self) -> None:
@@ -475,6 +527,107 @@ class SnipOcclusionDialog(QDialog):
         else:
             self.showFullScreen()
 
+    def _toggle_sidebar(self) -> None:
+        hidden = self._side_widget.isVisible()
+        self._side_widget.setVisible(not hidden)
+        self.collapse_btn.setText("⟩" if hidden else "⟨")
+
+    # ------------------------------------------------------- new card queue
+
+    def _send_patch_to_new_card(self, patch_id: str) -> None:
+        img = self.canvas.take_patch(patch_id)
+        if img is None:
+            return
+        self.queue_panel.default_bg = self.canvas.majority
+        self.queue_panel.add_card_with_snip(img)
+        tooltip("Snip sent to a new card in the queue", parent=self)
+
+    def _on_patch_dropped_to_card(self, card_id: int, patch_id: str) -> bool:
+        card = self.queue_panel.queue.card_by_id(card_id)
+        if card is None:
+            return False
+        img = self.canvas.take_patch(patch_id)
+        if img is None:
+            return False
+        card.add_snip(img)
+        return True
+
+    def _start_next_clicked(self) -> None:
+        if self.canvas.has_shapes():
+            resp = QMessageBox.question(
+                self,
+                ADDON_NAME,
+                "Discard the current masks and start the next queued card?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if resp != QMessageBox.StandardButton.Yes:
+                return
+        self._load_next_queued()
+
+    def _load_next_queued(self) -> bool:
+        card = self.queue_panel.pop_next()
+        if card is None:
+            return False
+        self.canvas.set_image(card.compose())
+        self.stack.setCurrentWidget(self.canvas)
+        self.canvas.setFocus()
+        self._update_swatch()
+        self._refresh_counts()
+        remaining = len(self.queue_panel.queue)
+        tooltip(
+            "Queued card loaded — draw boxes and Add Cards%s"
+            % ("" if not remaining else " (%d more queued)" % remaining),
+            parent=self,
+        )
+        return True
+
+    # ------------------------------------------------------------------ OCR
+
+    def _show_ocr_preview(self) -> None:
+        if not self.canvas.has_image():
+            showWarning("Snip a slide first.", parent=self, title=ADDON_NAME)
+            return
+        backend = ocr.available_backend(self.config)
+        if backend == "none":
+            QMessageBox.information(
+                self,
+                ADDON_NAME,
+                "No OCR engine is available.\n\nOn Windows the built-in OCR "
+                "is used automatically; elsewhere install Tesseract and set "
+                "tesseract_path in the add-on config.",
+            )
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            text = ocr.extract_text(self.canvas.bake_image(), self.config)
+        except Exception as exc:
+            QApplication.restoreOverrideCursor()
+            showWarning("OCR failed: %s" % exc, parent=self, title=ADDON_NAME)
+            return
+        QApplication.restoreOverrideCursor()
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Search text preview (%s OCR)" % backend)
+        dlg.resize(560, 420)
+        lay = QVBoxLayout(dlg)
+        info = QLabel(
+            "This text is stored invisibly on each card so deck search can "
+            "find it. Spot a misread? Add it to \"ocr_corrections\" in the "
+            "add-on config (Tools → Add-ons → Snip Occlusion → Config), "
+            'e.g. {"K80": "KBD"} — it will be fixed on all future cards.',
+            dlg,
+        )
+        info.setWordWrap(True)
+        lay.addWidget(info)
+        box = QPlainTextEdit(dlg)
+        box.setPlainText(text or "(nothing recognized)")
+        box.setReadOnly(True)
+        lay.addWidget(box, 1)
+        close = QPushButton("Close", dlg)
+        qconnect(close.clicked, dlg.accept)
+        lay.addWidget(close)
+        dlg.exec()
+
     def _swatch_auto(self) -> None:
         self.canvas.erase_color_override = None
         self._update_swatch()
@@ -542,6 +695,19 @@ class SnipOcclusionDialog(QDialog):
                 return
 
         baked = self.canvas.bake_image()
+
+        # OCR the finished image so the cards are findable by deck search;
+        # a failure must never block card creation
+        search_text = ""
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            search_text = ocr.extract_text(baked, self.config)
+        except Exception as exc:
+            tooltip("Cards added without search text (OCR failed: %s)" % exc,
+                    parent=self, period=5000)
+        finally:
+            QApplication.restoreOverrideCursor()
+
         buf = QBuffer()
         buf.open(QIODevice.OpenModeFlag.WriteOnly)
         baked.save(buf, "PNG")
@@ -567,28 +733,43 @@ class SnipOcclusionDialog(QDialog):
             self.tags_edit.text().strip(),
             self.config.get("mask_fill", "#FFEBA2"),
             self.config.get("target_fill", "#FF7E7E"),
+            search_text,
         )
         mw.reset()
         tooltip("Added %d card%s" % (n, "" if n == 1 else "s"), parent=self)
 
         if self.config.get("close_after_add", False):
             self.accept()
-        else:
-            # clear the workspace for the next snip (undo-able)
-            self.canvas.push_undo()
-            self.canvas.shapes = []
-            self.canvas.selection = set()
-            self.canvas._emit_changed()
-            self.canvas.setFocus()
+            return
+        # clear the workspace for the next snip (undo-able)
+        self.canvas.push_undo()
+        self.canvas.shapes = []
+        self.canvas.selection = set()
+        self.canvas._emit_changed()
+        self.canvas.setFocus()
+        # queued cards flow in automatically once the slide is done
+        if self.queue_panel.has_cards():
+            self._load_next_queued()
 
     # ---------------------------------------------------------------- close
 
     def closeEvent(self, event) -> None:
+        losses = []
         if self.canvas.has_shapes():
+            losses.append("the current masks")
+        if self.queue_panel.has_cards():
+            losses.append(
+                "%d queued card%s"
+                % (
+                    len(self.queue_panel.queue),
+                    "" if len(self.queue_panel.queue) == 1 else "s",
+                )
+            )
+        if losses:
             resp = QMessageBox.question(
                 self,
                 ADDON_NAME,
-                "Close and discard the current masks?",
+                "Close and discard %s?" % " and ".join(losses),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if resp != QMessageBox.StandardButton.Yes:

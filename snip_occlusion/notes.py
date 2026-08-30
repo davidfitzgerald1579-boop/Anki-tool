@@ -10,7 +10,7 @@ import json
 import uuid
 
 from . import template
-from .consts import CARD_NAME, FIELDS, MODEL_NAME
+from .consts import CARD_NAME, FIELDS, MARKER_FIELDS, MODEL_NAME
 from .shapes import normalized_payload, target_groups
 
 
@@ -19,12 +19,18 @@ def _by_name(models, name: str):
     return getter(name)
 
 
+def _save(models, nt) -> None:
+    saver = getattr(models, "update_dict", None) or getattr(models, "save")
+    saver(nt)
+
+
 def ensure_note_type(col, mask_fill: str, target_fill: str):
     """Find or create the Snip Occlusion note type.
 
-    If a note type with our name exists and has all required fields it is
-    reused untouched (so user customizations survive). If the name is taken
-    by something incompatible, a suffixed variant is created instead.
+    An existing note type of ours that merely lacks newer fields (e.g.
+    "Search Text" added in v0.4) is upgraded in place - existing notes keep
+    working and simply gain the empty field. Only a name collision with an
+    unrelated note type falls back to a suffixed variant.
     """
     mm = col.models
     name = MODEL_NAME
@@ -35,6 +41,12 @@ def ensure_note_type(col, mask_fill: str, target_fill: str):
         existing = {f["name"] for f in nt["flds"]}
         if all(f in existing for f in FIELDS):
             return nt
+        if MARKER_FIELDS <= existing:
+            for fname in FIELDS:
+                if fname not in existing:
+                    mm.add_field(nt, mm.new_field(fname))
+            _save(mm, nt)
+            return _by_name(mm, name)
         name = "%s %d" % (MODEL_NAME, attempt + 2)
 
     nt = mm.new(name)
@@ -62,6 +74,7 @@ def add_occlusion_notes(
     tags: str,
     mask_fill: str,
     target_fill: str,
+    search_text: str = "",
 ) -> int:
     """Create one note (= one card) per target group. Returns notes added."""
     targets = target_groups(shapes)
@@ -84,6 +97,7 @@ def add_occlusion_notes(
         note["Masks"] = payload
         note["Target"] = group
         note["Mode"] = mode
+        note["Search Text"] = search_text
         if tag_list:
             note.tags = list(tag_list)
         col.add_note(note, deck_id)

@@ -4,6 +4,25 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.4.0 — 2026-08-30
+
+- **Searchable cards (OCR).** When cards are added, the text on the
+  finished image is read automatically (Windows' built-in OCR on Windows;
+  Tesseract if installed) and stored invisibly in a new "Search Text"
+  field, so deck-search add-ons and Anki's browser can find image-only
+  cards. Existing Snip Occlusion note types are upgraded in place.
+  A "Text preview" button shows exactly what was read, and an
+  `ocr_corrections` config map fixes recurring misreads on all future
+  cards.
+- **New card queue.** Send a snip patch to its own brand-new card:
+  drag it off the canvas onto a queued card (or right-click → "Send to
+  new card"). Multiple snips stack on one card, on a background matching
+  the slide's colour (changeable per card, 🎨). Queue cards show live
+  thumbnails, can be added empty or deleted, and load into the editor
+  for masking automatically after Add Cards (or on demand via "Start").
+- The left toolbar can now be collapsed/expanded with a slim ⟨ / ⟩
+  handle — useful in full screen.
+
 ## v0.3.0 — 2026-08-30
 
 - Snip patches can now be parked **anywhere on the canvas**, including

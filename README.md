@@ -29,6 +29,8 @@ Occlusion keeps everything that works and fixes what doesn't:
 | "Hide All, Guess One" and "Hide One, Guess One" card generation | **Dragging one shape moves only that shape**, even when several are selected. Hold **Ctrl** while dragging to move the whole selection deliberately. |
 | Grouped shapes hidden/revealed together | **A cover-up (text eraser) tool**: draw a box over irrelevant slide text and it is filled with the slide's auto-detected majority colour, then baked into the image when cards are created. Right-click a cover-up box to sample the local background instead (for text on coloured callouts) or pick any colour. |
 | | **A snip-patch tool**: cut out the one sentence you want to *keep* as a movable, pixel-perfect patch — drag it aside, cover up the rest of the paragraph, drag it back on top. Patches are copied from the original image with no rescaling, so there is zero quality loss. |
+| | **Searchable image cards (OCR)**: when cards are added, the text on the image is read (Windows' built-in OCR, or Tesseract) and stored invisibly in a "Search Text" field, so Anki's browser and deck-search add-ons can find them. A "Text preview" button shows what was read; an `ocr_corrections` config map fixes recurring misreads permanently. |
+| | **A new-card queue**: spin a sentence off to its own card — drag a snip patch off the canvas onto a queued card (or right-click → "Send to new card"). Multiple snips stack on a background matching the slide colour; queued cards load into the editor for masking after you add the current slide's cards. |
 
 Plus editor quality-of-life: a left-hand toolbar, fully opaque masks, the
 image always fits the window (until you zoom yourself), smooth high-quality

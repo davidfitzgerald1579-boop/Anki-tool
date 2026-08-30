@@ -155,10 +155,14 @@ class _OverlayItem(QGraphicsItem):
             painter.setBrush(QBrush(QColor(26, 115, 232, 30)))
             painter.drawRect(r)
 
+PATCH_MIME = "application/x-snip-occlusion-patch"
+
+
 class OcclusionCanvas(QGraphicsView):
     shapes_changed = pyqtSignal()
     selection_changed = pyqtSignal()
     tool_changed = pyqtSignal(str)
+    send_patch_to_new_card = pyqtSignal(str)  # patch id (context menu path)
 
     def __init__(self, config: dict, parent=None):
         super().__init__(parent)
@@ -361,6 +365,27 @@ class OcclusionCanvas(QGraphicsView):
             r = self._scene.sceneRect()
             return r.left(), r.top(), r.right(), r.bottom()
         return 0.0, 0.0, float(self.image.width()), float(self.image.height())
+
+    def extract_patch_image(self, patch_id: str):
+        """The patch's pixels, cropped 1:1 from the ORIGINAL image."""
+        s = self.shape_by_id(patch_id)
+        if s is None or s.kind != KIND_PATCH or self.image is None:
+            return None
+        return self.image.copy(
+            QRect(round(s.sx or 0), round(s.sy or 0), round(s.w), round(s.h))
+        )
+
+    def take_patch(self, patch_id: str):
+        """Extract a patch's pixels and remove the patch from the canvas
+        (used when a snip is sent to a new card). Undo-able."""
+        img = self.extract_patch_image(patch_id)
+        if img is None:
+            return None
+        self.push_undo()
+        self.shapes = [s for s in self.shapes if s.id != patch_id]
+        self.selection.discard(patch_id)
+        self._emit_changed()
+        return img
 
     def patches_outside_image(self) -> list:
         """Patches that are not fully inside the image (would be cut off)."""
@@ -628,6 +653,11 @@ class OcclusionCanvas(QGraphicsView):
                 self.push_undo()
                 g["type"] = "move"
         if g["type"] == "move":
+            # dragging a lone patch off the window hands it over as a
+            # drag-and-drop payload, so it can be dropped on a queued card
+            if self._maybe_start_patch_drag(g, event):
+                event.accept()
+                return
             dx = pos.x() - g["press"].x()
             dy = pos.y() - g["press"].y()
             for sid, (ox, oy) in g["orig"].items():
@@ -743,10 +773,13 @@ class OcclusionCanvas(QGraphicsView):
             return
         if s.kind == KIND_PATCH:
             menu = QMenu(self)
+            act_send = menu.addAction("Send to new card")
             act_home = menu.addAction("Snap back to original position")
             act_del = menu.addAction("Delete\tDel")
             chosen = menu.exec(event.globalPos())
-            if chosen == act_home:
+            if chosen == act_send:
+                self.send_patch_to_new_card.emit(s.id)
+            elif chosen == act_home:
                 self.push_undo()
                 s.x, s.y = s.sx or 0, s.sy or 0
                 self._emit_changed()
@@ -851,6 +884,35 @@ class OcclusionCanvas(QGraphicsView):
         event.accept()
 
     # ---------------------------------------------------------------- helpers
+
+    def _maybe_start_patch_drag(self, g: dict, event) -> bool:
+        if len(g["ids"]) != 1:
+            return False
+        s = self.shape_by_id(g["ids"][0])
+        if s is None or s.kind != KIND_PATCH:
+            return False
+        if self.viewport().rect().contains(event.position().toPoint()):
+            return False
+        # put the patch back where the drag started; the drop decides its fate
+        ox, oy = g["orig"][s.id]
+        s.x, s.y = ox, oy
+        self.gesture = None
+        self.viewport().update()
+
+        img = self.extract_patch_image(s.id)
+        mime = QMimeData()
+        mime.setData(PATCH_MIME, s.id.encode("ascii"))
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        if img is not None:
+            drag.setPixmap(
+                QPixmap.fromImage(img).scaledToWidth(
+                    min(160, max(40, img.width())),
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+        drag.exec(Qt.DropAction.MoveAction)
+        return True
 
     @staticmethod
     def _dist(a: QPointF, b: QPointF) -> float:
