@@ -116,6 +116,60 @@ def test_analyze_line_on_bpp_style_slide(qapp):
     assert line.height < 40
 
 
+def test_tight_leading_lines_do_not_merge(qapp):
+    """Regression: BPP slides set justified text so tightly that one line's
+    descenders (g, j, y) share pixel rows with the next line's ascenders -
+    there is NO empty row between lines. Density-based detection must
+    still isolate the clicked line instead of merging both into one giant
+    'line' (which produced section-sized word boxes)."""
+    font = QFont("Arial", 15)
+    fm = QFontMetrics(font)
+    line1 = "great majority of cases enjoy judges"
+    line2 = "All Court of Appeal judges are senior"
+    b1 = 40
+    # negative leading: line 1's descenders and line 2's ascenders share
+    # rows, so no empty pixel row separates the lines (the BPP situation)
+    b2 = b1 + fm.ascent() + fm.descent() - 3
+    img = QImage(760, 120, QImage.Format.Format_RGB32)
+    img.fill(QColor("#ffffff"))
+    p = QPainter(img)
+    p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+    p.setPen(QColor("#222222"))
+    p.setFont(font)
+    p.drawText(QPointF(20, b1), line1)
+    p.drawText(QPointF(20, b2), line2)
+    p.end()
+
+    # sanity: the failure precondition holds - no empty row between lines
+    from snip_occlusion.wordsnap import _ink_rows
+
+    rows = _ink_rows(img, b1, b2)
+    assert all(any(r) for r in rows)
+
+    # click the middle of "Appeal" on line 2
+    x = 20.0
+    for word in line2.split(" "):
+        adv = fm.horizontalAdvance(word)
+        if word == "Appeal":
+            cx = x + adv / 2
+            break
+        x += adv + fm.horizontalAdvance(" ")
+    found = wordsnap.word_box_at(img, cx, b2 - fm.ascent() / 2)
+    assert found is not None
+    (bx, by, bw, bh), line = found
+    # a single word's height, not a merged two-line section (which would
+    # be roughly two ascents tall)
+    assert bh <= fm.height() + 12
+    assert bh < 2 * fm.ascent()
+    assert bx <= cx - fm.horizontalAdvance("Appeal") / 2 + 3
+    assert bx + bw >= cx + fm.horizontalAdvance("Appeal") / 2 - 3
+    assert bw < fm.horizontalAdvance("Appeal judges")  # just one word
+    assert len(line.runs) == len(line2.split(" "))
+
+
+from PyQt6.QtCore import QPointF  # noqa: E402
+
+
 def test_no_word_in_empty_area(qapp):
     img = make_text_image()
     wordsnap.word_box_at(img, 740, 60)  # far corner: must not raise

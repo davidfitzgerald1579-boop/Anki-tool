@@ -17,10 +17,22 @@ from .color_utils import majority_color
 from .qtshim import QImage
 
 INK_THRESHOLD = 90  # manhattan RGB distance from background to count as ink
-BAND_HALF = 60  # rows examined above/below the click
-MAX_LINE_H = 64  # sanity cap on a text line's height
-ROW_GAP_TOLERANCE = 2  # empty rows allowed inside one line (accents, dots)
+BAND_HALF = 90  # rows examined above/below the click
+MAX_LINE_H = 140  # sanity cap on a text line's height
 MIN_RUN_W = 2  # ignore single-column specks
+
+# Line boundaries are found by ink DENSITY, not empty rows: in tightly-set
+# justified text (BPP slides) the descenders of one line share pixel rows
+# with the next line's ascenders, so a fully empty row may never exist.
+# A line's body rows have dozens of inked columns; the overlap rows between
+# lines have only a few stray tails - the density valley marks the split.
+STRONG_FRACTION = 0.18  # of the local peak: definitely inside a line
+# Below this fraction of the peak the line has ended. Calibration: a text
+# line's x-height rows run 60-100% of peak and ascender-only rows 20-40%,
+# while stray descender tails between lines carry only 2-8% - so 12%
+# separates them. A line's own descenders may be trimmed here too; the
+# per-word vertical refinement in box_for_runs adds them back.
+WEAK_FRACTION = 0.12
 
 
 @dataclass
@@ -30,6 +42,8 @@ class Line:
     runs: list  # [(x0, x1)] inclusive ink column spans, left to right
     img_w: int
     img_h: int
+    y0: int = 0  # image row of ink[0]
+    ink: list = None  # per-row ink bytearrays for the analyzed band
 
     @property
     def height(self) -> int:
@@ -73,14 +87,20 @@ def analyze_line(img: QImage, cx: float, cy: float):
     y0 = max(0, cyi - BAND_HALF)
     y1 = min(h, cyi + BAND_HALF)
     rows = _ink_rows(img, y0, y1)
-    has_ink = [1 if any(row) else 0 for row in rows]
+    counts = [sum(row) for row in rows]  # inked columns per row
+    n = len(rows)
+    # light smoothing so single noisy rows don't split a line
+    smooth = [
+        (counts[max(0, r - 1)] + counts[r] + counts[min(n - 1, r + 1)]) / 3.0
+        for r in range(n)
+    ]
 
     # anchor on the nearest inky row to the click
     rel = cyi - y0
     anchor = None
     for d in range(0, 13):
         for cand in (rel - d, rel + d):
-            if 0 <= cand < len(rows) and has_ink[cand]:
+            if 0 <= cand < n and counts[cand] > 0:
                 anchor = cand
                 break
         if anchor is not None:
@@ -88,32 +108,40 @@ def analyze_line(img: QImage, cx: float, cy: float):
     if anchor is None:
         return None
 
-    # expand up/down, tolerating tiny internal gaps (dots on i, accents)
-    top = anchor
-    gap = 0
-    while top - 1 >= 0 and (anchor - top) < MAX_LINE_H:
-        if has_ink[top - 1]:
-            top -= 1
-            gap = 0
-        elif gap < ROW_GAP_TOLERANCE:
-            top -= 1
-            gap += 1
+    peak_lo = max(0, anchor - MAX_LINE_H // 3)
+    peak_hi = min(n, anchor + MAX_LINE_H // 3)
+    local_peak = max(smooth[peak_lo:peak_hi]) or 1.0
+    strong = max(3.0, local_peak * STRONG_FRACTION)
+    weak = max(1.5, local_peak * WEAK_FRACTION)
+
+    # seed inside the line's dense body (the click may be on a sparse
+    # ascender/descender row)
+    seed = anchor
+    for d in range(0, 19):
+        for cand in (anchor - d, anchor + d):
+            if 0 <= cand < n and smooth[cand] >= strong:
+                seed = cand
+                break
         else:
-            break
-    while not has_ink[top]:
+            continue
+        break
+
+    # expand while the density stays above the valley floor; the stop test
+    # uses RAW counts - smoothing would bridge a one-row valley between
+    # tightly-set lines and merge them
+    top = seed
+    while top - 1 >= 0 and counts[top - 1] >= weak and (seed - top) < MAX_LINE_H:
+        top -= 1
+    bottom = seed
+    while (
+        bottom + 1 < n
+        and counts[bottom + 1] >= weak
+        and (bottom - seed) < MAX_LINE_H
+    ):
+        bottom += 1
+    while top < bottom and counts[top] == 0:
         top += 1
-    bottom = anchor
-    gap = 0
-    while bottom + 1 < len(rows) and (bottom - anchor) < MAX_LINE_H:
-        if has_ink[bottom + 1]:
-            bottom += 1
-            gap = 0
-        elif gap < ROW_GAP_TOLERANCE:
-            bottom += 1
-            gap += 1
-        else:
-            break
-    while not has_ink[bottom]:
+    while bottom > top and counts[bottom] == 0:
         bottom -= 1
 
     line_h = bottom - top + 1
@@ -126,7 +154,8 @@ def analyze_line(img: QImage, cx: float, cy: float):
 
     # split ink columns into words: gaps narrower than the threshold
     # (inter-letter spacing, the sliver around a hyphen) merge into one run
-    gap_thr = min(8, max(3, round(line_h * 0.22)))
+    # (line_h is the dense body only, so the factor is a little higher)
+    gap_thr = max(3, round(line_h * 0.3))
     runs = []
     run_start = None
     gap_len = 0
@@ -146,7 +175,15 @@ def analyze_line(img: QImage, cx: float, cy: float):
         runs.append((run_start, run_end))
     if not runs:
         return None
-    return Line(top=y0 + top, bottom=y0 + bottom, runs=runs, img_w=w, img_h=h)
+    return Line(
+        top=y0 + top,
+        bottom=y0 + bottom,
+        runs=runs,
+        img_w=w,
+        img_h=h,
+        y0=y0,
+        ink=rows,
+    )
 
 
 def run_at(line: Line, cx: float):
@@ -163,10 +200,45 @@ def run_at(line: Line, cx: float):
     return best
 
 
+def _word_vertical_extent(line: Line, x0: int, x1: int):
+    """Exact ink rows of the columns x0..x1: the words' own top/bottom.
+
+    A safety net on top of line detection - even if the line estimate is
+    generous, the box hugs the actual word pixels vertically.
+    """
+    if not line.ink:
+        return line.top, line.bottom
+
+    def row_has_ink(r: int) -> bool:
+        row = line.ink[r]
+        return any(row[c] for c in range(max(0, x0), min(len(row), x1 + 1)))
+
+    core_lo = line.top - line.y0
+    core_hi = line.bottom - line.y0
+    top = bottom = None
+    for r in range(core_lo, core_hi + 1):
+        if row_has_ink(r):
+            if top is None:
+                top = r
+            bottom = r
+    if top is None:
+        return line.top, line.bottom
+    # extend CONTIGUOUSLY to pick up ascenders/descenders the density cut
+    # trimmed; stopping at the first inkless row (in these columns) keeps
+    # us from jumping across the gap into a neighbouring line
+    lo = max(0, core_lo - 10)
+    hi = min(len(line.ink) - 1, core_hi + 10)
+    while top - 1 >= lo and row_has_ink(top - 1):
+        top -= 1
+    while bottom + 1 <= hi and row_has_ink(bottom + 1):
+        bottom += 1
+    return line.y0 + top, line.y0 + bottom
+
+
 def box_for_runs(line: Line, first, last) -> tuple:
     """Padded rect covering the runs first..last completely, with padding
     that stops inside the gaps so it never overlaps a neighbouring word."""
-    pad = max(2.0, line.height * 0.15)
+    pad = max(2.0, min(line.height * 0.15, 6.0))
     idx_first = line.runs.index(first)
     idx_last = line.runs.index(last)
 
@@ -179,10 +251,11 @@ def box_for_runs(line: Line, first, last) -> tuple:
         gap = line.runs[idx_last + 1][0] - last[1] - 1
         right_pad = min(pad, max(1.0, gap / 2.0 - 1))
 
+    w_top, w_bottom = _word_vertical_extent(line, first[0], last[1])
     x0 = max(0.0, first[0] - left_pad)
     x1 = min(float(line.img_w), last[1] + 1 + right_pad)
-    y0 = max(0.0, line.top - pad)
-    y1 = min(float(line.img_h), line.bottom + 1 + pad)
+    y0 = max(0.0, w_top - pad)
+    y1 = min(float(line.img_h), w_bottom + 1 + pad)
     return x0, y0, x1 - x0, y1 - y0
 
 

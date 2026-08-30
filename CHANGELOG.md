@@ -4,6 +4,15 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.6.1 — 2026-08-30
+
+- Fixed double-click word occlusion grabbing a whole section on tightly
+  spaced slides. BPP sets justified text so tightly that one line's
+  descender tails share pixel rows with the next line's ascenders, so no
+  empty row separates lines; line detection now finds the ink-density
+  valley between lines instead of requiring an empty row, and the word
+  box hugs the clicked word's own pixels vertically.
+
 ## v0.6.0 — 2026-08-30
 
 - **See-through mode (T / 👁 button):** every box (masks and cover-ups)
