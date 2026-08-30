@@ -1,0 +1,150 @@
+"""Snip Occlusion - clipboard-first image occlusion for slide snips.
+
+Adds a Tools menu entry (default shortcut Ctrl+Shift+O) that opens the
+occlusion editor pre-loaded with whatever image is on the clipboard.
+"""
+
+try:
+    from aqt import gui_hooks, mw
+except ImportError:
+    # imported outside Anki (e.g. in tests): submodules stay importable,
+    # but there is no UI to hook into
+    gui_hooks = None
+    mw = None
+
+from .consts import ADDON_NAME, DEFAULT_CONFIG
+
+
+def _open() -> None:
+    from .dialog import open_dialog
+
+    open_dialog()
+
+
+def _editor_button_clicked(editor) -> None:
+    from .dialog import open_edit_dialog
+
+    if editor.note is None or editor.note.id == 0:
+        from aqt.utils import showWarning
+
+        showWarning(
+            "Save the note first — the ✂ button edits existing "
+            "Snip Occlusion cards.",
+            title=ADDON_NAME,
+        )
+        return
+    open_edit_dialog(editor.note.id)
+
+
+def _setup_editor_button(buttons, editor) -> None:
+    # the ✂ button in the note editor (Browse / Edit during review):
+    # re-opens this card's image with all its boxes for editing
+    btn = editor.addButton(
+        icon=None,
+        cmd="snip_occlusion_edit",
+        func=_editor_button_clicked,
+        tip="Edit this card's occlusions in Snip Occlusion",
+        label="✂",
+    )
+    buttons.append(btn)
+
+
+def _setup_menu() -> None:
+    from aqt.qt import QAction, QKeySequence
+    from aqt.utils import qconnect
+
+    cfg = dict(DEFAULT_CONFIG)
+    try:
+        cfg.update(mw.addonManager.getConfig(__name__) or {})
+    except Exception:
+        pass
+    action = QAction(ADDON_NAME + " — New from Clipboard…", mw)
+    shortcut = cfg.get("shortcut_open") or ""
+    if shortcut:
+        action.setShortcut(QKeySequence(shortcut))
+    qconnect(action.triggered, _open)
+    mw.form.menuTools.addAction(action)
+
+    text_action = QAction(ADDON_NAME + " — Write a Text Card…", mw)
+    text_shortcut = cfg.get("shortcut_text_card") or ""
+    if text_shortcut:
+        text_action.setShortcut(QKeySequence(text_shortcut))
+    qconnect(text_action.triggered, _open_text_card)
+    mw.form.menuTools.addAction(text_action)
+
+
+def _open_text_card() -> None:
+    from .textcard import open_text_card_dialog
+
+    open_text_card_dialog()
+
+
+def _delete_current_card() -> None:
+    """One-press deletion of the card being reviewed (undoable, Ctrl+Z)."""
+    from aqt.utils import tooltip
+
+    if mw.state != "review" or mw.reviewer.card is None:
+        return
+    card = mw.reviewer.card
+    note = card.note()
+    extra = ""
+    if len(note.cards()) > 1:
+        extra = " (its note had %d cards)" % len(note.cards())
+    mw.col.remove_notes([card.nid])
+    mw.reset()
+    tooltip("Card deleted%s — Ctrl+Z to undo" % extra)
+
+
+def _delete_all_cards_for_image() -> None:
+    """Delete every card generated from the current card's slide image —
+    including cards made by other occlusion tools (e.g. IOE)."""
+    from aqt.utils import askUser, tooltip
+
+    from . import notes as notes_mod
+
+    if mw.state != "review" or mw.reviewer.card is None:
+        return
+    note = mw.reviewer.card.note()
+    fname, nids = notes_mod.find_notes_sharing_image(mw.col, note)
+    if fname is None:
+        tooltip("No image found on this card")
+        return
+    n_cards = sum(len(mw.col.get_note(nid).cards()) for nid in nids)
+    if not askUser(
+        "Delete ALL %d card%s made from this image?\n\n%s\n\n"
+        "This includes the current card. Ctrl+Z undoes."
+        % (n_cards, "" if n_cards == 1 else "s", fname),
+        parent=mw,
+        defaultno=True,
+    ):
+        return
+    mw.col.remove_notes(nids)
+    mw.reset()
+    tooltip(
+        "Deleted %d card%s from this image — Ctrl+Z to undo"
+        % (n_cards, "" if n_cards == 1 else "s")
+    )
+
+
+def _review_shortcuts(state, shortcuts) -> None:
+    if state == "review":
+        shortcuts.append(("Delete", _delete_current_card))
+        shortcuts.append(("Shift+Delete", _delete_all_cards_for_image))
+
+
+def _reviewer_context_menu(reviewer, menu) -> None:
+    from aqt.utils import qconnect
+
+    action = menu.addAction("🗑 Delete this card\tDel")
+    qconnect(action.triggered, _delete_current_card)
+    action_all = menu.addAction(
+        "🗑 Delete ALL cards from this image…\tShift+Del"
+    )
+    qconnect(action_all.triggered, _delete_all_cards_for_image)
+
+
+if gui_hooks is not None:
+    gui_hooks.main_window_did_init.append(_setup_menu)
+    gui_hooks.editor_did_init_buttons.append(_setup_editor_button)
+    gui_hooks.state_shortcuts_will_change.append(_review_shortcuts)
+    gui_hooks.reviewer_will_show_context_menu.append(_reviewer_context_menu)

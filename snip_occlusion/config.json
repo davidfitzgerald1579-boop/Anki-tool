@@ -1,0 +1,11 @@
+{
+    "drag_threshold_px": 5,
+    "mask_fill": "#FFEBA2",
+    "target_fill": "#FF7E7E",
+    "erase_color_mode": "majority",
+    "shortcut_open": "Ctrl+Shift+O",
+    "close_after_add": false,
+    "default_mode": "hag1",
+    "nudge_step": 1,
+    "nudge_step_large": 10
+}
