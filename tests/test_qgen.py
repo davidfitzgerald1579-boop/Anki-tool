@@ -1,4 +1,4 @@
-"""Tests for AI question generation (API mocked - no network)."""
+"""Tests for AI question generation (server mocked - no network)."""
 
 import io
 import json
@@ -36,13 +36,6 @@ def test_parse_cards_skips_junk_and_errors():
         qgen.parse_cards("[]")
 
 
-def test_missing_api_key_raises_helpful_error():
-    assert not qgen.has_api_key({"anthropic_api_key": " "})
-    with pytest.raises(qgen.QGenError) as exc:
-        qgen.generate_cards("some text", {"anthropic_api_key": ""})
-    assert "console.anthropic.com" in str(exc.value)
-
-
 class _FakeResponse:
     def __init__(self, payload):
         self._data = json.dumps(payload).encode()
@@ -57,69 +50,108 @@ class _FakeResponse:
         return False
 
 
-def test_generate_cards_request_and_response(monkeypatch):
+_CARD_JSON = (
+    '[{"front": "Who brings forward private members\' bills?", '
+    '"back": "Individual MPs"}]'
+)
+
+
+def test_generate_cards_via_ollama(monkeypatch):
     captured = {}
 
     def fake_urlopen(request, timeout=None):
         captured["url"] = request.full_url
-        captured["headers"] = dict(request.headers)
         captured["body"] = json.loads(request.data.decode())
+        captured["timeout"] = timeout
         return _FakeResponse(
-            {
-                "stop_reason": "end_turn",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": '[{"front": "Who brings forward private '
-                        "members' bills?\", \"back\": \"Individual MPs\"}]",
-                    }
-                ],
-            }
+            {"message": {"role": "assistant", "content": _CARD_JSON}}
         )
 
     monkeypatch.setattr(qgen.urllib.request, "urlopen", fake_urlopen)
     cards = qgen.generate_cards(
         "Private members bills are brought forward by individual MPs.",
-        {"anthropic_api_key": "sk-test", "qgen_max_cards": 6},
+        {"qgen_max_cards": 6},  # ollama is the default provider
     )
     assert cards[0]["back"] == "Individual MPs"
-    assert captured["url"] == qgen.API_URL
-    assert captured["headers"]["X-api-key"] == "sk-test"
-    assert captured["headers"]["Anthropic-version"] == qgen.API_VERSION
-    assert captured["headers"]["Anthropic-beta"] == qgen.FALLBACK_BETA
-    assert captured["body"]["model"] == "claude-opus-5"
-    assert captured["body"]["fallbacks"] == "default"
+    assert captured["url"] == "http://localhost:11434/api/chat"
+    assert captured["body"]["model"] == qgen.DEFAULT_MODEL
+    assert captured["body"]["stream"] is False
     assert "individual MPs" in captured["body"]["messages"][0]["content"]
+    assert captured["timeout"] == qgen.DEFAULT_TIMEOUT_S
 
 
-def test_generate_cards_http_errors(monkeypatch):
-    def fail_401(request, timeout=None):
-        raise urllib.error.HTTPError(
-            qgen.API_URL, 401, "unauthorized", {}, io.BytesIO(b"{}")
+def test_generate_cards_via_openai_compatible(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout=None):
+        captured["url"] = request.full_url
+        captured["auth"] = request.headers.get("Authorization")
+        captured["body"] = json.loads(request.data.decode())
+        return _FakeResponse(
+            {"choices": [{"message": {"content": _CARD_JSON}}]}
         )
 
-    monkeypatch.setattr(qgen.urllib.request, "urlopen", fail_401)
+    monkeypatch.setattr(qgen.urllib.request, "urlopen", fake_urlopen)
+    cards = qgen.generate_cards(
+        "Some slide text.",
+        {
+            "qgen_provider": "openai_compatible",
+            "qgen_openai_base_url": "http://localhost:1234/v1",
+            "qgen_model": "local-model",
+            "qgen_api_key": "secret123",
+        },
+    )
+    assert cards[0]["back"] == "Individual MPs"
+    assert captured["url"] == "http://localhost:1234/v1/chat/completions"
+    assert captured["auth"] == "Bearer secret123"
+    assert captured["body"]["model"] == "local-model"
+
+
+def test_unknown_provider_raises():
     with pytest.raises(qgen.QGenError) as exc:
-        qgen.generate_cards("text", {"anthropic_api_key": "bad"})
-    assert "401" in str(exc.value)
-
-    def fail_conn(request, timeout=None):
-        raise urllib.error.URLError("offline")
-
-    monkeypatch.setattr(qgen.urllib.request, "urlopen", fail_conn)
-    with pytest.raises(qgen.QGenError) as exc:
-        qgen.generate_cards("text", {"anthropic_api_key": "k"})
-    assert "internet" in str(exc.value)
+        qgen.generate_cards("text", {"qgen_provider": "claude"})
+    assert "qgen_provider" in str(exc.value)
 
 
-def test_generate_cards_refusal(monkeypatch):
+def test_ollama_missing_model_error(monkeypatch):
     monkeypatch.setattr(
         qgen.urllib.request,
         "urlopen",
         lambda request, timeout=None: _FakeResponse(
-            {"stop_reason": "refusal", "content": []}
+            {"error": 'model "llama3.1:8b" not found'}
         ),
     )
     with pytest.raises(qgen.QGenError) as exc:
-        qgen.generate_cards("text", {"anthropic_api_key": "k"})
-    assert "declined" in str(exc.value)
+        qgen.generate_cards("text", {})
+    assert "ollama pull" in str(exc.value)
+
+
+def test_generate_cards_connection_and_http_errors(monkeypatch):
+    def fail_conn(request, timeout=None):
+        raise urllib.error.URLError("connection refused")
+
+    monkeypatch.setattr(qgen.urllib.request, "urlopen", fail_conn)
+    with pytest.raises(qgen.QGenError) as exc:
+        qgen.generate_cards("text", {})
+    # the error walks the user through installing/starting Ollama
+    assert "ollama.com" in str(exc.value)
+    assert "ollama pull" in str(exc.value)
+
+    def fail_500(request, timeout=None):
+        raise urllib.error.HTTPError(
+            "http://localhost:11434/api/chat",
+            500,
+            "boom",
+            {},
+            io.BytesIO(b"{}"),
+        )
+
+    monkeypatch.setattr(qgen.urllib.request, "urlopen", fail_500)
+    with pytest.raises(qgen.QGenError) as exc:
+        qgen.generate_cards("text", {})
+    assert "500" in str(exc.value)
+
+
+def test_empty_text_raises():
+    with pytest.raises(qgen.QGenError):
+        qgen.generate_cards("   ", {})

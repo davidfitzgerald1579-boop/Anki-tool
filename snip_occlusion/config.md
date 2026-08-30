@@ -34,14 +34,28 @@
 - `ocr_corrections`: map of recurring OCR misreads to their fixes,
   applied to every future card, e.g. `{"K80": "KBD", "UTlAC": "UTIAC"}`.
   Use the editor's "Text preview" button to find misreads worth adding.
-- `anthropic_api_key`: your Claude API key (from console.anthropic.com),
-  used only by the text card dialog's "Suggest cards" button. When you
-  click it, your snip's OCR text is sent to Anthropic's API to draft
-  question/answer cards; nothing is sent otherwise. Default: empty
-  (feature off).
-- `qgen_model`: the Claude model used for card suggestions. Default:
-  `"claude-opus-5"` (highest quality; a slide costs roughly a cent).
+- `qgen_provider`: how the text card dialog's "Suggest cards" button
+  reaches an AI model. `"ollama"` (default) talks to a free, open-source
+  model running on your own computer via [Ollama](https://ollama.com) —
+  no account, no API key, no cost, and the slide text never leaves your
+  machine. `"openai_compatible"` talks to any server exposing the OpenAI
+  chat-completions API (LM Studio, llama.cpp, Jan, vLLM, ...).
+- `qgen_model`: the model to use. Default: `"llama3.1:8b"` (download it
+  once with `ollama pull llama3.1:8b`). Other good choices:
+  `"qwen2.5:7b"`, `"mistral:7b"`, or `"llama3.2:3b"` on low-RAM
+  machines.
+- `qgen_ollama_url`: the Ollama server address. Default:
+  `"http://localhost:11434"`. Point it at another machine on your
+  network to run the model on a more powerful PC.
+- `qgen_openai_base_url`: base URL for `"openai_compatible"` servers,
+  including any `/v1` suffix. Default: `"http://localhost:1234/v1"`
+  (LM Studio's default).
+- `qgen_api_key`: optional Bearer token for `"openai_compatible"`
+  servers that require one; local servers normally don't. Unused by
+  Ollama. Default: empty.
 - `qgen_max_cards`: maximum suggested cards per slide. Default: `8`.
+- `qgen_timeout_seconds`: how long to wait for the model. Default:
+  `300` — the first request after Ollama loads a model can be slow.
 
 Note: `mask_fill` and `target_fill` are written into the note type's CSS
 when the note type is first created. To restyle existing cards, edit the

@@ -4,6 +4,19 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.10.0 — 2026-08-30
+
+- **AI card suggestions are now free, private, and fully open source.**
+  "✨ Suggest cards" no longer uses the paid Claude API — it talks to an
+  open-source model running on your own computer via
+  [Ollama](https://ollama.com) (default: `llama3.1:8b`; one-time setup:
+  install Ollama, then `ollama pull llama3.1:8b`). No account, no API
+  key, no per-request cost, and the slide text never leaves your
+  machine. Any OpenAI-compatible server (LM Studio, llama.cpp, Jan,
+  vLLM) is supported as an alternative via `qgen_provider`. The
+  `anthropic_api_key` and old `qgen_model` settings are replaced by the
+  new `qgen_*` settings — see the config help.
+
 ## v0.9.1 — 2026-08-30
 
 - **Double-click erases in the Cover-up tool.** With Cover-up (C) active,

@@ -74,9 +74,13 @@ DEFAULT_CONFIG = {
     "tesseract_path": "",
     "tesseract_user_words": "",
     "ocr_corrections": {},
-    "anthropic_api_key": "",
-    "qgen_model": "claude-opus-5",
+    "qgen_provider": "ollama",  # "ollama" | "openai_compatible"
+    "qgen_model": "llama3.1:8b",
+    "qgen_ollama_url": "http://localhost:11434",
+    "qgen_openai_base_url": "http://localhost:1234/v1",
+    "qgen_api_key": "",
     "qgen_max_cards": 8,
+    "qgen_timeout_seconds": 300,
 }
 
 # Distinct colors used for group badges in the editor
