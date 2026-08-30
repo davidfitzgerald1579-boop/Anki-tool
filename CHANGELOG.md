@@ -4,6 +4,16 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.6.3 — 2026-08-30
+
+- Fixed pink/coloured text losing its first letters in double-click word
+  boxes. Coloured text is fainter than black (and subpixel antialiasing
+  lightens it further), so some strokes fell below the fixed darkness
+  bar. Word detection now runs twice: a strict pass finds the line and
+  measures how dark its ink actually is, then an adaptive pass rescans
+  with a threshold tuned to that text colour. The threshold keeps a
+  floor that always excludes highlight bands and callout backgrounds.
+
 ## v0.6.2 — 2026-08-30
 
 - **Word detection rebuilt around dark strokes.** "Ink" now means pixels

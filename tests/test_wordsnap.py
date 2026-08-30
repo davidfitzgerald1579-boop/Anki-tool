@@ -226,6 +226,62 @@ def test_wrapped_highlight_does_not_merge_lines(qapp):
     assert jw < fm.horizontalAdvance("Appeal judges")
 
 
+def test_adaptive_threshold_recovers_faint_leading_word(qapp):
+    """Regression for pink text losing letters at the start of a sentence:
+    when a line's detected ink is faint (coloured text), the threshold is
+    re-tuned to that line, so letters too pale for the strict pass are
+    recovered. Simulated by painting the first word paler than the rest,
+    below the strict margin but above the adaptive floor."""
+    font = QFont("Arial", 15)
+    fm = QFontMetrics(font)
+    img = QImage(700, 70, QImage.Format.Format_RGB32)
+    img.fill(QColor("#ffffff"))
+    p = QPainter(img)
+    p.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+    p.setFont(font)
+    # "All" too faint for the strict pass (darkness ~50 < 60)
+    p.setPen(QColor("#f2b8cf"))
+    p.drawText(QPointF(20, 45), "All")
+    # the rest barely-strong (darkness ~80), like ClearType pink
+    rest_x = 20 + fm.horizontalAdvance("All ")
+    p.setPen(QColor("#f08bb0"))
+    p.drawText(QPointF(rest_x, 45), "Court of Appeal judges")
+    p.end()
+
+    # strict pass alone cannot see "All"...
+    strict = wordsnap._ink_rows(img, 20, 60)
+    assert not any(row[c] for row in strict for c in range(20, 38))
+    # ...but a click on it still yields a box covering it, because the
+    # adaptive pass lowers the bar to this line's actual ink darkness
+    adv = fm.horizontalAdvance("All")
+    found = wordsnap.word_box_at(img, 20 + adv / 2, 45 - fm.ascent() / 2)
+    assert found is not None
+    (x, y, w, h), line = found
+    assert x <= 21  # box starts at (or before) the first letter
+    assert x + w >= 20 + adv - 3  # and covers the whole word
+    assert len(line.runs) == 5
+
+
+def test_adaptive_threshold_stays_strict_for_dark_text(qapp):
+    """Black text keeps the strict threshold: light-grey decorations near
+    a dark line must not become ink via the adaptive pass."""
+    font = QFont("Arial", 15)
+    img = QImage(700, 70, QImage.Format.Format_RGB32)
+    img.fill(QColor("#ffffff"))
+    p = QPainter(img)
+    p.setFont(font)
+    p.setPen(QColor("#222222"))
+    p.drawText(QPointF(20, 45), "Court of Appeal judges")
+    # faint grey decoration on the same rows (darkness ~42: between the
+    # adaptive floor and the strict margin)
+    p.fillRect(QRectF(500, 30, 12, 12), QColor("#c6c6c6"))
+    p.end()
+    line = wordsnap.analyze_line(img, 60, 38)
+    assert line is not None
+    # the decoration did not become a phantom word
+    assert all(r[1] < 480 for r in line.runs)
+
+
 def test_no_word_in_empty_area(qapp):
     img = make_text_image()
     wordsnap.word_box_at(img, 740, 60)  # far corner: must not raise

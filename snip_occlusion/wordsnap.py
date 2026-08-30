@@ -6,6 +6,19 @@ gaps between ink columns. Inter-letter gaps (and the tiny gaps around a
 hyphen) are much narrower than inter-word gaps, so hyphenated words come
 out as a single word naturally.
 
+Ink means DARK STROKES, not "different from the background": BPP slides
+put yellow highlight bands and pink callout boxes behind the text, and a
+wrapped highlight fills the gap between two lines. Those are backgrounds,
+not ink - only pixels substantially darker than the local background
+count.
+
+Coloured (pink) text is fainter than black, and subpixel antialiasing
+lightens its strokes further - a fixed darkness bar can miss letters. So
+detection runs twice: a strict first pass finds the line and measures how
+dark its ink actually is, then a second pass rescans with a threshold
+calibrated to that text colour. The threshold never drops below a floor
+that keeps highlight bands and callout backgrounds excluded.
+
 All coordinates are full-image pixels.
 """
 
@@ -16,12 +29,9 @@ from dataclasses import dataclass
 from .color_utils import majority_color
 from .qtshim import QImage
 
-# Ink means DARK STROKES, not "different from the background": BPP slides
-# put yellow highlight bands and pink callout boxes behind the text, and a
-# wrapped highlight fills the gap between two lines. Those are backgrounds,
-# not ink - only pixels substantially darker than the local background
-# count, so highlights/callouts/decorative dots are invisible here.
-LUMA_MARGIN = 60  # luminance difference from background to count as ink
+LUMA_MARGIN = 60  # strict pass: this much darker than background = ink
+ADAPTIVE_FLOOR = 36  # threshold never drops below this (yellow highlight
+                     # ~33, pink callout ~32 must always stay background)
 BAND_HALF = 90  # rows examined above/below the click
 MAX_LINE_H = 140  # sanity cap on a text line's height
 MIN_RUN_W = 2  # ignore single-column specks
@@ -59,55 +69,54 @@ def _luma_1000(r: int, g: int, b: int) -> int:
     return r * 299 + g * 587 + b * 114  # standard weights, x1000
 
 
-def _ink_rows(img: QImage, y0: int, y1: int):
-    """Boolean ink map for rows y0..y1 (exclusive), full image width."""
+def _diff_rows(img: QImage, y0: int, y1: int):
+    """Per-pixel darkness relative to the band's background (x1000)."""
     crop = img.copy(0, y0, img.width(), y1 - y0).convertToFormat(
         QImage.Format.Format_RGB32
     )
     bg = majority_color(crop)
     bg_luma = _luma_1000(bg.red(), bg.green(), bg.blue())
     dark_background = bg_luma < 128000  # rare: light text on a dark slide
-    margin = LUMA_MARGIN * 1000
     ptr = crop.constBits()
     ptr.setsize(crop.sizeInBytes())
     data = bytes(ptr)
     bpl = crop.bytesPerLine()
     w = crop.width()
-    rows = []
+    diffs = []
     for r in range(crop.height()):
         base = r * bpl
-        row = bytearray(w)
+        row = [0] * w
         for c in range(w):
             o = base + c * 4  # Format_RGB32 little-endian: B, G, R, A
             luma = _luma_1000(data[o + 2], data[o + 1], data[o])
-            if dark_background:
-                if luma - bg_luma > margin:
-                    row[c] = 1
-            elif bg_luma - luma > margin:
-                row[c] = 1
-        rows.append(row)
-    return rows
+            row[c] = luma - bg_luma if dark_background else bg_luma - luma
+        diffs.append(row)
+    return diffs, w
 
 
-def analyze_line(img: QImage, cx: float, cy: float):
-    """Find the text line under (cx, cy) and its word runs, or None."""
-    w, h = img.width(), img.height()
-    cxi, cyi = int(cx), int(cy)
-    if not (0 <= cxi < w and 0 <= cyi < h):
-        return None
-    y0 = max(0, cyi - BAND_HALF)
-    y1 = min(h, cyi + BAND_HALF)
-    rows = _ink_rows(img, y0, y1)
-    counts = [sum(row) for row in rows]  # inked columns per row
+def _binarize(diffs: list, margin: int):
+    """Ink map at the given darkness margin (margin in luma units)."""
+    m = margin * 1000
+    return [
+        bytearray(1 if d > m else 0 for d in row) for row in diffs
+    ]
+
+
+def _ink_rows(img: QImage, y0: int, y1: int, margin: int = LUMA_MARGIN):
+    """Boolean ink map for rows y0..y1 (exclusive), full image width."""
+    diffs, _w = _diff_rows(img, y0, y1)
+    return _binarize(diffs, margin)
+
+
+def _line_extent(rows: list, rel: int):
+    """(top, bottom) rows of the text line containing `rel`, or None."""
+    counts = [sum(row) for row in rows]
     n = len(rows)
-    # light smoothing so single noisy rows don't split a line
     smooth = [
         (counts[max(0, r - 1)] + counts[r] + counts[min(n - 1, r + 1)]) / 3.0
         for r in range(n)
     ]
 
-    # anchor on the nearest inky row to the click
-    rel = cyi - y0
     anchor = None
     for d in range(0, 13):
         for cand in (rel - d, rel + d):
@@ -154,7 +163,34 @@ def analyze_line(img: QImage, cx: float, cy: float):
         top += 1
     while bottom > top and counts[bottom] == 0:
         bottom -= 1
+    return top, bottom
 
+
+def _adaptive_margin(diffs: list, rows: list, top: int, bottom: int) -> int:
+    """Darkness threshold tuned to this line's own ink.
+
+    Black text sits far above the strict margin, so the threshold stays
+    strict. Coloured/antialiased text hovers just above it - the lower
+    quartile of its ink darkness is small, and half of that recovers the
+    faint stroke pixels the strict pass missed.
+    """
+    samples = []
+    for r in range(top, bottom + 1):
+        row = rows[r]
+        drow = diffs[r]
+        for c in range(len(row)):
+            if row[c]:
+                samples.append(drow[c])
+        if len(samples) > 20000:
+            break
+    if not samples:
+        return LUMA_MARGIN
+    samples.sort()
+    p25 = samples[len(samples) // 4] / 1000.0
+    return int(min(LUMA_MARGIN, max(ADAPTIVE_FLOOR, round(p25 * 0.5))))
+
+
+def _runs_for(rows: list, top: int, bottom: int, w: int):
     line_h = bottom - top + 1
     col_ink = bytearray(w)
     for r in range(top, bottom + 1):
@@ -184,6 +220,37 @@ def analyze_line(img: QImage, cx: float, cy: float):
                 run_start = None
     if run_start is not None and run_end - run_start + 1 >= MIN_RUN_W:
         runs.append((run_start, run_end))
+    return runs
+
+
+def analyze_line(img: QImage, cx: float, cy: float):
+    """Find the text line under (cx, cy) and its word runs, or None."""
+    w, h = img.width(), img.height()
+    cxi, cyi = int(cx), int(cy)
+    if not (0 <= cxi < w and 0 <= cyi < h):
+        return None
+    y0 = max(0, cyi - BAND_HALF)
+    y1 = min(h, cyi + BAND_HALF)
+    diffs, w = _diff_rows(img, y0, y1)
+    rel = cyi - y0
+
+    # strict pass: find the line with definite ink only
+    rows = _binarize(diffs, LUMA_MARGIN)
+    extent = _line_extent(rows, rel)
+    if extent is None:
+        return None
+    top, bottom = extent
+
+    # adaptive pass: if this line's ink is faint (coloured text), rescan
+    # with a threshold tuned to it so pale strokes and letters count too
+    margin = _adaptive_margin(diffs, rows, top, bottom)
+    if margin < LUMA_MARGIN:
+        rows = _binarize(diffs, margin)
+        extent = _line_extent(rows, rel)
+        if extent is not None:
+            top, bottom = extent
+
+    runs = _runs_for(rows, top, bottom, w)
     if not runs:
         return None
     return Line(
@@ -191,7 +258,7 @@ def analyze_line(img: QImage, cx: float, cy: float):
         bottom=y0 + bottom,
         runs=runs,
         img_w=w,
-        img_h=h,
+        img_h=img.height(),
         y0=y0,
         ink=rows,
     )
