@@ -4,6 +4,20 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.7.0 — 2026-08-30
+
+- **Edit existing cards.** The note editor (Browse, or Edit during a
+  review) now has a ✂ button that reopens a Snip Occlusion card's image
+  with all its boxes, groups and settings exactly as saved. Rework the
+  layout and press Save Changes: every sibling card sharing that slide
+  is updated in place (keeping its review history), new boxes become new
+  cards, and cards whose boxes were deleted are removed only after a
+  confirmation. New cover-ups/highlights/patches are baked into the
+  shared image, and the searchable text is re-read.
+- **Delete a card mid-review.** Press the Delete key (or right-click the
+  card → "Delete this card") while reviewing to remove the current card
+  instantly — undoable with Ctrl+Z.
+
 ## v0.6.3 — 2026-08-30
 
 - Fixed pink/coloured text losing its first letters in double-click word

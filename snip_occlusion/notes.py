@@ -7,11 +7,12 @@ against a temporary collection outside of Anki's GUI.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 
 from . import template
 from .consts import CARD_NAME, FIELDS, MARKER_FIELDS, MODEL_NAME
-from .shapes import normalized_payload, target_groups
+from .shapes import normalized_payload, shapes_from_payload, target_groups
 
 
 def _by_name(models, name: str):
@@ -102,3 +103,122 @@ def add_occlusion_notes(
             note.tags = list(tag_list)
         col.add_note(note, deck_id)
     return len(targets)
+
+
+# --------------------------------------------------- editing existing cards
+
+
+def is_occlusion_note(note) -> bool:
+    return MARKER_FIELDS <= set(note.keys())
+
+
+def parse_image_fname(note) -> str | None:
+    m = re.search(r'src="([^"]+)"', note["Image"])
+    return m.group(1) if m else None
+
+
+def shapes_from_note(note, img_w: int, img_h: int) -> list:
+    try:
+        payload = json.loads(note["Masks"])
+    except ValueError:
+        return []
+    return shapes_from_payload(payload, img_w, img_h)
+
+
+def session_prefix(note) -> str:
+    return note["Occlusion ID"].rsplit("-", 1)[0]
+
+
+def _sibling_notes(col, note):
+    """All notes generated from the same editing session (same image)."""
+    prefix = session_prefix(note)
+    nids = col.find_notes('"Occlusion ID:%s-*"' % prefix)
+    return [col.get_note(nid) for nid in nids]
+
+
+def count_missing_targets(col, base_note, shapes: list) -> int:
+    """Sibling cards whose target group no longer exists in `shapes`."""
+    targets = set(target_groups(shapes))
+    return sum(
+        1 for n in _sibling_notes(col, base_note) if n["Target"] not in targets
+    )
+
+
+def update_occlusion_notes(
+    col,
+    base_note,
+    deck_id: int,
+    shapes: list,
+    img_w: int,
+    img_h: int,
+    mode: str,
+    header: str,
+    footer: str,
+    tags: str,
+    mask_fill: str,
+    target_fill: str,
+    search_text: str = "",
+    delete_missing: bool = False,
+):
+    """Save an edited layout back onto every sibling card of `base_note`.
+
+    Existing cards keep their identity (and review history): their shared
+    Masks/Mode/Header/Footer/Search Text fields are updated in place. New
+    groups become new notes (in `deck_id`); cards whose target group was
+    deleted are removed only when delete_missing is True.
+    Returns (updated, added, removed).
+    """
+    payload = json.dumps(
+        normalized_payload(shapes, img_w, img_h), separators=(",", ":")
+    )
+    targets_now = target_groups(shapes)
+    siblings = _sibling_notes(col, base_note)
+    prefix = session_prefix(base_note)
+    fname = parse_image_fname(base_note)
+
+    existing_targets = set()
+    max_index = 0
+    to_remove = []
+    updated = 0
+    for note in siblings:
+        try:
+            max_index = max(
+                max_index, int(note["Occlusion ID"].rsplit("-", 1)[1])
+            )
+        except ValueError:
+            pass
+        if note["Target"] not in targets_now and delete_missing:
+            to_remove.append(note.id)
+            continue
+        existing_targets.add(note["Target"])
+        note["Masks"] = payload
+        note["Mode"] = mode
+        note["Header"] = header
+        note["Footer"] = footer
+        note["Search Text"] = search_text
+        col.update_note(note)
+        updated += 1
+    if to_remove:
+        col.remove_notes(to_remove)
+
+    nt = ensure_note_type(col, mask_fill, target_fill)
+    tag_list = tags.split()
+    added = 0
+    for group in targets_now:
+        if group in existing_targets:
+            continue
+        max_index += 1
+        note = col.new_note(nt)
+        note["Occlusion ID"] = "%s-%d" % (prefix, max_index)
+        note["Image"] = '<img src="%s">' % fname
+        note["Header"] = header
+        note["Footer"] = footer
+        note["Masks"] = payload
+        note["Target"] = group
+        note["Mode"] = mode
+        note["Search Text"] = search_text
+        if tag_list:
+            note.tags = list(tag_list)
+        col.add_note(note, deck_id)
+        added += 1
+    return updated, added, len(to_remove)

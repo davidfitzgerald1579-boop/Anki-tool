@@ -134,6 +134,78 @@ def test_old_note_type_upgraded_in_place_with_new_field(col):
     assert legacy["Search Text"] == ""
 
 
+def test_shapes_roundtrip_through_note(col):
+    deck_id = col.decks.id("Default")
+    src = sample_shapes()
+    notes_mod.add_occlusion_notes(
+        col, deck_id, "img.png", src, 800, 500,
+        MODE_HIDE_ALL, "", "", "", "#FFEBA2", "#FF7E7E",
+    )
+    note = col.get_note(col.find_notes("")[0])
+    assert notes_mod.is_occlusion_note(note)
+    assert notes_mod.parse_image_fname(note) == "img.png"
+    loaded = notes_mod.shapes_from_note(note, 800, 500)
+    masks = [s for s in src if s.kind in ("rect", "ellipse")]
+    assert len(loaded) == len(masks)
+    by_id = {s.id: s for s in loaded}
+    for orig in masks:
+        got = by_id[orig.id]  # ids survive, so targets keep matching
+        assert got.kind == orig.kind
+        assert abs(got.x - orig.x) < 0.05 and abs(got.w - orig.w) < 0.05
+        assert got.group == orig.group  # explicit group kept, singleton None
+        assert got.effective_group() == orig.effective_group()
+
+
+def test_update_occlusion_notes_edits_siblings(col):
+    deck_id = col.decks.id("Default")
+    src = sample_shapes()
+    notes_mod.add_occlusion_notes(
+        col, deck_id, "img.png", src, 800, 500,
+        MODE_HIDE_ALL, "Old header", "", "", "#FFEBA2", "#FF7E7E",
+    )
+    base = col.get_note(col.find_notes("Target:g1")[0])
+
+    # edit: move the singleton box, delete the g1 pair, add a new box
+    shapes = notes_mod.shapes_from_note(base, 800, 500)
+    keep = [s for s in shapes if s.group is None]
+    keep[0].x += 40
+    new = Shape(kind="rect", x=500, y=300, w=100, h=30)
+    edited = keep + [new]
+
+    assert notes_mod.count_missing_targets(col, base, edited) == 1
+    other_deck = col.decks.id("Edited::New")
+    updated, added, removed = notes_mod.update_occlusion_notes(
+        col, base, other_deck, edited, 800, 500,
+        MODE_HIDE_ONE, "New header", "New footer", "extra-tag",
+        "#FFEBA2", "#FF7E7E", "found text", delete_missing=True,
+    )
+    assert (updated, added, removed) == (1, 1, 1)
+
+    nids = col.find_notes("")
+    assert len(nids) == 2  # g1's note gone, singleton kept, one new
+    prefix = notes_mod.session_prefix(base)
+    targets = {}
+    for nid in nids:
+        n = col.get_note(nid)
+        assert notes_mod.session_prefix(n) == prefix
+        assert n["Mode"] == MODE_HIDE_ONE
+        assert n["Header"] == "New header"
+        assert n["Search Text"] == "found text"
+        payload = json.loads(n["Masks"])
+        assert len(payload["shapes"]) == 2
+        targets[n["Target"]] = n
+    # the untouched singleton kept its identity; the new box got a card
+    assert keep[0].effective_group() in targets
+    assert new.effective_group() in targets
+    new_note = targets[new.effective_group()]
+    assert new_note.cards()[0].did == other_deck
+    assert "extra-tag" in new_note.tags
+    # the surviving old note kept its original deck and tags
+    old_note = targets[keep[0].effective_group()]
+    assert old_note.cards()[0].did == deck_id
+    assert "extra-tag" not in old_note.tags
+
+
 def test_incompatible_existing_model_gets_suffixed_name(col):
     mm = col.models
     bogus = mm.new(MODEL_NAME)

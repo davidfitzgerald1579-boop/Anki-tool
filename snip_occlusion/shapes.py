@@ -160,6 +160,30 @@ def normalized_payload(shapes: list, img_w: int, img_h: int) -> dict:
     return {"version": 1, "shapes": out}
 
 
+def shapes_from_payload(payload: dict, img_w: int, img_h: int) -> list:
+    """Rebuild editable shapes from a stored Masks payload (for editing an
+    existing card). Ids are preserved, so untouched singleton targets
+    ('s:<id>') still match their notes after a re-save."""
+    out = []
+    for d in payload.get("shapes", []):
+        group = d.get("group")
+        sid = d.get("id") or new_id()
+        if group == "s:" + sid:
+            group = None  # singleton marker, not a real group
+        out.append(
+            Shape(
+                kind=d["kind"],
+                x=d["x"] * img_w,
+                y=d["y"] * img_h,
+                w=d["w"] * img_w,
+                h=d["h"] * img_h,
+                id=sid,
+                group=group,
+            )
+        )
+    return out
+
+
 def payload_json(shapes: list, img_w: int, img_h: int) -> str:
     return json.dumps(
         normalized_payload(shapes, img_w, img_h), separators=(",", ":")

@@ -121,6 +121,15 @@ Anki add-ons folder (Tools → Add-ons → View Files) and restart Anki.
 | F11 | Full screen |
 | Ctrl+Enter | Add cards |
 
+**Editing existing cards:** open the card in Anki's editor (Browse, or
+Edit during review) and click the **✂** button — the slide reopens with
+all its boxes and groups for reworking; Save Changes updates every card
+sharing that slide, adds cards for new boxes, and asks before deleting
+cards whose boxes were removed.
+
+**During review:** press **Delete** (or right-click → "Delete this
+card") to remove a bad card instantly; Ctrl+Z undoes.
+
 ## Configuration
 
 Tools → Add-ons → Snip Occlusion → Config. Options include the drag

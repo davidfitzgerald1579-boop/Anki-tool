@@ -203,9 +203,11 @@ def get_config() -> dict:
 
 
 class SnipOcclusionDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, note_id=None):
         super().__init__(parent or mw)
         self.config = get_config()
+        self.edit_note_id = note_id  # editing an existing card's layout
+        self._edit_fname = None
         self.setWindowTitle(ADDON_NAME)
         self.setMinimumSize(960, 680)
         # give the dialog real minimize/maximize buttons so the image can be
@@ -221,8 +223,11 @@ class SnipOcclusionDialog(QDialog):
         qconnect(fs_shortcut.activated, self._toggle_fullscreen)
 
         self._clipboard = QApplication.clipboard()
-        qconnect(self._clipboard.dataChanged, self._on_clipboard_changed)
-        self._load_clipboard_image(initial=True)
+        if self.edit_note_id is None:
+            qconnect(self._clipboard.dataChanged, self._on_clipboard_changed)
+            self._load_clipboard_image(initial=True)
+        else:
+            self._load_note_for_edit()
 
     # ------------------------------------------------------------------- UI
 
@@ -503,6 +508,135 @@ class SnipOcclusionDialog(QDialog):
                 index = i
         self.deck_box.setCurrentIndex(index)
 
+    # ------------------------------------------------------------- edit mode
+
+    def _load_note_for_edit(self) -> None:
+        import os
+
+        note = mw.col.get_note(self.edit_note_id)
+        fname = notes_mod.parse_image_fname(note)
+        img = QImage(os.path.join(mw.col.media.dir(), fname)) if fname else QImage()
+        if img.isNull():
+            showWarning(
+                "This card's image could not be loaded from the media "
+                "folder.",
+                parent=self,
+                title=ADDON_NAME,
+            )
+            return
+        self._edit_fname = fname
+        self.canvas.set_image(img)
+        self.canvas.shapes = notes_mod.shapes_from_note(
+            note, img.width(), img.height()
+        )
+        self.canvas._emit_changed()
+        self.stack.setCurrentWidget(self.canvas)
+        self.canvas.setFocus()
+        self._update_swatch()
+
+        self.header_edit.setText(note["Header"])
+        self.footer_edit.setText(note["Footer"])
+        self.tags_edit.setText(" ".join(note.tags))
+        if note["Mode"] == MODE_HIDE_ONE:
+            self.mode_hog.setChecked(True)
+        else:
+            self.mode_hag.setChecked(True)
+        cards = note.cards()
+        if cards:
+            for i in range(self.deck_box.count()):
+                if self.deck_box.itemData(i) == cards[0].did:
+                    self.deck_box.setCurrentIndex(i)
+                    break
+
+        self.setWindowTitle(ADDON_NAME + " — editing existing cards")
+        self.add_btn.setText("Save Changes")
+        self.clip_btn.setEnabled(False)
+        self.clip_btn.setToolTip(
+            "Not available while editing an existing card"
+        )
+        self._refresh_counts()
+
+    def _save_edits(self) -> None:
+        import os
+
+        shapes = list(self.canvas.shapes)
+        if not target_groups(shapes):
+            showWarning(
+                "Keep at least one occlusion box, or delete the cards from "
+                "the browser instead.",
+                parent=self,
+                title=ADDON_NAME,
+            )
+            return
+        base_note = mw.col.get_note(self.edit_note_id)
+
+        delete_missing = False
+        missing = notes_mod.count_missing_targets(mw.col, base_note, shapes)
+        if missing:
+            resp = QMessageBox.question(
+                self,
+                ADDON_NAME,
+                "%d card%s no longer ha%s a box (you deleted or ungrouped "
+                "their targets). Delete %s?\n\n"
+                "Choosing No keeps the cards, but they will have nothing "
+                "to reveal."
+                % (
+                    missing,
+                    "" if missing == 1 else "s",
+                    "s" if missing == 1 else "ve",
+                    "it" if missing == 1 else "them",
+                ),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            delete_missing = resp == QMessageBox.StandardButton.Yes
+
+        baked = self.canvas.bake_image()
+        search_text = ""
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            search_text = ocr.extract_text(baked, self.config)
+        except Exception:
+            pass
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        # overwrite the media file in place so every sibling keeps its name
+        buf = QBuffer()
+        buf.open(QIODevice.OpenModeFlag.WriteOnly)
+        baked.save(buf, "PNG")
+        buf.close()
+        with open(
+            os.path.join(mw.col.media.dir(), self._edit_fname), "wb"
+        ) as f:
+            f.write(bytes(buf.data()))
+
+        mode = MODE_HIDE_ALL if self.mode_hag.isChecked() else MODE_HIDE_ONE
+        updated, added, removed = notes_mod.update_occlusion_notes(
+            mw.col,
+            base_note,
+            self.deck_box.currentData(),
+            shapes,
+            baked.width(),
+            baked.height(),
+            mode,
+            self.header_edit.text().strip(),
+            self.footer_edit.text().strip(),
+            self.tags_edit.text().strip(),
+            self.config.get("mask_fill", "#FFEBA2"),
+            self.config.get("target_fill", "#FF7E7E"),
+            search_text,
+            delete_missing=delete_missing,
+        )
+        mw.reset()
+        bits = ["%d card%s updated" % (updated, "" if updated == 1 else "s")]
+        if added:
+            bits.append("%d new" % added)
+        if removed:
+            bits.append("%d removed" % removed)
+        tooltip(", ".join(bits), parent=mw)
+        self.canvas.shapes = []  # nothing left unsaved; close quietly
+        self.accept()
+
     # ------------------------------------------------------------- clipboard
 
     def _load_clipboard_image(self, initial: bool = False) -> bool:
@@ -730,8 +864,9 @@ class SnipOcclusionDialog(QDialog):
 
     def _refresh_counts(self) -> None:
         n = len(target_groups(self.canvas.shapes))
+        verb = "save" if self.edit_note_id is not None else "create"
         self.count_label.setText(
-            "Will create <b>%d</b> card%s" % (n, "" if n == 1 else "s")
+            "Will %s <b>%d</b> card%s" % (verb, n, "" if n == 1 else "s")
         )
         self.add_btn.setEnabled(n > 0)
         self._update_swatch()
@@ -742,6 +877,9 @@ class SnipOcclusionDialog(QDialog):
     # ------------------------------------------------------------- add cards
 
     def add_cards(self) -> None:
+        if self.edit_note_id is not None:
+            self._save_edits()
+            return
         if not self.canvas.has_image():
             showWarning("Snip a slide first.", parent=self, title=ADDON_NAME)
             return
@@ -856,6 +994,24 @@ class SnipOcclusionDialog(QDialog):
         except TypeError:
             pass
         event.accept()
+
+
+def open_edit_dialog(note_id: int) -> None:
+    """Open the editor on an existing Snip Occlusion note (from the note
+    editor's ✂ button)."""
+    if mw.col is None:
+        return
+    note = mw.col.get_note(note_id)
+    if not notes_mod.is_occlusion_note(note):
+        showWarning(
+            "This is not a Snip Occlusion card — the ✂ button only edits "
+            "cards created by this add-on.",
+            title=ADDON_NAME,
+        )
+        return
+    dlg = SnipOcclusionDialog(mw, note_id=note_id)
+    mw._snip_occlusion_edit_dialog = dlg  # keep a reference (GC gotcha)
+    dlg.show()
 
 
 def open_dialog() -> None:
