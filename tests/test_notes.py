@@ -206,6 +206,64 @@ def test_update_occlusion_notes_edits_siblings(col):
     assert "extra-tag" not in old_note.tags
 
 
+def _make_ioe_style_notes(col, image, count):
+    """Mimic Image Occlusion Enhanced: each note references the shared
+    slide image plus its own unique mask files."""
+    mm = col.models
+    nt = mm.new("Fake IOE %s" % image)
+    for fname in ("ID", "Image", "QMask", "AMask"):
+        mm.add_field(nt, mm.new_field(fname))
+    t = mm.new_template("IO")
+    t["qfmt"] = "{{Image}}{{QMask}}"
+    t["afmt"] = "{{Image}}{{AMask}}"
+    mm.add_template(nt, t)
+    mm.add(nt)
+    nt = mm.by_name("Fake IOE %s" % image)
+    nids = []
+    deck = col.decks.id("Default")
+    for i in range(count):
+        note = col.new_note(nt)
+        note["ID"] = "%s-%d" % (image, i)
+        note["Image"] = '<img src="%s">' % image
+        note["QMask"] = '<img src="%s-Q_%d.svg">' % (image, i)
+        note["AMask"] = '<img src="%s-A_%d.svg">' % (image, i)
+        col.add_note(note, deck)
+        nids.append(note.id)
+    return nids
+
+
+def test_find_notes_sharing_image_across_tools(col):
+    ioe_a = _make_ioe_style_notes(col, "old-slide-a.jpg", 10)
+    ioe_b = _make_ioe_style_notes(col, "old-slide-b.jpg", 4)
+    # plus some of our own notes on a different image
+    notes_mod.add_occlusion_notes(
+        col, col.decks.id("Default"), "snip-xyz.png", sample_shapes(),
+        800, 500, MODE_HIDE_ALL, "", "", "", "#FFEBA2", "#FF7E7E",
+    )
+
+    base = col.get_note(ioe_a[3])
+    fnames = notes_mod.image_filenames(base)
+    assert "old-slide-a.jpg" in fnames  # shared image found among masks
+    fname, nids = notes_mod.find_notes_sharing_image(col, base)
+    # the SHARED slide wins over the per-card mask files
+    assert fname == "old-slide-a.jpg"
+    assert set(nids) == set(ioe_a)  # all 10, and nothing from b or ours
+
+    # and for our own notes the whole session is found
+    ours = col.find_notes("snip-xyz")
+    fname2, nids2 = notes_mod.find_notes_sharing_image(
+        col, col.get_note(ours[0])
+    )
+    assert fname2 == "snip-xyz.png"
+    assert set(nids2) == set(ours)
+
+    # deleting the found set removes exactly that family
+    col.remove_notes(nids)
+    assert col.find_notes("old-slide-a") == []
+    assert len(col.find_notes("old-slide-b")) == 4
+    assert len(col.find_notes("snip-xyz")) == len(ours)
+
+
 def test_incompatible_existing_model_gets_suffixed_name(col):
     mm = col.models
     bogus = mm.new(MODEL_NAME)

@@ -82,9 +82,41 @@ def _delete_current_card() -> None:
     tooltip("Card deleted%s — Ctrl+Z to undo" % extra)
 
 
+def _delete_all_cards_for_image() -> None:
+    """Delete every card generated from the current card's slide image —
+    including cards made by other occlusion tools (e.g. IOE)."""
+    from aqt.utils import askUser, tooltip
+
+    from . import notes as notes_mod
+
+    if mw.state != "review" or mw.reviewer.card is None:
+        return
+    note = mw.reviewer.card.note()
+    fname, nids = notes_mod.find_notes_sharing_image(mw.col, note)
+    if fname is None:
+        tooltip("No image found on this card")
+        return
+    n_cards = sum(len(mw.col.get_note(nid).cards()) for nid in nids)
+    if not askUser(
+        "Delete ALL %d card%s made from this image?\n\n%s\n\n"
+        "This includes the current card. Ctrl+Z undoes."
+        % (n_cards, "" if n_cards == 1 else "s", fname),
+        parent=mw,
+        defaultno=True,
+    ):
+        return
+    mw.col.remove_notes(nids)
+    mw.reset()
+    tooltip(
+        "Deleted %d card%s from this image — Ctrl+Z to undo"
+        % (n_cards, "" if n_cards == 1 else "s")
+    )
+
+
 def _review_shortcuts(state, shortcuts) -> None:
     if state == "review":
         shortcuts.append(("Delete", _delete_current_card))
+        shortcuts.append(("Shift+Delete", _delete_all_cards_for_image))
 
 
 def _reviewer_context_menu(reviewer, menu) -> None:
@@ -92,6 +124,10 @@ def _reviewer_context_menu(reviewer, menu) -> None:
 
     action = menu.addAction("🗑 Delete this card\tDel")
     qconnect(action.triggered, _delete_current_card)
+    action_all = menu.addAction(
+        "🗑 Delete ALL cards from this image…\tShift+Del"
+    )
+    qconnect(action_all.triggered, _delete_all_cards_for_image)
 
 
 if gui_hooks is not None:

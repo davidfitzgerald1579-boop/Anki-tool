@@ -4,6 +4,16 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.7.1 — 2026-08-30
+
+- **Delete ALL cards from an image.** While reviewing, press Shift+Delete
+  (or right-click → "Delete ALL cards from this image…") to remove every
+  card generated from the current card's slide — after a confirmation
+  showing the count and filename, and undoable with Ctrl+Z. Works on
+  cards made by other occlusion tools too (e.g. Image Occlusion
+  Enhanced): the shared slide image is identified as the file referenced
+  by the most notes, so per-card mask files don't confuse it.
+
 ## v0.7.0 — 2026-08-30
 
 - **Edit existing cards.** The note editor (Browse, or Edit during a

@@ -128,7 +128,9 @@ sharing that slide, adds cards for new boxes, and asks before deleting
 cards whose boxes were removed.
 
 **During review:** press **Delete** (or right-click → "Delete this
-card") to remove a bad card instantly; Ctrl+Z undoes.
+card") to remove a bad card instantly; **Shift+Delete** removes ALL
+cards made from the same slide image (after a confirmation) — including
+cards created by other occlusion tools like IOE. Ctrl+Z undoes either.
 
 ## Configuration
 

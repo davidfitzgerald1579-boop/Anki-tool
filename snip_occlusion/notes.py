@@ -105,6 +105,41 @@ def add_occlusion_notes(
     return len(targets)
 
 
+# ------------------------------------------------- bulk delete by image
+
+
+def image_filenames(note) -> list:
+    """Every media filename referenced by any field of the note (works for
+    Snip Occlusion notes and other image tools, e.g. IOE)."""
+    out = []
+    seen = set()
+    for text in note.fields:
+        for m in re.findall(r"src=[\"']([^\"']+)[\"']", text):
+            if m not in seen:
+                seen.add(m)
+                out.append(m)
+    return out
+
+
+def find_notes_sharing_image(col, note):
+    """(filename, note_ids) for the image this note shares with the most
+    other notes.
+
+    A card generated from a slide references the slide image (shared by
+    every sibling) and possibly per-card files like IOE's mask SVGs
+    (unique to one note) - so the filename matching the most notes is the
+    shared slide, and its matches are the whole family.
+    """
+    best_fname = None
+    best_nids: list = []
+    for fname in image_filenames(note):
+        escaped = fname.replace("\\", "\\\\").replace('"', '\\"')
+        nids = list(col.find_notes('"%s"' % escaped))
+        if len(nids) > len(best_nids):
+            best_fname, best_nids = fname, nids
+    return best_fname, best_nids
+
+
 # --------------------------------------------------- editing existing cards
 
 
