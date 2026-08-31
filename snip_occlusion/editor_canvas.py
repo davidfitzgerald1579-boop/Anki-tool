@@ -35,6 +35,7 @@ from .consts import (
     SNAP_WORD,
     TOOL_ERASE,
     TOOL_HIGHLIGHT,
+    TOOL_PAN,
     TOOL_PATCH,
     TOOL_RECT,
     TOOL_SELECT,
@@ -333,6 +334,8 @@ class OcclusionCanvas(QGraphicsView):
         self.gesture = None
         if tool == TOOL_SELECT:
             self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
+        elif tool == TOOL_PAN:
+            self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
         else:
             self.viewport().setCursor(Qt.CursorShape.CrossCursor)
         self.tool_changed.emit(tool)
@@ -721,7 +724,11 @@ class OcclusionCanvas(QGraphicsView):
         if self.image is None:
             super().mousePressEvent(event)
             return
-        if event.button() == Qt.MouseButton.MiddleButton:
+        if event.button() == Qt.MouseButton.MiddleButton or (
+            self.tool == TOOL_PAN
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            # grab the canvas: drag moves the image around the window
             self._pan_origin = event.position().toPoint()
             self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
             event.accept()
@@ -895,16 +902,18 @@ class OcclusionCanvas(QGraphicsView):
         event.accept()
 
     def mouseReleaseEvent(self, event) -> None:
-        if (
-            event.button() == Qt.MouseButton.MiddleButton
-            and self._pan_origin is not None
+        if self._pan_origin is not None and event.button() in (
+            Qt.MouseButton.MiddleButton,
+            Qt.MouseButton.LeftButton,
         ):
             self._pan_origin = None
-            self.viewport().setCursor(
-                Qt.CursorShape.ArrowCursor
-                if self.tool == TOOL_SELECT
-                else Qt.CursorShape.CrossCursor
-            )
+            if self.tool == TOOL_PAN:
+                cursor = Qt.CursorShape.OpenHandCursor
+            elif self.tool == TOOL_SELECT:
+                cursor = Qt.CursorShape.ArrowCursor
+            else:
+                cursor = Qt.CursorShape.CrossCursor
+            self.viewport().setCursor(cursor)
             event.accept()
             return
         g = self.gesture

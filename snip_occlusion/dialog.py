@@ -7,7 +7,9 @@ from the clipboard -> draw masks / erase junk text -> Add Cards.
 from __future__ import annotations
 
 from aqt import mw
-from aqt.utils import showWarning, tooltip
+from aqt.utils import showWarning
+
+from .uitools import notify as tooltip
 
 from .qtshim import *  # noqa: F401,F403
 from . import notes as notes_mod
@@ -20,6 +22,7 @@ from .consts import (
     MODE_HIDE_ONE,
     TOOL_ERASE,
     TOOL_HIGHLIGHT,
+    TOOL_PAN,
     TOOL_PATCH,
     TOOL_RECT,
     TOOL_SELECT,
@@ -314,6 +317,10 @@ class SnipOcclusionDialog(QDialog):
         self.tool_buttons = {}
         for tool, label, tip in [
             (TOOL_SELECT, "Select", "Select / move / resize (S)"),
+            (TOOL_PAN, "✋ Grab", "Click and hold to drag the image "
+                                 "around the window — position it "
+                                 "wherever suits your screen. "
+                                 "(Middle-drag pans in any tool.)"),
             (TOOL_RECT, "▭ Box", "Draw occlusion rectangle (R). Tip: "
                                  "double-click any word to occlude exactly "
                                  "that word"),
@@ -404,8 +411,8 @@ class SnipOcclusionDialog(QDialog):
 
         text_btn = self._side_button(
             "📝 Text card",
-            "Switch to the Text Editor: write a card in your own words, "
-            "with AI-suggested cards ready at the top",
+            "Switch to the Write Card view: write a card in your own "
+            "words, with the source text shown above the fields",
         )
         qconnect(text_btn.clicked, self._open_text_card)
         side.addWidget(text_btn)
@@ -446,34 +453,50 @@ class SnipOcclusionDialog(QDialog):
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setSizes([190, 900])
 
-        # --- Image Editor / Text Editor view toggle (+ settings)
+        # --- Image / Suggested Cards / Write Card view toggle (+ settings)
         toggle_row = QHBoxLayout()
         self.view_group = QButtonGroup(self)
         self.view_group.setExclusive(True)
         self.image_view_btn = QPushButton("🖼 Image Editor", self)
-        self.text_view_btn = QPushButton("📝 Text Editor", self)
-        for btn in (self.image_view_btn, self.text_view_btn):
+        self.suggest_view_btn = QPushButton("✨ Suggested Cards", self)
+        self.write_view_btn = QPushButton("📝 Write Card", self)
+        for btn in (
+            self.image_view_btn,
+            self.suggest_view_btn,
+            self.write_view_btn,
+        ):
             btn.setCheckable(True)
             self.view_group.addButton(btn)
             toggle_row.addWidget(btn)
         self.image_view_btn.setChecked(True)
         self.image_view_btn.setToolTip("Occlude a snipped slide (default)")
-        self.text_view_btn.setToolTip(
-            "Write a card in your own words, with AI-suggested cards from "
-            "the current snip ready at the top"
+        self.suggest_view_btn.setToolTip(
+            "Review the AI-suggested cards for the current snip, with "
+            "the source text underneath — 🔎 highlights where a card "
+            "came from"
+        )
+        self.write_view_btn.setToolTip(
+            "Write a card in your own words, with the source text shown "
+            "above the Front/Back/Notes fields"
         )
         qconnect(
-            self.image_view_btn.clicked, lambda _=False: self._set_view(False)
+            self.image_view_btn.clicked,
+            lambda _=False: self._set_view("image"),
         )
         qconnect(
-            self.text_view_btn.clicked, lambda _=False: self._set_view(True)
+            self.suggest_view_btn.clicked,
+            lambda _=False: self._set_view("suggest"),
+        )
+        qconnect(
+            self.write_view_btn.clicked,
+            lambda _=False: self._set_view("write"),
         )
         pop_btn = QToolButton(self)
         pop_btn.setText("⧉")
         pop_btn.setToolTip(
-            "Pop the Text Editor out into its own window — snap it to one "
-            "side of the screen and your source material to the other, to "
-            "check the suggested cards' references while you review"
+            "Pop the Suggested Cards out into their own window — snap it "
+            "to one side of the screen and your source material to the "
+            "other, to check references while you review"
         )
         qconnect(pop_btn.clicked, self._pop_out_text_editor)
         toggle_row.addWidget(pop_btn)
@@ -485,17 +508,22 @@ class SnipOcclusionDialog(QDialog):
         toggle_row.addWidget(settings_btn)
         right_col.addLayout(toggle_row)
 
-        # the two views: the whole image-editing page, or the text editor
+        # the three views: image editing, suggested cards, writing a card
         self.view_stack = QStackedWidget(self)
         right_col.addWidget(self.view_stack, 1)
         self._image_page = QWidget(self)
         layout = QVBoxLayout(self._image_page)
         layout.setContentsMargins(0, 0, 0, 0)
         self.view_stack.addWidget(self._image_page)
-        from .textcard import TextCardPanel  # deferred: circular import
+        from .textcard import (  # deferred: circular import
+            SuggestionsPage,
+            TextCardPanel,
+        )
 
-        self.text_panel = TextCardPanel(self, with_suggestions=True)
-        self.view_stack.addWidget(self.text_panel)
+        self.suggest_page = SuggestionsPage(self)
+        self.view_stack.addWidget(self.suggest_page)
+        self.write_page = TextCardPanel(self, show_source=True)
+        self.view_stack.addWidget(self.write_page)
         self._sidebar_hidden_for_text = False
 
         # --- canvas / placeholder stack
@@ -753,7 +781,7 @@ class SnipOcclusionDialog(QDialog):
         try:
             qgen_prefetch.start_for_image(img.copy(), self.config)
             # begin displaying (or queueing up) the new snip's suggestions
-            self.text_panel.refresh_suggestions()
+            self.suggest_page.refresh_suggestions()
             popped = getattr(self, "_popped_text_editor", None)
             if popped is not None and popped.isVisible():
                 popped.panel.refresh_suggestions()
@@ -852,25 +880,23 @@ class SnipOcclusionDialog(QDialog):
     # ------------------------------------------------- view toggle, settings
 
     def _ctrl_return(self) -> None:
-        if self.view_stack.currentWidget() is self.text_panel:
-            self.text_panel.add_card()
-        else:
+        if self.view_stack.currentWidget() is self.write_page:
+            self.write_page.add_card()
+        elif self.view_stack.currentWidget() is self._image_page:
             self.add_cards()
 
-    def _set_view(self, text_mode: bool) -> None:
-        self.text_view_btn.setChecked(text_mode)
-        self.image_view_btn.setChecked(not text_mode)
-        if text_mode:
-            self.view_stack.setCurrentWidget(self.text_panel)
-            if (
-                self.config.get("text_editor_sidebar", "keep") == "hide"
-                and self._side_widget.isVisible()
-            ):
-                self._sidebar_hidden_for_text = True
-                self._toggle_sidebar()
-            self.text_panel.refresh_suggestions()
-            self.text_panel.focus_front()
-        else:
+    def _current_source_text(self) -> str:
+        text = self.suggest_page.current_source()
+        if not text:
+            state = qgen_prefetch.current()
+            text = state.text if state is not None else ""
+        return text
+
+    def _set_view(self, mode: str) -> None:
+        self.image_view_btn.setChecked(mode == "image")
+        self.suggest_view_btn.setChecked(mode == "suggest")
+        self.write_view_btn.setChecked(mode == "write")
+        if mode == "image":
             self.view_stack.setCurrentWidget(self._image_page)
             if (
                 self._sidebar_hidden_for_text
@@ -879,6 +905,20 @@ class SnipOcclusionDialog(QDialog):
                 self._toggle_sidebar()
             self._sidebar_hidden_for_text = False
             self.canvas.setFocus()
+            return
+        if (
+            self.config.get("text_editor_sidebar", "keep") == "hide"
+            and self._side_widget.isVisible()
+        ):
+            self._sidebar_hidden_for_text = True
+            self._toggle_sidebar()
+        if mode == "suggest":
+            self.view_stack.setCurrentWidget(self.suggest_page)
+            self.suggest_page.refresh_suggestions()
+        else:
+            self.view_stack.setCurrentWidget(self.write_page)
+            self.write_page.set_source_text(self._current_source_text())
+            self.write_page.focus_front()
 
     def _pop_out_text_editor(self) -> None:
         from .textcard import PoppedTextEditor
@@ -893,7 +933,7 @@ class SnipOcclusionDialog(QDialog):
         win.panel.refresh_suggestions()
         # the main window returns to the image editor, so snipping and
         # card review can happen side by side
-        self._set_view(False)
+        self._set_view("image")
 
     def _open_settings(self) -> None:
         dlg = QDialog(self)
@@ -1137,7 +1177,7 @@ class SnipOcclusionDialog(QDialog):
         self._update_swatch()
 
     def _open_text_card(self) -> None:
-        self._set_view(True)
+        self._set_view("write")
 
     def _show_help(self) -> None:
         QMessageBox.information(self, ADDON_NAME + " – shortcuts", _HELP_TEXT)

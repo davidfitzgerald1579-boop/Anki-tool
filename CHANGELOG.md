@@ -4,6 +4,24 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.19.0 — 2026-08-31
+
+- **✋ Grab tool.** Click and hold to drag the image around the window
+  and park it wherever suits your screen — made for split-screen work.
+  (Middle-drag still pans in every tool.)
+- **Three clean views.** The top toggle is now 🖼 Image Editor /
+  ✨ Suggested Cards / 📝 Write Card. Suggested Cards shows the AI
+  suggestions with the source (OCR/pasted) text underneath; Write Card
+  shows the source text above the Front/Back/Notes fields. The ⧉
+  pop-out now opens the Suggested Cards page.
+- **🔎 highlights inline.** Clicking 🔎 no longer opens a popup — the
+  source text below simply lights up (yellow = question/answer,
+  orange = Notes) and scrolls to the first match; the caption warns in
+  red when the Notes match nothing.
+- **Readable popups everywhere.** The transient notices ("Card added",
+  etc.) no longer use Anki's dark bubble — they're now crisp dark-on-
+  cream text matching the rest of the add-on.
+
 ## v0.18.2 — 2026-08-31
 
 - **The 🔎 viewer now traces the Notes line separately** — notes are

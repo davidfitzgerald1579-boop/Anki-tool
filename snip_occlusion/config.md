@@ -77,7 +77,7 @@
   loaded; cover-ups drawn afterwards don't re-run generation (delete
   unwanted suggestions with their ✕ button instead).
 - `text_editor_sidebar`: what the left toolbar does when you switch the
-  main window to the Text Editor view. `"keep"` (default) leaves it
+  main window to the Suggested Cards or Write Card views. `"keep"` (default) leaves it
   visible; `"hide"` tucks it away until you switch back to the Image
   Editor. Also settable via the ⚙ button in the main window.
 - `qgen_bakeoff`: alternate generations between the models in

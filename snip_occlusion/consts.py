@@ -37,6 +37,7 @@ MASK_KINDS = (KIND_RECT, KIND_ELLIPSE)
 
 # Editor tools
 TOOL_SELECT = "select"
+TOOL_PAN = "pan"  # grab the canvas and drag to reposition the image
 TOOL_RECT = "rect"
 TOOL_ERASE = "erase"
 TOOL_PATCH = "patch"
