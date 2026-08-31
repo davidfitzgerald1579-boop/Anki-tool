@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.13.1 — 2026-08-31
+
+- **Suggestions open at full height.** The suggestions pane now sizes
+  itself to show every suggested card with no scrolling, pushing the
+  Front/Back/Notes boxes down as needed. A splitter handle under the
+  pane drags up to shrink it (it scrolls internally once shrunk), and
+  it re-fits automatically as cards are used or dismissed — until you
+  drag it yourself, which takes over for that batch.
+
 ## v0.13.0 — 2026-08-31
 
 - **Text Editor built into the main window.** Two buttons at the top —

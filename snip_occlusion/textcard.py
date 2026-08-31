@@ -98,8 +98,7 @@ class TextCardPanel(QWidget):
             self.suggest_scroll = QScrollArea(self)
             self.suggest_scroll.setWidgetResizable(True)
             self.suggest_scroll.setFrameShape(QFrame.Shape.NoFrame)
-            self.suggest_scroll.setMinimumHeight(120)
-            self.suggest_scroll.setMaximumHeight(260)
+            self.suggest_scroll.setMinimumHeight(40)
             inner = QWidget(self)
             inner.setStyleSheet("background:transparent;")
             self.suggest_lay = QVBoxLayout(inner)
@@ -108,7 +107,24 @@ class TextCardPanel(QWidget):
             self.suggest_lay.addStretch(1)
             self.suggest_scroll.setWidget(inner)
             panel_lay.addWidget(self.suggest_scroll)
-            lay.addWidget(self.suggest_panel)
+            # suggestions sit above the editor in a splitter: they open at
+            # full height (all cards visible, editor pushed down) and the
+            # divider drags up to shrink them, like resizing a box
+            editor_host = QWidget(self)
+            edit_lay = QVBoxLayout(editor_host)
+            edit_lay.setContentsMargins(0, 0, 0, 0)
+            edit_lay.setSpacing(8)
+            self.vsplit = QSplitter(Qt.Orientation.Vertical, self)
+            self.vsplit.setHandleWidth(7)
+            self.vsplit.setChildrenCollapsible(False)
+            self.vsplit.addWidget(self.suggest_panel)
+            self.vsplit.addWidget(editor_host)
+            self.vsplit.setStretchFactor(0, 0)
+            self.vsplit.setStretchFactor(1, 1)
+            self._user_sized = False
+            qconnect(self.vsplit.splitterMoved, self._splitter_dragged)
+            lay.addWidget(self.vsplit, 1)
+            lay = edit_lay  # the editor fields build into the lower pane
             self._set_suggest_status(
                 "Snip a slide — suggestions appear here automatically."
             )
@@ -161,15 +177,22 @@ class TextCardPanel(QWidget):
             edit.setFont(font)
             return edit
 
+        # embedded under the suggestions splitter the edits accept being
+        # squashed (suggestions get priority); standalone they keep a
+        # comfortable minimum
+        if self.with_suggestions:
+            min_front, min_back, min_notes = 44, 44, 32
+        else:
+            min_front, min_back, min_notes = 110, 130, 70
         lay.addWidget(QLabel("<b>Front</b>", self))
-        self.front = make_edit(110)
+        self.front = make_edit(min_front)
         lay.addWidget(self.front, 2)
         lay.addWidget(QLabel("<b>Back</b>", self))
-        self.back = make_edit(130)
+        self.back = make_edit(min_back)
         lay.addWidget(self.back, 3)
         lay.addWidget(QLabel("Notes <span style='color:#8a8171'>(shown "
                              "small under the answer)</span>", self))
-        self.notes = make_edit(70)
+        self.notes = make_edit(min_notes)
         lay.addWidget(self.notes, 1)
 
         bottom = QHBoxLayout()
@@ -295,6 +318,44 @@ class TextCardPanel(QWidget):
         if self.with_suggestions:
             self.suggest_status.setText(text)
 
+    def _splitter_dragged(self, *_args) -> None:
+        # once the user drags the divider, stop auto-sizing this batch
+        self._user_sized = True
+
+    def _fit_suggestions_if_auto(self) -> None:
+        if self.with_suggestions and not self._user_sized:
+            self._fit_suggestions()
+
+    def _fit_suggestions(self) -> None:
+        """Open the suggestions pane to show every card, no scrolling.
+
+        The editor fields get pushed down; the splitter handle still
+        drags up to shrink the pane (then it scrolls internally).
+        """
+        sizes = self.vsplit.sizes()
+        total = sum(sizes)
+        if total <= 0:
+            return  # not laid out yet (view not shown); showEvent refits
+        inner = self.suggest_scroll.widget()
+        if inner.layout() is not None:
+            inner.layout().activate()
+        needed = inner.sizeHint().height() + 6  # rows
+        panel_lay = self.suggest_panel.layout()
+        item = panel_lay.itemAt(0)  # title row
+        if item is not None:
+            needed += item.sizeHint().height() + panel_lay.spacing()
+        # never squash the editor below what it needs to stay usable
+        bottom_min = max(
+            self.vsplit.widget(1).minimumSizeHint().height(), 170
+        )
+        top = max(60, min(needed, total - bottom_min))
+        self.vsplit.setSizes([top, total - top])
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self.with_suggestions:
+            QTimer.singleShot(0, self._fit_suggestions_if_auto)
+
     def refresh_suggestions(self, force: bool = False) -> None:
         """Show the pre-generated suggestions for the current snip.
 
@@ -327,6 +388,7 @@ class TextCardPanel(QWidget):
                 return
         self._shown_state = state
         self._busy = True
+        self._user_sized = False  # a fresh batch auto-sizes again
         self._clear_rows()
         self._set_suggest_status("generating on your machine…")
 
@@ -361,6 +423,7 @@ class TextCardPanel(QWidget):
                 self._add_suggestion_row(
                     card["front"], card["back"], card.get("notes", "")
                 )
+            QTimer.singleShot(0, self._fit_suggestions_if_auto)
 
         mw.taskman.run_in_background(work, done)
 
@@ -399,6 +462,8 @@ class TextCardPanel(QWidget):
         def remove_row() -> None:
             row.setParent(None)
             row.deleteLater()
+            # shrink back to fit the remaining cards (unless hand-sized)
+            QTimer.singleShot(0, self._fit_suggestions_if_auto)
 
         def use() -> None:
             try:
