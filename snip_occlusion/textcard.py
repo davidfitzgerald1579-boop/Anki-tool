@@ -24,7 +24,7 @@ from . import notes as notes_mod
 from . import qgen, qgen_bakeoff, qgen_doc, qgen_feedback, qgen_prefetch
 from .consts import ADDON_NAME
 from .dialog import _STYLE, get_config, get_previous_snip_text
-from .uitools import notify as tooltip
+from .uitools import cream_tooltips, notify as tooltip
 
 _SIZES = ["10", "12", "14", "16", "18", "20", "24", "28", "32"]
 
@@ -392,6 +392,22 @@ class SuggestionsPage(QWidget):
         self.suggest_status = QLabel("", self)
         self.suggest_status.setStyleSheet("color:#8a8171;")
         title_row.addWidget(self.suggest_status, 1)
+        title_row.addWidget(QLabel("Cards:", self))
+        self.count_box = QComboBox(self)
+        self.count_box.addItems([str(n) for n in range(1, 9)])
+        try:
+            configured = int(get_config().get("qgen_max_cards", 4) or 4)
+        except Exception:
+            configured = 4
+        self.count_box.setCurrentText(str(min(max(configured, 1), 8)))
+        self.count_box.setToolTip(
+            "How many cards to ask for per slide (the AI may return "
+            "fewer for thin slides). Takes effect from the next "
+            "generation — press ↻ to redo the current one."
+        )
+        self.count_box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        qconnect(self.count_box.currentTextChanged, self._count_changed)
+        title_row.addWidget(self.count_box)
         self.undo_btn = QToolButton(self)
         self.undo_btn.setText("↶")
         self.undo_btn.setToolTip(
@@ -569,6 +585,20 @@ class SuggestionsPage(QWidget):
 
     # -------------------------------------------- pasted-text generation
 
+    def _count_changed(self, value: str) -> None:
+        """Persist the Cards: selector; the next generation uses it."""
+        try:
+            count = int(value)
+        except (TypeError, ValueError):
+            return
+        try:
+            module = __name__.split(".")[0]
+            user_cfg = mw.addonManager.getConfig(module) or {}
+            user_cfg["qgen_max_cards"] = count
+            mw.addonManager.writeConfig(module, user_cfg)
+        except Exception:
+            pass  # selector still shows the choice; config write failed
+
     def _regen_clicked(self) -> None:
         if self._doc_running:
             # the ↻ button reads ■ while a pasted-text run is going
@@ -585,6 +615,7 @@ class SuggestionsPage(QWidget):
         dlg.setWindowTitle(ADDON_NAME + " — Cards from pasted text")
         dlg.setMinimumSize(560, 420)
         dlg.setStyleSheet(_STYLE)
+        cream_tooltips(dlg)
         lay = QVBoxLayout(dlg)
         info = QLabel(
             "Paste a whole lesson or element text below. It is split "
@@ -617,8 +648,18 @@ class SuggestionsPage(QWidget):
             return
         self._start_doc_job(text)
 
-    def _start_doc_job(self, text: str) -> None:
+    def _config_with_count(self) -> dict:
+        """get_config(), with the Cards: selector overriding the count
+        (so the choice holds even if the config write failed)."""
         config = get_config()
+        try:
+            config["qgen_max_cards"] = int(self.count_box.currentText())
+        except (TypeError, ValueError):
+            pass
+        return config
+
+    def _start_doc_job(self, text: str) -> None:
+        config = self._config_with_count()
         chunks = qgen_doc.split_into_chunks(text)
         if not chunks:
             tooltip("Nothing to work with in that text.", parent=self)
@@ -709,7 +750,7 @@ class SuggestionsPage(QWidget):
         """
         if self._busy:
             return
-        config = get_config()
+        config = self._config_with_count()
         state = qgen_prefetch.current()
         if state is None and not force:
             return  # nothing snipped yet; keep the hint text
@@ -835,6 +876,7 @@ class SuggestionsPage(QWidget):
         dlg.setWindowTitle(ADDON_NAME + " — Correct this card")
         dlg.setMinimumSize(520, 420)
         dlg.setStyleSheet(_STYLE)
+        cream_tooltips(dlg)
         lay = QVBoxLayout(dlg)
         info = QLabel(
             "Fix the content below (the style stays). Your corrected "
@@ -1154,6 +1196,7 @@ class PoppedTextEditor(QDialog):
             | Qt.WindowType.WindowMaximizeButtonHint
         )
         self.setStyleSheet(_STYLE)
+        cream_tooltips(self)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 12, 12, 12)
         self.panel = SuggestionsPage(self)
@@ -1182,6 +1225,7 @@ class TextCardDialog(QDialog):
             | Qt.WindowType.WindowMaximizeButtonHint
         )
         self.setStyleSheet(_STYLE)
+        cream_tooltips(self)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 12, 12, 12)
         self.panel = TextCardPanel(

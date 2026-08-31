@@ -53,9 +53,11 @@
 - `qgen_api_key`: optional Bearer token for `"openai_compatible"`
   servers that require one; local servers normally don't. Unused by
   Ollama. Default: empty.
-- `qgen_max_cards`: maximum suggested cards per slide. Default: `4`.
-  The model is told to write fewer (or none) when a slide has little
-  exam-relevant material, rather than padding with filler.
+- `qgen_max_cards`: maximum suggested cards per slide (1–8). Default:
+  `4`. Easiest changed via the "Cards:" selector at the top of the
+  Suggested Cards view. The model is told to write fewer (or none)
+  when a slide has little exam-relevant material, rather than padding
+  with filler.
 - `qgen_feedback`: learn your card taste from the suggestion buttons.
   "Use →" saves a card as a positive style example, "👎" as a negative
   one, and "✕" (a neutral discard) deliberately saves nothing. Recent

@@ -9,7 +9,7 @@ from __future__ import annotations
 from aqt import mw
 from aqt.utils import showWarning
 
-from .uitools import notify as tooltip
+from .uitools import cream_tooltips, notify as tooltip
 
 from .qtshim import *  # noqa: F401,F403
 from . import notes as notes_mod
@@ -93,6 +93,9 @@ Ctrl+Enter = Add Cards"""
 
 
 # Warm pastel theme, scoped to this dialog only (never leaks into Anki).
+# NOTE: hover tooltips can NOT be styled here - Qt parents them to the
+# screen, so window stylesheets never reach them. Every add-on window
+# calls uitools.cream_tooltips(self) instead.
 _STYLE = """
 * {
     font-family: "Segoe UI", "SF Pro Text", "Helvetica Neue", Arial,
@@ -102,13 +105,6 @@ _STYLE = """
 }
 QDialog {
     background: #faf6ef;
-}
-QToolTip {
-    background: #fffdf6;
-    color: #2f2b1e;
-    border: 1px solid #c9bda8;
-    padding: 6px 8px;
-    font-size: 10pt;
 }
 QToolButton, QPushButton {
     background: #ffffff;
@@ -186,12 +182,6 @@ QScrollBar::add-line, QScrollBar::sub-line {
     height: 0;
     width: 0;
 }
-QToolTip {
-    background: #fffdf8;
-    color: #3d3929;
-    border: 1px solid #d8cdbb;
-    padding: 4px 6px;
-}
 QSplitter::handle {
     background: #f2ece1;
     border-radius: 3px;
@@ -254,6 +244,7 @@ class SnipOcclusionDialog(QDialog):
             | Qt.WindowType.WindowMaximizeButtonHint
         )
         self.setStyleSheet(_STYLE)
+        cream_tooltips(self)
         self._build_ui()
         fs_shortcut = QShortcut(QKeySequence("F11"), self)
         qconnect(fs_shortcut.activated, self._toggle_fullscreen)
@@ -779,7 +770,8 @@ class SnipOcclusionDialog(QDialog):
         # start OCR + AI card suggestions now, so they're ready the moment
         # the user switches to the Text Editor
         try:
-            qgen_prefetch.start_for_image(img.copy(), self.config)
+            # fresh config: the Cards: selector may have changed the count
+            qgen_prefetch.start_for_image(img.copy(), get_config())
             # begin displaying (or queueing up) the new snip's suggestions
             self.suggest_page.refresh_suggestions()
             popped = getattr(self, "_popped_text_editor", None)
@@ -939,6 +931,7 @@ class SnipOcclusionDialog(QDialog):
         dlg = QDialog(self)
         dlg.setWindowTitle(ADDON_NAME + " — Settings")
         dlg.setStyleSheet(_STYLE)
+        cream_tooltips(dlg)
         lay = QVBoxLayout(dlg)
         lay.addWidget(
             QLabel("<b>When switching to the Text Editor…</b>", dlg)

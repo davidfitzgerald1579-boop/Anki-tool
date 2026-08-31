@@ -4,6 +4,23 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.21.0 — 2026-08-31
+
+- **Hover tooltips are finally readable** — crisp dark-on-cream, in
+  every add-on window. Root cause found: Qt draws a tooltip in its own
+  top-level window parented to the *screen*, so the `QToolTip` styling
+  in the dialog's stylesheet never reached it and Anki's (dark)
+  app-wide look won. The add-on now intercepts the tooltip event
+  itself and shows its own styled tip for widgets inside its windows —
+  Anki's global tooltips are untouched. The same dead-styling
+  assumption was fixed elsewhere: the word-detection debug
+  notification used a native tooltip too and now uses the cream
+  notification.
+- **"Cards:" selector on the Suggested Cards view** (next to the ↶
+  undo button): choose 1–8 suggested cards per slide, default 4. The
+  choice is saved and applies from the next generation — press ↻ to
+  redo the current one with the new count.
+
 ## v0.20.0 — 2026-08-31
 
 - **✎ Fix: correct a suggested card purely to teach the AI.** When the
