@@ -4,6 +4,17 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.23.1 — 2026-08-31
+
+- **The Added cards tray now moves with the view**: bottom of the
+  sidebar in the Image Editor (below the tools), top of the sidebar —
+  directly under "📋 Load new snip" — in the Suggested Cards and
+  Write Card views.
+- **Removed the "📝 Text card" sidebar button** (the Write Card tab at
+  the top does the same job) and **the "🔍 Text preview" button** (the
+  OCR text is always visible under the Suggested Cards view now); its
+  Settings checkbox is gone too.
+
 ## v0.23.0 — 2026-08-31
 
 - **The Suggested Cards and Write Card views now show a minimal

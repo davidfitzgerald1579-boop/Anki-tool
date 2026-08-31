@@ -82,9 +82,9 @@ one card; they stack on a background matching the slide (🎨 to change). \
 queued cards also load automatically after you press Add Cards.<br><br>
 <b>Search text (OCR)</b><br>
 When cards are added, the text on the image is read automatically and \
-stored invisibly on each card so deck search can find it. Use "Text \
-preview" to check what is being read; fix recurring misreads via \
-"ocr_corrections" in the add-on config.<br><br>
+stored invisibly on each card so deck search can find it. The same \
+text appears under the Suggested Cards view; fix recurring misreads \
+via "ocr_corrections" in the add-on config.<br><br>
 <b>Other</b><br>
 Ctrl+Z / Ctrl+Y undo &middot; redo &middot; Del = delete &middot; \
 Ctrl+wheel = zoom &middot; F = fit &middot; middle-drag = pan &middot; \
@@ -304,9 +304,16 @@ class SnipOcclusionDialog(QDialog):
         qconnect(self.clip_btn.clicked, self._load_clipboard_clicked)
         side.addWidget(self.clip_btn)
 
-        # everything below (until the Added cards list) is for the
-        # Image Editor only; one host widget so the text views can hide
-        # it wholesale and the Settings checkboxes can trim sections
+        # the added-cards tray: top (under the snip button) in the text
+        # views, bottom in the Image Editor - _apply_sidebar_mode moves it
+        self.added_list = AddedCardsList(side_widget)
+        self.added_list.open_added_handler = self._open_added_card
+        side.addWidget(self.added_list, 1)
+        self._side_layout = side
+
+        # everything below is for the Image Editor only; one host
+        # widget so the text views can hide it wholesale and the
+        # Settings checkboxes can trim sections
         self.tools_host = QWidget(side_widget)
         tools_lay = QVBoxLayout(self.tools_host)
         tools_lay.setContentsMargins(0, 0, 0, 0)
@@ -390,16 +397,6 @@ class SnipOcclusionDialog(QDialog):
         self.swatch_btn.setMenu(swatch_menu)
         tools_lay.addWidget(self.swatch_btn)
 
-        self.ocr_btn = ocr_btn = self._side_button(
-            "🔍 Text preview",
-            "Show the text OCR reads from the current image - the same text "
-            "that will be stored (invisibly) on the cards so deck search "
-            "can find them. Use it to spot misreads worth adding to the "
-            "corrections list in the add-on config.",
-        )
-        qconnect(ocr_btn.clicked, self._show_ocr_preview)
-        tools_lay.addWidget(ocr_btn)
-
         tools_lay.addWidget(self._separator())
         self.queue_panel = NewCardQueuePanel(self)
         self.queue_panel.patch_drop_handler = self._on_patch_dropped_to_card
@@ -409,14 +406,6 @@ class SnipOcclusionDialog(QDialog):
         # the queue soaks up all spare sidebar height (scroll area size
         # hints don't propagate reliably, so an explicit stretch it is)
         tools_lay.addWidget(self.queue_panel, 1)
-
-        text_btn = self._side_button(
-            "📝 Text card",
-            "Switch to the Write Card view: write a card in your own "
-            "words, with the source text shown above the fields",
-        )
-        qconnect(text_btn.clicked, self._open_text_card)
-        tools_lay.addWidget(text_btn)
 
         self.help_btn = help_btn = self._side_button(
             "?  Shortcuts", "Shortcuts and tips"
@@ -428,13 +417,9 @@ class SnipOcclusionDialog(QDialog):
         self._sidebar_sections = {
             "queue": self.queue_panel,
             "see_through": self.xray_btn,
-            "text_preview": self.ocr_btn,
             "shortcuts": self.help_btn,
         }
 
-        self.added_list = AddedCardsList(side_widget)
-        self.added_list.open_added_handler = self._open_added_card
-        side.addWidget(self.added_list, 1)
         self._view_mode = "image"
         self._apply_sidebar_mode("image")
         self._side_widget = side_widget
@@ -949,9 +934,16 @@ class SnipOcclusionDialog(QDialog):
     def _apply_sidebar_mode(self, mode: str) -> None:
         """Text views show only Load new snip + Added cards; the Image
         Editor shows the tools, minus sections switched off in
-        Settings."""
+        Settings. The added-cards tray moves too: under the snip button
+        in the text views, below the tools in the Image Editor."""
         image = mode == "image"
         self.tools_host.setVisible(image)
+        lay = self._side_layout
+        lay.removeWidget(self.added_list)
+        if image:
+            lay.addWidget(self.added_list, 1)  # bottom, under the tools
+        else:
+            lay.insertWidget(1, self.added_list, 1)  # under Load new snip
         if image:
             hidden = set(self.config.get("sidebar_hidden") or [])
             for key, widget in self._sidebar_sections.items():
@@ -1039,7 +1031,6 @@ class SnipOcclusionDialog(QDialog):
         for key, label in [
             ("queue", "New card queue"),
             ("see_through", "👁 See-through"),
-            ("text_preview", "🔍 Text preview"),
             ("shortcuts", "?  Shortcuts help"),
         ]:
             cb = QCheckBox(label, dlg)
@@ -1192,52 +1183,6 @@ class SnipOcclusionDialog(QDialog):
         return True
 
     # ------------------------------------------------------------------ OCR
-
-    def _show_ocr_preview(self) -> None:
-        if not self.canvas.has_image():
-            showWarning("Snip a slide first.", parent=self, title=ADDON_NAME)
-            return
-        backend = ocr.available_backend(self.config)
-        if backend == "none":
-            QMessageBox.information(
-                self,
-                ADDON_NAME,
-                "No OCR engine is available.\n\nOn Windows the built-in OCR "
-                "is used automatically; elsewhere install Tesseract and set "
-                "tesseract_path in the add-on config.",
-            )
-            return
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            text = ocr.extract_text(self.canvas.bake_image(), self.config)
-        except Exception as exc:
-            QApplication.restoreOverrideCursor()
-            showWarning("OCR failed: %s" % exc, parent=self, title=ADDON_NAME)
-            return
-        QApplication.restoreOverrideCursor()
-        _remember_ocr(text)
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Search text preview (%s OCR)" % backend)
-        dlg.resize(560, 420)
-        lay = QVBoxLayout(dlg)
-        info = QLabel(
-            "This text is stored invisibly on each card so deck search can "
-            "find it. Spot a misread? Add it to \"ocr_corrections\" in the "
-            "add-on config (Tools → Add-ons → Snip Occlusion → Config), "
-            'e.g. {"K80": "KBD"} — it will be fixed on all future cards.',
-            dlg,
-        )
-        info.setWordWrap(True)
-        lay.addWidget(info)
-        box = QPlainTextEdit(dlg)
-        box.setPlainText(text or "(nothing recognized)")
-        box.setReadOnly(True)
-        lay.addWidget(box, 1)
-        close = QPushButton("Close", dlg)
-        qconnect(close.clicked, dlg.accept)
-        lay.addWidget(close)
-        dlg.exec()
 
     def _swatch_auto(self) -> None:
         self.canvas.erase_color_override = None

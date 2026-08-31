@@ -85,9 +85,9 @@
   settable via the ⚙ button in the main window.
 - `sidebar_hidden`: Image Editor sidebar sections you have switched
   off, any of `"queue"` (New card queue), `"see_through"`,
-  `"text_preview"`, `"shortcuts"`. Default: `[]` (show everything).
-  Easiest changed via the checkboxes in the ⚙ Settings window; only
-  affects the Image Editor tab.
+  `"shortcuts"`. Default: `[]` (show everything). Easiest changed via
+  the checkboxes in the ⚙ Settings window; only affects the Image
+  Editor tab.
 - `qgen_bakeoff`: alternate generations between the models in
   `qgen_bakeoff_models` and score each by your Use/★/Skip/✗ verdicts
   (plus generation times). The scoreboard — including whether the
