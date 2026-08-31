@@ -54,6 +54,8 @@ class TextCardPanel(QWidget):
         self.show_source = show_source
         self._active_edit: QTextEdit | None = None
         self.added_any = False  # did add_card() succeed at least once
+        self.on_added = None  # callback(front, back, notes) after an add
+        self._src_user_sized = False
         self._build_ui(standalone_shortcuts)
 
     def _build_ui(self, standalone_shortcuts: bool) -> None:
@@ -106,6 +108,7 @@ class TextCardPanel(QWidget):
             self.vsplit.addWidget(fields_host)
             self.vsplit.setStretchFactor(0, 1)
             self.vsplit.setStretchFactor(1, 2)
+            qconnect(self.vsplit.splitterMoved, self._src_splitter_dragged)
             outer.addWidget(self.vsplit, 1)
             min_front, min_back, min_notes = 44, 44, 32
         else:
@@ -206,6 +209,49 @@ class TextCardPanel(QWidget):
             "<div style='color:#3d3929;font-size:13px;'>%s</div>"
             % "<br><br>".join(paragraphs)
         )
+        self._src_user_sized = False  # new text auto-sizes again
+        QTimer.singleShot(0, self._fit_source)
+
+    def _src_splitter_dragged(self, *_args) -> None:
+        self._src_user_sized = True  # a manual drag takes over
+
+    def _fit_source(self) -> None:
+        """Size the source pane to show the WHOLE text, no scrolling.
+
+        The fields below compress as needed (they have small minimums);
+        only when the text is taller than the window itself does the
+        pane cap out and scroll. A manual splitter drag takes over
+        until the next source text arrives.
+        """
+        if not self.show_source or self._src_user_sized:
+            return
+        sizes = self.vsplit.sizes()
+        total = sum(sizes)
+        if total <= 0:
+            return  # not laid out yet; showEvent refits
+        doc = self.source_browser.document()
+        doc.setTextWidth(max(60, self.source_browser.viewport().width()))
+        needed = int(doc.size().height()) + 20
+        host_lay = self.vsplit.widget(0).layout()
+        item = host_lay.itemAt(0)  # the "Source text" label
+        if item is not None:
+            needed += item.sizeHint().height() + host_lay.spacing()
+        bottom_min = max(
+            self.vsplit.widget(1).minimumSizeHint().height(), 200
+        )
+        top = max(60, min(needed, total - bottom_min))
+        self.vsplit.setSizes([top, total - top])
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self.show_source:
+            QTimer.singleShot(0, self._fit_source)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self.show_source:
+            # width changes reflow the text, changing its height
+            QTimer.singleShot(0, self._fit_source)
 
     def focus_front(self) -> None:
         self.front.setFocus()
@@ -287,6 +333,11 @@ class TextCardPanel(QWidget):
                 title=ADDON_NAME,
             )
             return
+        plain = (
+            self.front.toPlainText().strip(),
+            self.back.toPlainText().strip(),
+            self.notes.toPlainText().strip(),
+        )
         notes_mod.add_text_note(
             mw.col,
             self.deck_box.currentData(),
@@ -296,6 +347,11 @@ class TextCardPanel(QWidget):
         )
         mw.reset()
         self.added_any = True
+        if self.on_added is not None:
+            try:
+                self.on_added(*plain)
+            except Exception:
+                pass
         tooltip("Card added", parent=self)
         self.front.clear()
         self.back.clear()
@@ -844,6 +900,7 @@ class SuggestionsPage(QWidget):
                 back_text=back,
                 notes_text=notes,
                 on_discard=on_discard,
+                original_card=card,
             )
             remove_row()
 
@@ -1005,6 +1062,7 @@ class TextCardDialog(QDialog):
         back_text: str = "",
         notes_text: str = "",
         on_discard=None,
+        original_card=None,
     ):
         super().__init__(parent or mw)
         self._on_discard = on_discard
@@ -1032,6 +1090,33 @@ class TextCardDialog(QDialog):
             self.panel.back.setFocus()
         else:
             self.panel.focus_front()
+        if original_card:
+            # the learning loop should remember the card AS ADDED, not
+            # as suggested: if the user corrects wrong content before
+            # adding, the corrected version replaces the original in
+            # the kept-examples store
+            orig = dict(original_card)
+
+            def learn_corrected(front, back, notes) -> None:
+                self.panel.on_added = None  # first add only
+                edited = {"front": front, "back": back}
+                if notes:
+                    edited["notes"] = notes
+                if (
+                    edited["front"] == orig.get("front", "")
+                    and edited["back"] == orig.get("back", "")
+                    and notes == orig.get("notes", "")
+                ):
+                    return  # unchanged - the original example stands
+                try:
+                    from . import qgen_feedback
+
+                    qgen_feedback.unrecord(orig)
+                    qgen_feedback.record(edited, qgen_feedback.KEPT)
+                except Exception:
+                    pass
+
+            self.panel.on_added = learn_corrected
 
     def closeEvent(self, event) -> None:
         if self.panel.has_unsaved_text():
@@ -1059,6 +1144,7 @@ def open_text_card_dialog(
     back_text: str = "",
     notes_text: str = "",
     on_discard=None,
+    original_card=None,
 ) -> None:
     if mw.col is None:
         showWarning("Open a profile first.", title=ADDON_NAME)
@@ -1077,6 +1163,7 @@ def open_text_card_dialog(
         back_text=back_text,
         notes_text=notes_text,
         on_discard=on_discard,
+        original_card=original_card,
     )
     if not front_text and not back_text:
         mw._snip_occlusion_text_dialog = dlg  # keep a reference (GC gotcha)

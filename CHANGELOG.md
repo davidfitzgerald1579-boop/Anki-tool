@@ -4,6 +4,20 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.19.1 — 2026-08-31
+
+- **Write Card: the source text pane auto-sizes to the whole text** —
+  down to the last line, no scrolling — compressing the fields below as
+  needed. It re-fits on every new snip/lesson and on window resizes; a
+  manual drag of the divider takes over until the next text arrives.
+  (If the text is taller than the window physically allows, the pane
+  takes all it can and scrolls for the remainder.)
+- **Correcting a suggestion now teaches the corrected version.** When
+  you Use → a card, fix its content in the window, and add it, the
+  learning loop replaces the model's original with YOUR corrected card
+  in the kept examples — so the loop learns the right distinction, not
+  the confusion. (Adding the card unchanged leaves things as before.)
+
 ## v0.19.0 — 2026-08-31
 
 - **✋ Grab tool.** Click and hold to drag the image around the window
