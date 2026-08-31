@@ -4,6 +4,25 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.23.0 — 2026-08-31
+
+- **The Suggested Cards and Write Card views now show a minimal
+  sidebar**: just "📋 Load new snip" and the Added cards list — no
+  drawing tools, no queue. Everything comes back when you switch to
+  the Image Editor. (The existing keep/hide setting still hides the
+  sidebar entirely if you prefer.)
+- **Trim the Image Editor sidebar in ⚙ Settings**: new checkboxes let
+  you switch off sections you don't use — New card queue, See-through,
+  Text preview, Shortcuts help. Untick to hide, re-tick any time; the
+  choice is saved and only affects the Image Editor tab.
+- **Added cards are now readable** — each entry is a slide-style
+  preview card showing the question and answer text (like the queue's
+  PowerPoint thumbnails, but for text), with a count in the heading
+  and newest first. Click a card to edit & redeploy or delete it.
+- **The sidebar can be dragged out to half the window** (the old 400px
+  cap is gone), so the added cards on the left read as large and
+  clearly as the suggested cards on the right.
+
 ## v0.22.0 — 2026-08-31
 
 - **Added cards can be fixed after the fact.** Every text card you add

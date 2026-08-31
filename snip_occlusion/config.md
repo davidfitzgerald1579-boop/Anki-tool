@@ -80,8 +80,14 @@
   unwanted suggestions with their ✕ button instead).
 - `text_editor_sidebar`: what the left toolbar does when you switch the
   main window to the Suggested Cards or Write Card views. `"keep"` (default) leaves it
-  visible; `"hide"` tucks it away until you switch back to the Image
-  Editor. Also settable via the ⚙ button in the main window.
+  visible (trimmed to Load new snip + Added cards); `"hide"` tucks it
+  away entirely until you switch back to the Image Editor. Also
+  settable via the ⚙ button in the main window.
+- `sidebar_hidden`: Image Editor sidebar sections you have switched
+  off, any of `"queue"` (New card queue), `"see_through"`,
+  `"text_preview"`, `"shortcuts"`. Default: `[]` (show everything).
+  Easiest changed via the checkboxes in the ⚙ Settings window; only
+  affects the Image Editor tab.
 - `qgen_bakeoff`: alternate generations between the models in
   `qgen_bakeoff_models` and score each by your Use/★/Skip/✗ verdicts
   (plus generation times). The scoreboard — including whether the

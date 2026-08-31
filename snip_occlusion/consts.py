@@ -88,6 +88,11 @@ DEFAULT_CONFIG = {
     "qgen_bakeoff": False,
     "qgen_bakeoff_models": ["llama3.1:8b", "llama3.2:3b"],
     "text_editor_sidebar": "keep",  # "keep" | "hide" the sidebar in text view
+    # Image Editor sidebar sections the user has switched off in
+    # Settings: any of "queue", "see_through", "text_preview",
+    # "shortcuts". Text views always show only Load new snip + Added
+    # cards, regardless of this.
+    "sidebar_hidden": [],
     "qgen_feedback": True,
     "qgen_feedback_examples": 4,
 }
