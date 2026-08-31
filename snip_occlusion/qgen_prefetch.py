@@ -20,13 +20,14 @@ from __future__ import annotations
 
 import threading
 
-from . import ocr, qgen, qgen_bakeoff
+from . import ocr, ocr_accent, qgen, qgen_bakeoff
 
 
 class _Prefetch:
     def __init__(self):
         self.done = threading.Event()
         self.text = ""
+        self.emphasis: list = []  # accent-coloured slide terms
         self.cards: list | None = None
         self.error: Exception | None = None
 
@@ -35,11 +36,16 @@ _lock = threading.Lock()
 _latest: _Prefetch | None = None
 
 
-def start_for_image(img, config: dict) -> None:
+def start_for_image(img, config: dict, on_text=None) -> None:
     """OCR `img` and generate card suggestions, in a background thread.
 
     Never raises and never blocks; failures are stored and surfaced when
     (if) the user asks for the suggestions.
+
+    `on_text(state)` is called from the worker thread the moment OCR
+    finishes - minutes before the LLM is done - so the UI can show the
+    source text straight away. It must hop to the main thread itself
+    before touching widgets.
     """
     if not config.get("qgen_prefetch", True):
         return
@@ -55,7 +61,18 @@ def start_for_image(img, config: dict) -> None:
                 raise qgen.QGenError(
                     "No text could be read from the snip."
                 )
-            state.cards = qgen_bakeoff.generate(state.text, config)
+            if on_text is not None:
+                try:
+                    on_text(state)
+                except Exception:
+                    pass  # display is a bonus; generation must go on
+            # words in an accent colour = the slide's own emphasis;
+            # best-effort, and worth a second OCR pass (the LLM run
+            # that follows dwarfs it)
+            state.emphasis = ocr_accent.extract_accents(img, config)
+            state.cards = qgen_bakeoff.generate(
+                state.text, config, emphasis=state.emphasis or None
+            )
         except Exception as exc:
             state.error = exc
         finally:

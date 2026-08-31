@@ -9,12 +9,12 @@ from __future__ import annotations
 from aqt import mw
 from aqt.utils import showWarning
 
-from .uitools import notify as tooltip
+from .uitools import cream_tooltips, notify as tooltip
 
 from .qtshim import *  # noqa: F401,F403
 from . import notes as notes_mod
 from . import ocr, qgen_bakeoff, qgen_prefetch
-from .newcard_panel import NewCardQueuePanel
+from .newcard_panel import AddedCardsList, NewCardQueuePanel
 from .consts import (
     ADDON_NAME,
     DEFAULT_CONFIG,
@@ -82,9 +82,9 @@ one card; they stack on a background matching the slide (🎨 to change). \
 queued cards also load automatically after you press Add Cards.<br><br>
 <b>Search text (OCR)</b><br>
 When cards are added, the text on the image is read automatically and \
-stored invisibly on each card so deck search can find it. Use "Text \
-preview" to check what is being read; fix recurring misreads via \
-"ocr_corrections" in the add-on config.<br><br>
+stored invisibly on each card so deck search can find it. The same \
+text appears under the Suggested Cards view; fix recurring misreads \
+via "ocr_corrections" in the add-on config.<br><br>
 <b>Other</b><br>
 Ctrl+Z / Ctrl+Y undo &middot; redo &middot; Del = delete &middot; \
 Ctrl+wheel = zoom &middot; F = fit &middot; middle-drag = pan &middot; \
@@ -93,6 +93,9 @@ Ctrl+Enter = Add Cards"""
 
 
 # Warm pastel theme, scoped to this dialog only (never leaks into Anki).
+# NOTE: hover tooltips can NOT be styled here - Qt parents them to the
+# screen, so window stylesheets never reach them. Every add-on window
+# calls uitools.cream_tooltips(self) instead.
 _STYLE = """
 * {
     font-family: "Segoe UI", "SF Pro Text", "Helvetica Neue", Arial,
@@ -102,13 +105,6 @@ _STYLE = """
 }
 QDialog {
     background: #faf6ef;
-}
-QToolTip {
-    background: #fffdf6;
-    color: #2f2b1e;
-    border: 1px solid #c9bda8;
-    padding: 6px 8px;
-    font-size: 10pt;
 }
 QToolButton, QPushButton {
     background: #ffffff;
@@ -186,12 +182,6 @@ QScrollBar::add-line, QScrollBar::sub-line {
     height: 0;
     width: 0;
 }
-QToolTip {
-    background: #fffdf8;
-    color: #3d3929;
-    border: 1px solid #d8cdbb;
-    padding: 4px 6px;
-}
 QSplitter::handle {
     background: #f2ece1;
     border-radius: 3px;
@@ -254,6 +244,7 @@ class SnipOcclusionDialog(QDialog):
             | Qt.WindowType.WindowMaximizeButtonHint
         )
         self.setStyleSheet(_STYLE)
+        cream_tooltips(self)
         self._build_ui()
         fs_shortcut = QShortcut(QKeySequence("F11"), self)
         qconnect(fs_shortcut.activated, self._toggle_fullscreen)
@@ -299,7 +290,8 @@ class SnipOcclusionDialog(QDialog):
         # --- left-hand toolbar
         side_widget = QWidget(self)
         side_widget.setMinimumWidth(150)
-        side_widget.setMaximumWidth(400)
+        # no maximum: drag the divider out to half the window (or more)
+        # to read the queued and added cards at full size
         side = QVBoxLayout(side_widget)
         side.setContentsMargins(0, 0, 6, 0)
         side.setSpacing(4)
@@ -311,7 +303,23 @@ class SnipOcclusionDialog(QDialog):
         )
         qconnect(self.clip_btn.clicked, self._load_clipboard_clicked)
         side.addWidget(self.clip_btn)
-        side.addWidget(self._separator())
+
+        # the added-cards tray: top (under the snip button) in the text
+        # views, bottom in the Image Editor - _apply_sidebar_mode moves it
+        self.added_list = AddedCardsList(side_widget)
+        self.added_list.open_added_handler = self._open_added_card
+        side.addWidget(self.added_list, 1)
+        self._side_layout = side
+
+        # everything below is for the Image Editor only; one host
+        # widget so the text views can hide it wholesale and the
+        # Settings checkboxes can trim sections
+        self.tools_host = QWidget(side_widget)
+        tools_lay = QVBoxLayout(self.tools_host)
+        tools_lay.setContentsMargins(0, 0, 0, 0)
+        tools_lay.setSpacing(4)
+        side.addWidget(self.tools_host, 1)
+        tools_lay.addWidget(self._separator())
 
         self.tool_group = QButtonGroup(self)
         self.tool_buttons = {}
@@ -342,10 +350,10 @@ class SnipOcclusionDialog(QDialog):
             self.tool_group.addButton(btn)
             self.tool_buttons[tool] = btn
             qconnect(btn.clicked, lambda _=False, t=tool: self._pick_tool(t))
-            side.addWidget(btn)
+            tools_lay.addWidget(btn)
         self.tool_buttons[TOOL_SELECT].setChecked(True)
 
-        side.addWidget(self._separator())
+        tools_lay.addWidget(self._separator())
         for label, tip, cb in [
             ("Group", "Group selected shapes (G)", self._group),
             ("Ungroup", "Ungroup selected shapes (U)", self._ungroup),
@@ -356,7 +364,7 @@ class SnipOcclusionDialog(QDialog):
         ]:
             btn = self._side_button(label, tip)
             qconnect(btn.clicked, lambda _=False, f=cb: f())
-            side.addWidget(btn)
+            tools_lay.addWidget(btn)
 
         self.xray_btn = self._side_button(
             "👁 See-through",
@@ -366,9 +374,9 @@ class SnipOcclusionDialog(QDialog):
         )
         self.xray_btn.setCheckable(True)
         qconnect(self.xray_btn.clicked, self._xray_clicked)
-        side.addWidget(self.xray_btn)
+        tools_lay.addWidget(self.xray_btn)
 
-        side.addWidget(self._separator())
+        tools_lay.addWidget(self._separator())
         self.swatch_btn = self._side_button(
             "Fill: auto",
             "Cover-up fill colour (auto-detected majority colour of the "
@@ -387,19 +395,9 @@ class SnipOcclusionDialog(QDialog):
             self._swatch_pick,
         )
         self.swatch_btn.setMenu(swatch_menu)
-        side.addWidget(self.swatch_btn)
+        tools_lay.addWidget(self.swatch_btn)
 
-        ocr_btn = self._side_button(
-            "🔍 Text preview",
-            "Show the text OCR reads from the current image - the same text "
-            "that will be stored (invisibly) on the cards so deck search "
-            "can find them. Use it to spot misreads worth adding to the "
-            "corrections list in the add-on config.",
-        )
-        qconnect(ocr_btn.clicked, self._show_ocr_preview)
-        side.addWidget(ocr_btn)
-
-        side.addWidget(self._separator())
+        tools_lay.addWidget(self._separator())
         self.queue_panel = NewCardQueuePanel(self)
         self.queue_panel.patch_drop_handler = self._on_patch_dropped_to_card
         qconnect(
@@ -407,19 +405,23 @@ class SnipOcclusionDialog(QDialog):
         )
         # the queue soaks up all spare sidebar height (scroll area size
         # hints don't propagate reliably, so an explicit stretch it is)
-        side.addWidget(self.queue_panel, 1)
+        tools_lay.addWidget(self.queue_panel, 1)
 
-        text_btn = self._side_button(
-            "📝 Text card",
-            "Switch to the Write Card view: write a card in your own "
-            "words, with the source text shown above the fields",
+        self.help_btn = help_btn = self._side_button(
+            "?  Shortcuts", "Shortcuts and tips"
         )
-        qconnect(text_btn.clicked, self._open_text_card)
-        side.addWidget(text_btn)
-
-        help_btn = self._side_button("?  Shortcuts", "Shortcuts and tips")
         qconnect(help_btn.clicked, self._show_help)
-        side.addWidget(help_btn)
+        tools_lay.addWidget(help_btn)
+
+        # sections the user can switch off in Settings (Image Editor)
+        self._sidebar_sections = {
+            "queue": self.queue_panel,
+            "see_through": self.xray_btn,
+            "shortcuts": self.help_btn,
+        }
+
+        self._view_mode = "image"
+        self._apply_sidebar_mode("image")
         self._side_widget = side_widget
         self.splitter.addWidget(side_widget)
 
@@ -779,12 +781,15 @@ class SnipOcclusionDialog(QDialog):
         # start OCR + AI card suggestions now, so they're ready the moment
         # the user switches to the Text Editor
         try:
-            qgen_prefetch.start_for_image(img.copy(), self.config)
+            # fresh config: the Cards: selector may have changed the count
+            qgen_prefetch.start_for_image(
+                img.copy(),
+                get_config(),
+                on_text=self._prefetch_text_ready,
+            )
             # begin displaying (or queueing up) the new snip's suggestions
-            self.suggest_page.refresh_suggestions()
-            popped = getattr(self, "_popped_text_editor", None)
-            if popped is not None and popped.isVisible():
-                popped.panel.refresh_suggestions()
+            for panel in self._suggestion_panels():
+                panel.refresh_suggestions()
         except Exception:
             pass  # prefetching is best-effort, never in the user's way
         # new queue cards default to this slide's background colour
@@ -885,6 +890,40 @@ class SnipOcclusionDialog(QDialog):
         elif self.view_stack.currentWidget() is self._image_page:
             self.add_cards()
 
+    def _prefetch_text_ready(self, state) -> None:
+        """Show the OCR text the moment it's read - the LLM is still
+        generating, but the source panes shouldn't wait for it.
+
+        Called from the prefetch worker thread; hops to the main thread
+        before touching any widget.
+        """
+
+        def apply() -> None:
+            if qgen_prefetch.current() is not state:
+                return  # a newer snip took over in the meantime
+            for panel in self._suggestion_panels():
+                # never clobber a pasted-lesson run's source text
+                if not panel._doc_running:
+                    panel.set_source_text(state.text)
+            self.write_page.set_source_text(state.text)
+
+        try:
+            mw.taskman.run_on_main(apply)
+        except Exception:
+            pass  # display is a bonus; never break the snip flow
+
+    def _suggestion_panels(self) -> list:
+        panels = [self.suggest_page]
+        popped = getattr(self, "_popped_text_editor", None)
+        if popped is not None and popped.isVisible():
+            panels.append(popped.panel)
+        return panels
+
+    def _open_added_card(self, note_id: int) -> None:
+        from .textcard import open_added_card_editor  # circular import
+
+        open_added_card_editor(note_id, parent=self)
+
     def _current_source_text(self) -> str:
         text = self.suggest_page.current_source()
         if not text:
@@ -892,10 +931,30 @@ class SnipOcclusionDialog(QDialog):
             text = state.text if state is not None else ""
         return text
 
+    def _apply_sidebar_mode(self, mode: str) -> None:
+        """Text views show only Load new snip + Added cards; the Image
+        Editor shows the tools, minus sections switched off in
+        Settings. The added-cards tray moves too: under the snip button
+        in the text views, below the tools in the Image Editor."""
+        image = mode == "image"
+        self.tools_host.setVisible(image)
+        lay = self._side_layout
+        lay.removeWidget(self.added_list)
+        if image:
+            lay.addWidget(self.added_list, 1)  # bottom, under the tools
+        else:
+            lay.insertWidget(1, self.added_list, 1)  # under Load new snip
+        if image:
+            hidden = set(self.config.get("sidebar_hidden") or [])
+            for key, widget in self._sidebar_sections.items():
+                widget.setVisible(key not in hidden)
+
     def _set_view(self, mode: str) -> None:
         self.image_view_btn.setChecked(mode == "image")
         self.suggest_view_btn.setChecked(mode == "suggest")
         self.write_view_btn.setChecked(mode == "write")
+        self._view_mode = mode
+        self._apply_sidebar_mode(mode)
         if mode == "image":
             self.view_stack.setCurrentWidget(self._image_page)
             if (
@@ -939,6 +998,7 @@ class SnipOcclusionDialog(QDialog):
         dlg = QDialog(self)
         dlg.setWindowTitle(ADDON_NAME + " — Settings")
         dlg.setStyleSheet(_STYLE)
+        cream_tooltips(dlg)
         lay = QVBoxLayout(dlg)
         lay.addWidget(
             QLabel("<b>When switching to the Text Editor…</b>", dlg)
@@ -956,6 +1016,27 @@ class SnipOcclusionDialog(QDialog):
             keep_radio.setChecked(True)
         lay.addWidget(keep_radio)
         lay.addWidget(hide_radio)
+
+        lay.addSpacing(8)
+        lay.addWidget(
+            QLabel(
+                "<b>Image Editor sidebar</b> — untick anything you "
+                "don't want to see (only affects the Image Editor "
+                "tab):",
+                dlg,
+            )
+        )
+        hidden_now = set(self.config.get("sidebar_hidden") or [])
+        section_checks = {}
+        for key, label in [
+            ("queue", "New card queue"),
+            ("see_through", "👁 See-through"),
+            ("shortcuts", "?  Shortcuts help"),
+        ]:
+            cb = QCheckBox(label, dlg)
+            cb.setChecked(key not in hidden_now)
+            section_checks[key] = cb
+            lay.addWidget(cb)
 
         lay.addSpacing(8)
         lay.addWidget(QLabel("<b>AI model for card suggestions</b>", dlg))
@@ -1029,8 +1110,13 @@ class SnipOcclusionDialog(QDialog):
             return
         value = "hide" if hide_radio.isChecked() else "keep"
         bakeoff = alt_radio.isChecked()
+        hidden_sections = [
+            key for key, cb in section_checks.items() if not cb.isChecked()
+        ]
         self.config["text_editor_sidebar"] = value
         self.config["qgen_bakeoff"] = bakeoff
+        self.config["sidebar_hidden"] = hidden_sections
+        self._apply_sidebar_mode(self._view_mode)
         if not bakeoff:
             self.config["qgen_model"] = (
                 bigger if big_radio.isChecked() else smaller
@@ -1040,6 +1126,7 @@ class SnipOcclusionDialog(QDialog):
             user_cfg = mw.addonManager.getConfig(module) or {}
             user_cfg["text_editor_sidebar"] = value
             user_cfg["qgen_bakeoff"] = bakeoff
+            user_cfg["sidebar_hidden"] = hidden_sections
             if not bakeoff:
                 user_cfg["qgen_model"] = self.config["qgen_model"]
             mw.addonManager.writeConfig(module, user_cfg)
@@ -1096,52 +1183,6 @@ class SnipOcclusionDialog(QDialog):
         return True
 
     # ------------------------------------------------------------------ OCR
-
-    def _show_ocr_preview(self) -> None:
-        if not self.canvas.has_image():
-            showWarning("Snip a slide first.", parent=self, title=ADDON_NAME)
-            return
-        backend = ocr.available_backend(self.config)
-        if backend == "none":
-            QMessageBox.information(
-                self,
-                ADDON_NAME,
-                "No OCR engine is available.\n\nOn Windows the built-in OCR "
-                "is used automatically; elsewhere install Tesseract and set "
-                "tesseract_path in the add-on config.",
-            )
-            return
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            text = ocr.extract_text(self.canvas.bake_image(), self.config)
-        except Exception as exc:
-            QApplication.restoreOverrideCursor()
-            showWarning("OCR failed: %s" % exc, parent=self, title=ADDON_NAME)
-            return
-        QApplication.restoreOverrideCursor()
-        _remember_ocr(text)
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Search text preview (%s OCR)" % backend)
-        dlg.resize(560, 420)
-        lay = QVBoxLayout(dlg)
-        info = QLabel(
-            "This text is stored invisibly on each card so deck search can "
-            "find it. Spot a misread? Add it to \"ocr_corrections\" in the "
-            "add-on config (Tools → Add-ons → Snip Occlusion → Config), "
-            'e.g. {"K80": "KBD"} — it will be fixed on all future cards.',
-            dlg,
-        )
-        info.setWordWrap(True)
-        lay.addWidget(info)
-        box = QPlainTextEdit(dlg)
-        box.setPlainText(text or "(nothing recognized)")
-        box.setReadOnly(True)
-        lay.addWidget(box, 1)
-        close = QPushButton("Close", dlg)
-        qconnect(close.clicked, dlg.accept)
-        lay.addWidget(close)
-        dlg.exec()
 
     def _swatch_auto(self) -> None:
         self.canvas.erase_color_override = None

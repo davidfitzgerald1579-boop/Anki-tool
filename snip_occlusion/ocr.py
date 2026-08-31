@@ -59,16 +59,19 @@ def _tesseract_binary(config: dict) -> str | None:
     return shutil.which("tesseract")
 
 
-def _prepare_ocr_png(img: QImage, path: str) -> None:
-    ocr_img = img
+def _scaled_for_ocr(img: QImage) -> QImage:
     if max(img.width(), img.height()) > _MAX_OCR_DIM:
-        ocr_img = img.scaled(
+        return img.scaled(
             _MAX_OCR_DIM,
             _MAX_OCR_DIM,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
-    ocr_img.save(path, "PNG")
+    return img
+
+
+def _prepare_ocr_png(img: QImage, path: str) -> None:
+    _scaled_for_ocr(img).save(path, "PNG")
 
 
 def _run_windows(png_path: str) -> str:
@@ -110,6 +113,120 @@ def _run_tesseract(png_path: str, config: dict) -> str:
             "tesseract failed: %s" % proc.stderr.decode("utf-8", "replace")
         )
     return proc.stdout.decode("utf-8", "replace")
+
+
+def _run_windows_words(png_path: str) -> list:
+    proc = subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            _PS_SCRIPT,
+            png_path,
+            "-Words",
+        ],
+        capture_output=True,
+        timeout=30,
+        creationflags=_CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            "Windows OCR failed: %s" % proc.stderr.decode("utf-8", "replace")
+        )
+    words = []
+    for line in proc.stdout.decode("utf-8", "replace").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            data = json.loads(line)
+            words.append(
+                {
+                    "t": str(data["t"]),
+                    "x": int(data["x"]),
+                    "y": int(data["y"]),
+                    "w": int(data["w"]),
+                    "h": int(data["h"]),
+                    "l": int(data["l"]),
+                }
+            )
+        except (ValueError, KeyError, TypeError):
+            continue
+    return words
+
+
+def _parse_tesseract_tsv(tsv: str) -> list:
+    """Word boxes from `tesseract ... tsv` output (level-5 rows)."""
+    words = []
+    lines_seen: dict = {}
+    for row in tsv.splitlines()[1:]:
+        cols = row.split("\t")
+        if len(cols) < 12 or cols[0] != "5":
+            continue
+        text = cols[11].strip()
+        if not text:
+            continue
+        line_key = (cols[1], cols[2], cols[3], cols[4])  # page/block/par/line
+        line_id = lines_seen.setdefault(line_key, len(lines_seen))
+        try:
+            words.append(
+                {
+                    "t": text,
+                    "x": int(cols[6]),
+                    "y": int(cols[7]),
+                    "w": int(cols[8]),
+                    "h": int(cols[9]),
+                    "l": line_id,
+                }
+            )
+        except ValueError:
+            continue
+    return words
+
+
+def _run_tesseract_words(png_path: str, config: dict) -> list:
+    binary = _tesseract_binary(config)
+    proc = subprocess.run(
+        [binary, png_path, "stdout", "tsv"],
+        capture_output=True,
+        timeout=60,
+        creationflags=_CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            "tesseract failed: %s" % proc.stderr.decode("utf-8", "replace")
+        )
+    return _parse_tesseract_tsv(proc.stdout.decode("utf-8", "replace"))
+
+
+def extract_words(img: QImage, config: dict):
+    """(word boxes, the scaled image they refer to) - ([], None) if
+    the backend can't provide boxes.
+
+    Each word is {"t": text, "x","y","w","h": box, "l": line index},
+    in the coordinate space of the returned (possibly downscaled)
+    image, so pixel colours can be sampled from it directly.
+    """
+    backend = available_backend(config)
+    if backend == "none":
+        return [], None
+    scaled = _scaled_for_ocr(img)
+    fd, png_path = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
+    try:
+        scaled.save(png_path, "PNG")
+        if backend == "windows":
+            words = _run_windows_words(png_path)
+        else:
+            words = _run_tesseract_words(png_path, config)
+    finally:
+        try:
+            os.unlink(png_path)
+        except OSError:
+            pass
+    return words, scaled
 
 
 def apply_corrections(text: str, corrections: dict) -> str:

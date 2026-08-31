@@ -22,6 +22,7 @@ from .qtshim import *  # noqa: F401,F403
 from . import shapes as sh
 from . import wordsnap
 from .color_utils import local_background, majority_color
+from .uitools import notify
 from .consts import (
     GROUP_PALETTE,
     HIGHLIGHT_QUICK_COLORS,
@@ -517,11 +518,10 @@ class OcclusionCanvas(QGraphicsView):
         QApplication.clipboard().setImage(
             img.copy(0, y0, img.width(), y1 - y0)
         )
-        QToolTip.showText(
-            QCursor.pos(),
+        notify(
             "Word-detection debug image copied to clipboard — paste it "
             "into the chat.",
-            self,
+            parent=self,
         )
 
     # ------------------------------------------------------------ copy/paste

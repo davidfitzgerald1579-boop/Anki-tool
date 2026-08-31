@@ -33,7 +33,12 @@
   vocabulary (one word per line, e.g. legal terms) to bias Tesseract.
 - `ocr_corrections`: map of recurring OCR misreads to their fixes,
   applied to every future card, e.g. `{"K80": "KBD", "UTlAC": "UTIAC"}`.
-  Use the editor's "Text preview" button to find misreads worth adding.
+  The OCR text under the Suggested Cards view shows what is being read.
+- `ocr_accent_threshold`: slides often print key terms in a different
+  colour; words whose ink colour differs from the page's dominant ink
+  by more than this (RGB distance, 0–441) — on lines that mix both
+  colours — are flagged to the AI as key terms to work into the cards.
+  Lower = more sensitive. `0` turns the feature off. Default: `110`.
 - `qgen_provider`: how the text card dialog's "Suggest cards" button
   reaches an AI model. `"ollama"` (default) talks to a free, open-source
   model running on your own computer via [Ollama](https://ollama.com) —
@@ -53,9 +58,11 @@
 - `qgen_api_key`: optional Bearer token for `"openai_compatible"`
   servers that require one; local servers normally don't. Unused by
   Ollama. Default: empty.
-- `qgen_max_cards`: maximum suggested cards per slide. Default: `4`.
-  The model is told to write fewer (or none) when a slide has little
-  exam-relevant material, rather than padding with filler.
+- `qgen_max_cards`: maximum suggested cards per slide (1–8). Default:
+  `4`. Easiest changed via the "Cards:" selector at the top of the
+  Suggested Cards view. The model is told to write fewer (or none)
+  when a slide has little exam-relevant material, rather than padding
+  with filler.
 - `qgen_feedback`: learn your card taste from the suggestion buttons.
   "Use →" saves a card as a positive style example, "👎" as a negative
   one, and "✕" (a neutral discard) deliberately saves nothing. Recent
@@ -78,8 +85,14 @@
   unwanted suggestions with their ✕ button instead).
 - `text_editor_sidebar`: what the left toolbar does when you switch the
   main window to the Suggested Cards or Write Card views. `"keep"` (default) leaves it
-  visible; `"hide"` tucks it away until you switch back to the Image
-  Editor. Also settable via the ⚙ button in the main window.
+  visible (trimmed to Load new snip + Added cards); `"hide"` tucks it
+  away entirely until you switch back to the Image Editor. Also
+  settable via the ⚙ button in the main window.
+- `sidebar_hidden`: Image Editor sidebar sections you have switched
+  off, any of `"queue"` (New card queue), `"see_through"`,
+  `"shortcuts"`. Default: `[]` (show everything). Easiest changed via
+  the checkboxes in the ⚙ Settings window; only affects the Image
+  Editor tab.
 - `qgen_bakeoff`: alternate generations between the models in
   `qgen_bakeoff_models` and score each by your Use/★/Skip/✗ verdicts
   (plus generation times). The scoreboard — including whether the

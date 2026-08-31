@@ -20,11 +20,11 @@ from aqt import mw
 from aqt.utils import showWarning
 
 from .qtshim import *  # noqa: F401,F403
-from . import notes as notes_mod
+from . import added_cards, notes as notes_mod
 from . import qgen, qgen_bakeoff, qgen_doc, qgen_feedback, qgen_prefetch
 from .consts import ADDON_NAME
 from .dialog import _STYLE, get_config, get_previous_snip_text
-from .uitools import notify as tooltip
+from .uitools import cream_tooltips, notify as tooltip
 
 _SIZES = ["10", "12", "14", "16", "18", "20", "24", "28", "32"]
 
@@ -41,6 +41,23 @@ def _escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;")
 
 
+class _CardEdit(QTextEdit):
+    """A field editor that always pastes as plain text.
+
+    Text copied from the source pane (or a web page) carries its
+    colours and highlight backgrounds; pasted as-is they end up on the
+    card. Inserting the plain text instead makes the paste take on the
+    field's own font and style at the cursor - the B/I/U toolbar still
+    formats normally afterwards.
+    """
+
+    def insertFromMimeData(self, source) -> None:
+        if source.hasText():
+            self.insertPlainText(source.text())
+        else:
+            super().insertFromMimeData(source)
+
+
 class TextCardPanel(QWidget):
     """Front/Back/Notes editor; optionally with the source text on top."""
 
@@ -55,6 +72,7 @@ class TextCardPanel(QWidget):
         self._active_edit: QTextEdit | None = None
         self.added_any = False  # did add_card() succeed at least once
         self.on_added = None  # callback(front, back, notes) after an add
+        self.replaces_note_id = None  # set for a redeploy of this note
         self._src_user_sized = False
         self._build_ui(standalone_shortcuts)
 
@@ -154,7 +172,7 @@ class TextCardPanel(QWidget):
         lay.addLayout(bar)
 
         def make_edit(min_h: int) -> QTextEdit:
-            edit = QTextEdit(self)
+            edit = _CardEdit(self)
             edit.setMinimumHeight(min_h)
             edit.setAcceptRichText(True)
             edit.installEventFilter(self)
@@ -275,23 +293,59 @@ class TextCardPanel(QWidget):
             return w
         return self._active_edit or self.front
 
-    def _bold(self) -> None:
+    def _toggle_format(self, is_on, make_fmt) -> None:
+        """Toggle a char format: on if it's off, OFF if it's already on.
+
+        The on/off state is read from the document text itself (the
+        first selected character), not from the cursor's current
+        format - the cursor's format lags after an apply and reads the
+        wrong side on a right-to-left selection, which made the second
+        click fail to undo the first.
+        """
         e = self._target()
-        heavy = e.fontWeight() > QFont.Weight.Normal
-        e.setFontWeight(
-            QFont.Weight.Normal if heavy else QFont.Weight.Bold
-        )
+        cursor = e.textCursor()
+        if cursor.hasSelection():
+            probe = QTextCursor(cursor)
+            probe.setPosition(
+                min(cursor.anchor(), cursor.position()) + 1
+            )
+            active = is_on(probe.charFormat())
+        else:
+            active = is_on(e.currentCharFormat())
+        fmt = make_fmt(not active)
+        if cursor.hasSelection():
+            cursor.mergeCharFormat(fmt)
+        else:
+            e.mergeCurrentCharFormat(fmt)
         e.setFocus()
+
+    def _bold(self) -> None:
+        def make(on: bool) -> QTextCharFormat:
+            fmt = QTextCharFormat()
+            fmt.setFontWeight(
+                QFont.Weight.Bold if on else QFont.Weight.Normal
+            )
+            return fmt
+
+        self._toggle_format(
+            lambda f: f.fontWeight() > QFont.Weight.Normal, make
+        )
 
     def _italic(self) -> None:
-        e = self._target()
-        e.setFontItalic(not e.fontItalic())
-        e.setFocus()
+        def make(on: bool) -> QTextCharFormat:
+            fmt = QTextCharFormat()
+            fmt.setFontItalic(on)
+            return fmt
+
+        self._toggle_format(lambda f: f.fontItalic(), make)
 
     def _underline(self) -> None:
-        e = self._target()
-        e.setFontUnderline(not e.fontUnderline())
-        e.setFocus()
+        def make(on: bool) -> QTextCharFormat:
+            fmt = QTextCharFormat()
+            fmt.setFontUnderline(on)
+            return fmt
+
+        self._toggle_format(lambda f: f.fontUnderline(), make)
 
     def _size(self, value: str) -> None:
         e = self._target()
@@ -338,13 +392,34 @@ class TextCardPanel(QWidget):
             self.back.toPlainText().strip(),
             self.notes.toPlainText().strip(),
         )
-        notes_mod.add_text_note(
-            mw.col,
-            self.deck_box.currentData(),
-            front,
-            _body_html(self.back),
-            _body_html(self.notes),
+        back_html = _body_html(self.back)
+        notes_html = _body_html(self.notes)
+        deck_id = self.deck_box.currentData()
+        note = notes_mod.add_text_note(
+            mw.col, deck_id, front, back_html, notes_html
         )
+        replaces = getattr(self, "replaces_note_id", None)
+        try:
+            if replaces is not None:
+                # redeploy: the new note is in; now retire the old one
+                notes_mod.remove_note(mw.col, replaces)
+                added_cards.replace(
+                    replaces,
+                    int(note.id),
+                    deck_id,
+                    front,
+                    back_html,
+                    notes_html,
+                    plain[0],
+                )
+                self.replaces_note_id = int(note.id)
+            else:
+                added_cards.record(
+                    int(note.id), deck_id, front, back_html, notes_html,
+                    plain[0],
+                )
+        except Exception:
+            pass  # the note was added; tracking it is best-effort
         mw.reset()
         self.added_any = True
         if self.on_added is not None:
@@ -352,7 +427,10 @@ class TextCardPanel(QWidget):
                 self.on_added(*plain)
             except Exception:
                 pass
-        tooltip("Card added", parent=self)
+        tooltip(
+            "Card redeployed" if replaces is not None else "Card added",
+            parent=self,
+        )
         self.front.clear()
         self.back.clear()
         self.notes.clear()
@@ -376,6 +454,7 @@ class SuggestionsPage(QWidget):
         self._undo_stack: list = []  # (card, verdict|None, row index)
         self._batch_id = 0  # bumped when the row list is replaced
         self._current_source = ""
+        self._picked: list = []  # (start, end, text) picked passages
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -392,6 +471,22 @@ class SuggestionsPage(QWidget):
         self.suggest_status = QLabel("", self)
         self.suggest_status.setStyleSheet("color:#8a8171;")
         title_row.addWidget(self.suggest_status, 1)
+        title_row.addWidget(QLabel("Cards:", self))
+        self.count_box = QComboBox(self)
+        self.count_box.addItems([str(n) for n in range(1, 9)])
+        try:
+            configured = int(get_config().get("qgen_max_cards", 4) or 4)
+        except Exception:
+            configured = 4
+        self.count_box.setCurrentText(str(min(max(configured, 1), 8)))
+        self.count_box.setToolTip(
+            "How many cards to ask for per slide (the AI may return "
+            "fewer for thin slides). Takes effect from the next "
+            "generation — press ↻ to redo the current one."
+        )
+        self.count_box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        qconnect(self.count_box.currentTextChanged, self._count_changed)
+        title_row.addWidget(self.count_box)
         self.undo_btn = QToolButton(self)
         self.undo_btn.setText("↶")
         self.undo_btn.setToolTip(
@@ -440,12 +535,54 @@ class SuggestionsPage(QWidget):
             self,
         )
         self.source_legend.setWordWrap(True)
-        src_lay.addWidget(self.source_legend)
+        legend_row = QHBoxLayout()
+        legend_row.addWidget(self.source_legend, 1)
+        self.pick_btn = QToolButton(self)
+        self.pick_btn.setText("🖍 Pick")
+        self.pick_btn.setCheckable(True)
+        self.pick_btn.setToolTip(
+            "Pick sentences for the AI: turn this on, drag over each "
+            "passage you want a card about (they stay marked), then "
+            "press ✨ Make cards. Right-clicking a single selection "
+            "works too."
+        )
+        qconnect(self.pick_btn.toggled, self._pick_mode_toggled)
+        legend_row.addWidget(self.pick_btn)
+        self.pick_count_box = QComboBox(self)
+        self.pick_count_box.addItem("1 per pick")
+        self.pick_count_box.addItems([str(n) for n in range(1, 9)])
+        self.pick_count_box.setToolTip(
+            "How many cards to make from the picked passages: "
+            "'1 per pick' (default) writes one card per highlighted "
+            "passage; a number writes that many cards in total across "
+            "them."
+        )
+        self.pick_count_box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.pick_count_box.setVisible(False)
+        legend_row.addWidget(self.pick_count_box)
+        self.make_btn = QPushButton("✨ Make cards", self)
+        self.make_btn.setToolTip(
+            "Generate one card per picked passage — each card must "
+            "teach exactly what its passage says"
+        )
+        self.make_btn.setVisible(False)
+        self.make_btn.setEnabled(False)
+        qconnect(self.make_btn.clicked, self._make_from_picks)
+        legend_row.addWidget(self.make_btn)
+        src_lay.addLayout(legend_row)
         self.source_browser = QTextBrowser(self)
         self.source_browser.setMinimumHeight(90)
         self.source_browser.setPlaceholderText(
             "Snip a slide or paste a lesson — its text appears here."
         )
+        self.source_browser.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        qconnect(
+            self.source_browser.customContextMenuRequested,
+            self._source_menu,
+        )
+        self.source_browser.viewport().installEventFilter(self)
         src_lay.addWidget(self.source_browser)
 
         self.vsplit = QSplitter(Qt.Orientation.Vertical, self)
@@ -470,6 +607,7 @@ class SuggestionsPage(QWidget):
     def set_source_text(self, text: str) -> None:
         """Show plain source text (no highlights) and remember it."""
         self._current_source = text or ""
+        self._clear_picks()  # the marks' positions no longer apply
         paragraphs = [
             _escape(" ".join(p.split()))
             for p in re.split(r"\n\s*\n", self._current_source)
@@ -490,6 +628,7 @@ class SuggestionsPage(QWidget):
         if not source.strip():
             tooltip("No source text stored for this card.", parent=self)
             return
+        self.pick_btn.setChecked(False)  # 🔎 rewrites the text below
         from . import qgen_trace
 
         body, matches, notes_matches = qgen_trace.highlight_html(
@@ -569,6 +708,185 @@ class SuggestionsPage(QWidget):
 
     # -------------------------------------------- pasted-text generation
 
+    # ------------------------------------------------- focused generation
+
+    def eventFilter(self, obj, event):
+        if (
+            obj is self.source_browser.viewport()
+            and event.type() == QEvent.Type.MouseButtonRelease
+            and self.pick_btn.isChecked()
+        ):
+            # let Qt finalise the selection first, then capture it
+            QTimer.singleShot(0, self._capture_pick)
+        return super().eventFilter(obj, event)
+
+    def _pick_mode_toggled(self, on: bool) -> None:
+        if on and not self._current_source.strip():
+            tooltip(
+                "No source text yet — snip a slide first.", parent=self
+            )
+            self.pick_btn.setChecked(False)
+            return
+        if on:
+            # start from clean text so the pick marks are unambiguous
+            self.set_source_text(self._current_source)
+        else:
+            self._clear_picks()
+        self.make_btn.setVisible(on)
+        self.pick_count_box.setVisible(on)
+        if on:
+            self.pick_count_box.setCurrentIndex(0)  # back to 1 per pick
+        self._update_pick_ui()
+
+    def _capture_pick(self) -> None:
+        cursor = self.source_browser.textCursor()
+        text = " ".join(
+            cursor.selectedText().replace(" ", " ").split()
+        )
+        if len(text) < 8:
+            return  # a stray click, or too little to teach from
+        span = (cursor.selectionStart(), cursor.selectionEnd())
+        if any((s, e) == span for s, e, _ in self._picked):
+            return
+        self._picked.append((span[0], span[1], text))
+        cursor.clearSelection()
+        self.source_browser.setTextCursor(cursor)
+        self._paint_picks()
+        self._update_pick_ui()
+
+    def _paint_picks(self) -> None:
+        extras = []
+        for start, end, _ in self._picked:
+            sel = QTextEdit.ExtraSelection()
+            cur = self.source_browser.textCursor()
+            cur.setPosition(start)
+            cur.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+            sel.cursor = cur
+            fmt = QTextCharFormat()
+            fmt.setBackground(QColor("#cfe3ff"))
+            sel.format = fmt
+            extras.append(sel)
+        self.source_browser.setExtraSelections(extras)
+
+    def _clear_picks(self) -> None:
+        self._picked = []
+        try:
+            self.source_browser.setExtraSelections([])
+        except Exception:
+            pass
+        self._update_pick_ui()
+
+    def _update_pick_ui(self) -> None:
+        n = len(self._picked)
+        self.make_btn.setEnabled(n > 0)
+        self.make_btn.setText(
+            "✨ Make cards (%d)" % n if n else "✨ Make cards"
+        )
+
+    def _make_from_picks(self) -> None:
+        passages = [t for _, _, t in self._picked]
+        chosen = self.pick_count_box.currentText()
+        count = int(chosen) if chosen.isdigit() else None
+        self.pick_btn.setChecked(False)  # exits pick mode, clears marks
+        self._generate_focused(passages, count)
+
+    def _source_menu(self, pos) -> None:
+        menu = self.source_browser.createStandardContextMenu()
+        sel = " ".join(
+            self.source_browser.textCursor()
+            .selectedText()
+            .replace(" ", " ")
+            .split()
+        )
+        if sel:
+            menu.addSeparator()
+            act = menu.addAction("✨ Make a card from this selection")
+            qconnect(
+                act.triggered,
+                lambda _=False, s=sel: self._generate_focused([s]),
+            )
+            sub = menu.addMenu("✨ Make several cards from it…")
+            for n in range(2, 9):
+                sub_act = sub.addAction("%d cards" % n)
+                qconnect(
+                    sub_act.triggered,
+                    lambda _=False, s=sel, n=n: self._generate_focused(
+                        [s], n
+                    ),
+                )
+        menu.exec(self.source_browser.viewport().mapToGlobal(pos))
+
+    def _generate_focused(self, passages: list, count=None) -> None:
+        """Cards about the passages only, appended to the suggestions.
+
+        By default one card per passage; `count` asks for exactly that
+        many cards in total instead."""
+        passages = [p for p in passages if p.strip()]
+        if not passages:
+            return
+        if self._busy or self._doc_running:
+            tooltip("Still generating — one moment.", parent=self)
+            return
+        source = self._current_source.strip()
+        if not source:
+            tooltip(
+                "No source text yet — snip a slide first.", parent=self
+            )
+            return
+        config = self._config_with_count()
+        self._busy = True
+        n = count or len(passages)
+        self._set_suggest_status(
+            "writing %d card%s for your highlighted text…"
+            % (n, "" if n == 1 else "s")
+        )
+        batch = self._batch_id
+
+        def work():
+            return qgen_bakeoff.generate(
+                source, config, focus=passages, focus_cards=count
+            )
+
+        def done(fut) -> None:
+            self._busy = False
+            try:
+                cards = fut.result()
+            except Exception as exc:
+                self._set_suggest_status("focused cards failed — retry")
+                tooltip(
+                    "Focused cards: %s" % exc, parent=self, period=6000
+                )
+                return
+            self._set_suggest_status("")
+            if self._batch_id != batch:
+                return  # the list was replaced while generating
+            if not cards:
+                tooltip(
+                    "The AI returned nothing for that selection — try "
+                    "a slightly longer passage.",
+                    parent=self,
+                )
+                return
+            for card in cards:
+                self._add_card_row(card)
+            QTimer.singleShot(0, self._fit_suggestions_if_auto)
+
+        mw.taskman.run_in_background(work, done)
+
+    def _count_changed(self, value: str) -> None:
+        """Persist the Cards: selector; the next generation uses it."""
+        try:
+            count = int(value)
+        except (TypeError, ValueError):
+            return
+        try:
+            module = __name__.split(".")[0]
+            user_cfg = mw.addonManager.getConfig(module) or {}
+            user_cfg["qgen_max_cards"] = count
+            mw.addonManager.writeConfig(module, user_cfg)
+        except Exception:
+            pass  # selector still shows the choice; config write failed
+
     def _regen_clicked(self) -> None:
         if self._doc_running:
             # the ↻ button reads ■ while a pasted-text run is going
@@ -585,6 +903,7 @@ class SuggestionsPage(QWidget):
         dlg.setWindowTitle(ADDON_NAME + " — Cards from pasted text")
         dlg.setMinimumSize(560, 420)
         dlg.setStyleSheet(_STYLE)
+        cream_tooltips(dlg)
         lay = QVBoxLayout(dlg)
         info = QLabel(
             "Paste a whole lesson or element text below. It is split "
@@ -617,8 +936,18 @@ class SuggestionsPage(QWidget):
             return
         self._start_doc_job(text)
 
-    def _start_doc_job(self, text: str) -> None:
+    def _config_with_count(self) -> dict:
+        """get_config(), with the Cards: selector overriding the count
+        (so the choice holds even if the config write failed)."""
         config = get_config()
+        try:
+            config["qgen_max_cards"] = int(self.count_box.currentText())
+        except (TypeError, ValueError):
+            pass
+        return config
+
+    def _start_doc_job(self, text: str) -> None:
+        config = self._config_with_count()
         chunks = qgen_doc.split_into_chunks(text)
         if not chunks:
             tooltip("Nothing to work with in that text.", parent=self)
@@ -709,7 +1038,7 @@ class SuggestionsPage(QWidget):
         """
         if self._busy:
             return
-        config = get_config()
+        config = self._config_with_count()
         state = qgen_prefetch.current()
         if state is None and not force:
             return  # nothing snipped yet; keep the hint text
@@ -735,13 +1064,14 @@ class SuggestionsPage(QWidget):
         self._set_suggest_status("generating on your machine…")
 
         def work():
+            emphasis = (getattr(state, "emphasis", None) or None) if state else None
             if force:
                 text = (state.text if state else "").strip() or fallback_text
                 if not text:
                     raise qgen.QGenError(
                         "No snip text available yet — snip a slide first."
                     )
-                return qgen_bakeoff.generate(text, config)
+                return qgen_bakeoff.generate(text, config, emphasis=emphasis)
             timeout = int(config.get("qgen_timeout_seconds") or 300) + 30
             try:
                 return qgen_prefetch.wait_for_cards(state, timeout)
@@ -749,7 +1079,9 @@ class SuggestionsPage(QWidget):
                 # e.g. Ollama wasn't running when the snip landed but is
                 # now - retry live before giving up
                 if state.text.strip():
-                    return qgen_bakeoff.generate(state.text, config)
+                    return qgen_bakeoff.generate(
+                        state.text, config, emphasis=emphasis
+                    )
                 raise
 
         def done(future) -> None:
@@ -779,30 +1111,121 @@ class SuggestionsPage(QWidget):
             if item.widget() is not None:
                 item.widget().deleteLater()
 
-    def _push_undo(self, card: dict, verdict, index: int) -> None:
-        self._undo_stack.append((card, verdict, index))
+    def _push_undo(
+        self,
+        row_card: dict,
+        index: int,
+        unrecord_card=None,
+        tally: str | None = None,
+    ) -> None:
+        """Remember how to reverse a verdict: which card comes back to
+        the list, which feedback entry to forget, which tally to undo."""
+        self._undo_stack.append((row_card, index, unrecord_card, tally))
         self.undo_btn.setEnabled(True)
 
     def _undo_verdict(self) -> None:
         if not self._undo_stack:
             return
-        card, verdict, index = self._undo_stack.pop()
+        row_card, index, unrecord_card, tally = self._undo_stack.pop()
         self.undo_btn.setEnabled(bool(self._undo_stack))
         try:
-            if verdict is not None:
-                qgen_feedback.unrecord(card)
-            # reverse the bake-off tally for whichever button it was
-            tally_verdict = {
-                None: "skip",
-                qgen_feedback.KEPT: "great",
-                qgen_feedback.BAD: "bad",
-            }.get(verdict)
-            if tally_verdict:
-                qgen_bakeoff.tally(card, tally_verdict, undo=True)
+            if unrecord_card is not None:
+                qgen_feedback.unrecord(unrecord_card)
+            if tally:
+                qgen_bakeoff.tally(row_card, tally, undo=True)
         except Exception:
             pass
-        self._add_card_row(card, index=index)
+        self._add_card_row(row_card, index=index)
         QTimer.singleShot(0, self._fit_suggestions_if_auto)
+
+    def _teach_correction(
+        self, card: dict, corrected: dict, index: int
+    ) -> None:
+        """Record the user's corrected card as the lesson (no card added).
+
+        The model's original is recorded nowhere - its style was fine,
+        so no negative example - but the correction counts as "fixed"
+        against the generating model in the bake-off.
+        """
+        try:
+            qgen_feedback.record(corrected, qgen_feedback.KEPT)
+            qgen_bakeoff.tally(card, "fixed")
+        except Exception:
+            pass
+        self._push_undo(card, index, unrecord_card=corrected, tally="fixed")
+        tooltip(
+            "Corrected version learned — future cards imitate yours.",
+            parent=self,
+        )
+
+    def _open_fix_dialog(self, card: dict, index: int) -> bool:
+        """✎ Fix: edit the card's content purely to teach the AI.
+
+        Returns True when a correction was saved (the row then clears).
+        """
+        dlg = QDialog(self)
+        dlg.setWindowTitle(ADDON_NAME + " — Correct this card")
+        dlg.setMinimumSize(520, 420)
+        dlg.setStyleSheet(_STYLE)
+        cream_tooltips(dlg)
+        lay = QVBoxLayout(dlg)
+        info = QLabel(
+            "Fix the content below (the style stays). Your corrected "
+            "version is saved as an example for future generations — "
+            "no flashcard is added.",
+            dlg,
+        )
+        info.setWordWrap(True)
+        lay.addWidget(info)
+        edits = {}
+        for key, label in (
+            ("front", "Front"),
+            ("back", "Back"),
+            ("notes", "Notes (optional)"),
+        ):
+            lay.addWidget(QLabel("<b>%s</b>" % label, dlg))
+            edit = QPlainTextEdit(dlg)
+            edit.setPlainText(card.get(key, ""))
+            edit.setMinimumHeight(56)
+            lay.addWidget(edit, 1)
+            edits[key] = edit
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save
+            | QDialogButtonBox.StandardButton.Cancel,
+            dlg,
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText(
+            "Teach corrected version"
+        )
+        qconnect(buttons.accepted, dlg.accept)
+        qconnect(buttons.rejected, dlg.reject)
+        lay.addWidget(buttons)
+        edits["front"].setFocus()
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return False
+        corrected = {
+            "front": edits["front"].toPlainText().strip(),
+            "back": edits["back"].toPlainText().strip(),
+        }
+        notes_value = edits["notes"].toPlainText().strip()
+        if notes_value:
+            corrected["notes"] = notes_value
+        if not corrected["front"] or not corrected["back"]:
+            tooltip("Front and Back can't be empty.", parent=self)
+            return False
+        if (
+            corrected["front"] == card.get("front", "")
+            and corrected["back"] == card.get("back", "")
+            and notes_value == card.get("notes", "")
+        ):
+            tooltip(
+                "No changes made — use ★ Great if the card is fine "
+                "as-is.",
+                parent=self,
+            )
+            return False
+        self._teach_correction(card, corrected, index)
+        return True
 
     def _add_suggestion_row(
         self,
@@ -909,7 +1332,7 @@ class SuggestionsPage(QWidget):
                 qgen_bakeoff.tally(card, "skip")
             except Exception:
                 pass
-            self._push_undo(card, None, row_index())
+            self._push_undo(card, row_index(), tally="skip")
             remove_row()
 
         def great() -> None:
@@ -918,7 +1341,9 @@ class SuggestionsPage(QWidget):
                 qgen_bakeoff.tally(card, "great")
             except Exception:
                 pass
-            self._push_undo(card, qgen_feedback.KEPT, row_index())
+            self._push_undo(
+                card, row_index(), unrecord_card=card, tally="great"
+            )
             remove_row()
 
         def bad() -> None:
@@ -927,8 +1352,14 @@ class SuggestionsPage(QWidget):
                 qgen_bakeoff.tally(card, "bad")
             except Exception:
                 pass
-            self._push_undo(card, qgen_feedback.BAD, row_index())
+            self._push_undo(
+                card, row_index(), unrecord_card=card, tally="bad"
+            )
             remove_row()
+
+        def fix() -> None:
+            if self._open_fix_dialog(card, row_index()):
+                remove_row()
 
         def fake_ref() -> None:
             detected = qgen._citations(
@@ -949,7 +1380,9 @@ class SuggestionsPage(QWidget):
                 qgen_bakeoff.tally(card, "bad")
             except Exception:
                 pass
-            self._push_undo(card, qgen_feedback.BAD, row_index())
+            self._push_undo(
+                card, row_index(), unrecord_card=card, tally="bad"
+            )
             remove_row()
             tooltip(
                 "Noted — that reference is now blocklisted and will be "
@@ -1001,6 +1434,14 @@ class SuggestionsPage(QWidget):
                 fake_ref,
                 "color:#b3261e;",
             ),
+            (
+                "✎ Fix",
+                "The style is right but the content is wrong — correct "
+                "it, and the AI learns YOUR version instead. No "
+                "flashcard is added.",
+                fix,
+                "color:#8a5a00;",
+            ),
         ]
         if card.get("_source"):
             buttons.append(
@@ -1046,6 +1487,7 @@ class PoppedTextEditor(QDialog):
             | Qt.WindowType.WindowMaximizeButtonHint
         )
         self.setStyleSheet(_STYLE)
+        cream_tooltips(self)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 12, 12, 12)
         self.panel = SuggestionsPage(self)
@@ -1074,6 +1516,7 @@ class TextCardDialog(QDialog):
             | Qt.WindowType.WindowMaximizeButtonHint
         )
         self.setStyleSheet(_STYLE)
+        cream_tooltips(self)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 12, 12, 12)
         self.panel = TextCardPanel(
@@ -1173,4 +1616,100 @@ def open_text_card_dialog(
             refs = mw._snip_occlusion_text_dialogs = []
         refs[:] = [d for d in refs if d.isVisible()]
         refs.append(dlg)
+    dlg.show()
+
+
+class AddedCardDialog(QDialog):
+    """Review a card added this session: fix it and redeploy, or delete.
+
+    Redeploy adds the corrected note first, then removes the old one -
+    "delete and release a new one in its place" - so a failure can
+    never lose the card. The registry entry then tracks the new note.
+    """
+
+    def __init__(self, entry: dict, parent=None):
+        super().__init__(parent or mw)
+        self.entry = entry
+        self.setWindowTitle(ADDON_NAME + " — Added card")
+        self.setMinimumSize(560, 600)
+        self.setWindowFlags(
+            self.windowFlags()
+            | Qt.WindowType.WindowMinimizeButtonHint
+            | Qt.WindowType.WindowMaximizeButtonHint
+        )
+        self.setStyleSheet(_STYLE)
+        cream_tooltips(self)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(12, 12, 12, 12)
+        info = QLabel(
+            "This card is already in your deck. Edit it and press "
+            "Redeploy to swap in the corrected version, or delete it.",
+            self,
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet("color:#8a8171;")
+        lay.addWidget(info)
+        self.panel = TextCardPanel(
+            self, show_source=False, standalone_shortcuts=True
+        )
+        lay.addWidget(self.panel)
+        self.panel.front.setHtml(entry.get("front", ""))
+        self.panel.back.setHtml(entry.get("back", ""))
+        self.panel.notes.setHtml(entry.get("notes", ""))
+        i = self.panel.deck_box.findData(entry.get("deck_id"))
+        if i >= 0:
+            self.panel.deck_box.setCurrentIndex(i)
+        self.panel.replaces_note_id = entry["note_id"]
+        self.panel.add_btn.setText("Redeploy")
+        self.panel.add_btn.setToolTip(
+            "Replace the card in your deck with this corrected version "
+            "(the old one is deleted)"
+        )
+        self.panel.on_added = lambda *a: self.accept()
+        delete_btn = QPushButton("🗑 Delete card", self)
+        delete_btn.setStyleSheet("QPushButton{color:#b3261e;}")
+        delete_btn.setToolTip(
+            "Remove this card from your deck entirely"
+        )
+        qconnect(delete_btn.clicked, self._delete_card)
+        lay.addWidget(delete_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        self.panel.focus_front()
+
+    def _delete_card(self) -> None:
+        resp = QMessageBox.question(
+            self,
+            ADDON_NAME,
+            "Delete this card from your deck?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if resp != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            notes_mod.remove_note(mw.col, self.entry["note_id"])
+            mw.reset()
+        except Exception as exc:
+            showWarning(
+                "Could not delete the card: %s" % exc,
+                parent=self,
+                title=ADDON_NAME,
+            )
+            return
+        added_cards.forget(self.entry["note_id"])
+        tooltip("Card deleted.", parent=self.parentWidget() or self)
+        self.accept()
+
+
+def open_added_card_editor(note_id: int, parent=None) -> None:
+    entry = added_cards.get(note_id)
+    if entry is None:
+        return
+    if mw.col is None:
+        showWarning("Open a profile first.", title=ADDON_NAME)
+        return
+    dlg = AddedCardDialog(entry, parent=parent)
+    refs = getattr(mw, "_snip_occlusion_added_dialogs", None)
+    if refs is None:
+        refs = mw._snip_occlusion_added_dialogs = []
+    refs[:] = [d for d in refs if d.isVisible()]
+    refs.append(dlg)
     dlg.show()

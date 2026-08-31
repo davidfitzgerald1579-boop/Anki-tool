@@ -128,6 +128,85 @@ def test_summary_detects_real_difference(fake_generate, alternate):
     assert "kept 100%" in text and "kept 0%" in text
 
 
+def test_fixed_verdict_judged_not_kept(fake_generate, alternate):
+    # ✎ Fix: the correction counts against the model's kept-rate and
+    # shows up in the scoreboard, without ever counting as "kept"
+    card = qgen_bakeoff.generate("text", CFG)[0]
+    qgen_bakeoff.tally(card, "use")
+    qgen_bakeoff.tally(card, "fixed")
+    s = qgen_bakeoff._load()["models"][card["_model"]]
+    assert s["fixed"] == 1
+    text = qgen_bakeoff.summary()
+    assert "kept 50% (1 of 2)" in text
+    assert "1 needed correcting" in text
+    # undo (the ↶ button) takes the correction back out
+    qgen_bakeoff.tally(card, "fixed", undo=True)
+    assert "needed correcting" not in qgen_bakeoff.summary()
+
+
+def test_stats_backfills_older_files(tmp_path):
+    # a stats file written before the "fixed" verdict existed must not
+    # crash the scoreboard - missing keys are treated as zero
+    import json
+
+    path = qgen_bakeoff._path()
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "next": 0,
+                "models": {
+                    "old:1b": {
+                        "seconds": 1.0,
+                        "gens": 1,
+                        "cards": 2,
+                        "use": 2,
+                    }
+                },
+            },
+            fh,
+        )
+    text = qgen_bakeoff.summary()
+    assert "kept 100% (2 of 2)" in text
+    assert "needed correcting" not in text
+
+
+def test_focus_forwarded_only_when_set(alternate, monkeypatch):
+    calls = []
+
+    def fake(text, config, source="slide", focus=None, focus_cards=None):
+        calls.append((config.get("qgen_model"), focus, focus_cards))
+        return [{"front": "Q", "back": "A"}]
+
+    monkeypatch.setattr(qgen_bakeoff.qgen, "generate_cards", fake)
+    # focused generation goes through the bake-off machinery too
+    card = qgen_bakeoff.generate("text", CFG, focus=["a passage"])[0]
+    assert card["_model"] == "llama3.1:8b"
+    assert calls[-1] == ("llama3.1:8b", ["a passage"], None)
+    # a chosen total rides along with the focus
+    qgen_bakeoff.generate("text", CFG, focus=["a passage"], focus_cards=3)
+    assert calls[-1] == ("llama3.2:3b", ["a passage"], 3)
+    # without focus both kwargs are omitted, so (text, cfg, source)
+    # stand-ins keep working
+    qgen_bakeoff.generate(
+        "text", {"qgen_bakeoff": False}, focus=None, focus_cards=5
+    )
+    assert calls[-1] == (None, None, None)
+
+
+def test_emphasis_forwarded_only_when_set(alternate, monkeypatch):
+    calls = []
+
+    def fake(text, config, source="slide", emphasis=None):
+        calls.append(emphasis)
+        return [{"front": "Q", "back": "A"}]
+
+    monkeypatch.setattr(qgen_bakeoff.qgen, "generate_cards", fake)
+    qgen_bakeoff.generate("text", CFG, emphasis=["key term"])
+    assert calls[-1] == ["key term"]
+    qgen_bakeoff.generate("text", CFG, emphasis=[])
+    assert calls[-1] is None  # empty list is omitted entirely
+
+
 def test_timings_recorded(fake_generate, alternate):
     qgen_bakeoff.generate("text", CFG)
     s = qgen_bakeoff._load()["models"]["llama3.1:8b"]

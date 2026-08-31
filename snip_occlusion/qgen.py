@@ -54,8 +54,18 @@ def _example_lines(cards: list) -> list:
 
 
 def build_prompt(
-    text: str, max_cards: int, feedback=None, source: str = "slide"
+    text: str,
+    max_cards: int,
+    feedback=None,
+    source: str = "slide",
+    focus=None,
+    emphasis=None,
 ) -> str:
+    """`focus` passages are must-cover; max_cards then means EXACTLY
+    that many cards about them (one per passage when the counts match).
+    `emphasis` lists words the slide printed in an accent colour - the
+    model is told to work them into the cards.
+    """
     if source == "document":
         intro = "Extract from the student's course materials:"
     else:
@@ -114,8 +124,60 @@ def build_prompt(
         "shown small under the answer; omit it when there is nothing "
         "worth adding.\n\n"
         "%s (write cards about THIS and nothing else):\n"
-        "---\n%s\n---"
-    ) % (feedback_block, max_cards, intro.rstrip(":"), text.strip())
+        "---\n%s\n---%s%s"
+    ) % (
+        feedback_block,
+        max_cards,
+        intro.rstrip(":"),
+        text.strip(),
+        _emphasis_block(emphasis),
+        _focus_block(focus, max_cards),
+    )
+
+
+def _emphasis_block(emphasis) -> str:
+    """Accent-coloured slide terms, placed after the source text."""
+    if not emphasis:
+        return ""
+    listed = "; ".join(" ".join(term.split()) for term in emphasis)
+    return (
+        "\n\nOn the slide, these words are printed in a DIFFERENT "
+        "COLOUR from the rest of their sentence - the course author "
+        "marked them as key terms. Make sure the cards test the "
+        "points these terms belong to, and use the terms themselves "
+        "in the question or answer: %s" % listed
+    )
+
+
+def _focus_block(focus, n: int) -> str:
+    """The must-cover passages block, placed LAST for recency anchoring."""
+    if not focus:
+        return ""
+    numbered = "\n".join(
+        "%d. %s" % (i, " ".join(p.split()))
+        for i, p in enumerate(focus, 1)
+    )
+    if n == len(focus):
+        instruction = (
+            "Write EXACTLY one card per passage, in the same order, "
+            "each testing precisely what its passage says."
+        )
+    else:
+        instruction = (
+            "Write EXACTLY %d flashcard%s in total, testing ONLY what "
+            "these passages say%s."
+            % (
+                n,
+                "" if n == 1 else "s",
+                " - spread them across the passages" if n > 1 else "",
+            )
+        )
+    return (
+        "\n\nThe student highlighted these passages from the source "
+        "text as MUST-COVER. %s "
+        "Use the rest of the source only as context:\n%s"
+        % (instruction, numbered)
+    )
 
 
 def parse_cards(raw: str) -> list:
@@ -147,13 +209,33 @@ def parse_cards(raw: str) -> list:
     return cards
 
 
-def generate_cards(text: str, config: dict, source: str = "slide") -> list:
-    """Blocking call: source text -> [{front, back}, ...]. Raises QGenError."""
+def generate_cards(
+    text: str,
+    config: dict,
+    source: str = "slide",
+    focus=None,
+    focus_cards=None,
+    emphasis=None,
+) -> list:
+    """Blocking call: source text -> [{front, back}, ...]. Raises QGenError.
+
+    `focus` is an optional list of passages the user highlighted; the
+    model is told to write exactly one card per passage - or exactly
+    `focus_cards` cards in total about them, when that is given.
+    """
     if not text.strip():
         raise QGenError("There is no snip text to work from.")
-    max_cards = int(config.get("qgen_max_cards", 4) or 4)
+    if focus:
+        max_cards = int(focus_cards) if focus_cards else len(focus)
+    else:
+        max_cards = int(config.get("qgen_max_cards", 4) or 4)
     prompt = build_prompt(
-        text, max_cards, feedback=qgen_feedback.examples(config), source=source
+        text,
+        max_cards,
+        feedback=qgen_feedback.examples(config),
+        source=source,
+        focus=focus,
+        emphasis=emphasis,
     )
     provider = (
         str(config.get("qgen_provider") or "ollama")

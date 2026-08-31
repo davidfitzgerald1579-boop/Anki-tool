@@ -25,7 +25,7 @@ from . import qgen
 
 _lock = threading.Lock()
 
-VERDICTS = ("use", "great", "skip", "bad")
+VERDICTS = ("use", "great", "skip", "bad", "fixed")
 _MIN_VERDICTS = 10  # per model, before a comparison is attempted
 _SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*b\b", re.I)
 
@@ -60,18 +60,12 @@ def _save(data: dict) -> None:
 
 
 def _stats(data: dict, model: str) -> dict:
-    return data["models"].setdefault(
-        model,
-        {
-            "use": 0,
-            "great": 0,
-            "skip": 0,
-            "bad": 0,
-            "seconds": 0.0,
-            "gens": 0,
-            "cards": 0,
-        },
+    s = data["models"].setdefault(
+        model, {"seconds": 0.0, "gens": 0, "cards": 0}
     )
+    for verdict in VERDICTS:  # fills keys missing from older files too
+        s.setdefault(verdict, 0)
+    return s
 
 
 def enabled(config: dict) -> bool:
@@ -106,20 +100,36 @@ def small_large(config: dict) -> tuple:
     return ordered[0], ordered[-1]
 
 
-def generate(text: str, config: dict, source: str = "slide") -> list:
+def generate(
+    text: str,
+    config: dict,
+    source: str = "slide",
+    focus=None,
+    focus_cards=None,
+    emphasis=None,
+) -> list:
     """qgen.generate_cards, randomising and timing models when enabled.
 
     Cards from a bake-off generation carry a "_model" key so verdicts
     can be credited to the right model.
     """
+    # optional hints are only forwarded when set, so simple
+    # (text, cfg, source) stand-ins for generate_cards keep working
+    kwargs = {"source": source}
+    if focus:
+        kwargs["focus"] = focus
+        if focus_cards:
+            kwargs["focus_cards"] = focus_cards
+    if emphasis:
+        kwargs["emphasis"] = emphasis
     if not enabled(config):
-        return qgen.generate_cards(text, config, source=source)
+        return qgen.generate_cards(text, config, **kwargs)
     # random choice, so verdicts can't be biased by a predictable order
     model = random.choice(contenders(config))
     cfg = dict(config)
     cfg["qgen_model"] = model
     start = time.monotonic()
-    cards = qgen.generate_cards(text, cfg, source=source)
+    cards = qgen.generate_cards(text, cfg, **kwargs)
     elapsed = time.monotonic() - start
     with _lock:
         data = _load()
@@ -159,11 +169,13 @@ def summary() -> str:
     for model in sorted(data["models"]):
         s = _stats(data, model)
         judged = sum(s[v] for v in VERDICTS)
-        kept = s["use"] + s["great"]
+        kept = s["use"] + s["great"]  # "fixed" counts as judged, not kept
         parts = [model + ":"]
         if judged:
             rate = kept / judged
             parts.append("kept %d%% (%d of %d)" % (round(rate * 100), kept, judged))
+            if s["fixed"]:
+                parts.append("· %d needed correcting" % s["fixed"])
             rates.append((rate, judged))
         else:
             parts.append("no verdicts yet")

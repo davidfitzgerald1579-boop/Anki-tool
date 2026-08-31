@@ -3,7 +3,10 @@
 # Requires Windows PowerShell 5.x (the WinRT projection used below is not
 # available in PowerShell 7); the add-on invokes plain "powershell" which
 # is 5.x on every stock Windows install.
-param([Parameter(Mandatory = $true)][string]$Path)
+param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [switch]$Words  # emit one JSON object per word (text + bounding box)
+)
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -50,6 +53,23 @@ if ($null -eq $engine) {
 }
 
 $result = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
-foreach ($line in $result.Lines) {
-    Write-Output $line.Text
+if ($Words) {
+    $li = 0
+    foreach ($line in $result.Lines) {
+        foreach ($word in $line.Words) {
+            $r = $word.BoundingRect
+            $obj = [ordered]@{
+                t = $word.Text
+                x = [int]$r.X; y = [int]$r.Y
+                w = [int]$r.Width; h = [int]$r.Height
+                l = $li
+            }
+            Write-Output (ConvertTo-Json -Compress $obj)
+        }
+        $li++
+    }
+} else {
+    foreach ($line in $result.Lines) {
+        Write-Output $line.Text
+    }
 }

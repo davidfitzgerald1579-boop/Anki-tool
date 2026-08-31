@@ -16,6 +16,82 @@ def test_prompt_contains_text_and_limit():
     assert "JSON array" in p
 
 
+def test_prompt_focus_block_comes_last():
+    p = qgen.build_prompt(
+        "The Court tries all summary offences. Other sentence here.",
+        1,
+        focus=["The Court tries  all summary offences"],
+    )
+    assert "EXACTLY one card per passage" in p
+    assert "1. The Court tries all summary offences" in p  # whitespace fixed
+    # the focus block sits AFTER the source text (recency anchoring)
+    assert p.rfind("MUST-COVER") > p.rfind("Other sentence here")
+    # and without focus there is no block at all
+    assert "MUST-COVER" not in qgen.build_prompt("text", 4)
+
+
+def test_prompt_focus_with_chosen_total():
+    # counts differ from the passage count -> "EXACTLY n in total"
+    p = qgen.build_prompt("source", 3, focus=["one passage"])
+    assert "EXACTLY 3 flashcards in total" in p
+    assert "spread them across the passages" in p
+    assert "one card per passage" not in p
+    p1 = qgen.build_prompt("source", 1, focus=["a", "b"])
+    assert "EXACTLY 1 flashcard in total" in p1
+    # matching counts keep the crisper one-per-passage instruction
+    p2 = qgen.build_prompt("source", 2, focus=["a", "b"])
+    assert "EXACTLY one card per passage" in p2
+
+
+def test_prompt_emphasis_block():
+    p = qgen.build_prompt(
+        "The prosecution bears the burden of proof.",
+        4,
+        emphasis=["burden of  proof", "beyond reasonable doubt"],
+    )
+    assert "DIFFERENT COLOUR" in p
+    assert "burden of proof; beyond reasonable doubt" in p
+    # after the source, before any focus block
+    assert p.rfind("DIFFERENT COLOUR") > p.rfind("bears the burden")
+    p2 = qgen.build_prompt(
+        "source", 1, focus=["a passage"], emphasis=["key term"]
+    )
+    assert p2.rfind("MUST-COVER") > p2.rfind("DIFFERENT COLOUR")
+    assert "DIFFERENT COLOUR" not in qgen.build_prompt("text", 4)
+
+
+def test_generate_cards_focus_cards_overrides_count(monkeypatch):
+    prompts = []
+
+    def fake_chat(config, prompt):
+        prompts.append(prompt)
+        return '[{"front": "Q", "back": "A"}]'
+
+    monkeypatch.setattr(qgen, "_chat_ollama", fake_chat)
+    cfg = {"qgen_provider": "ollama", "qgen_feedback": False,
+           "qgen_max_cards": 4}
+    qgen.generate_cards("source text", cfg, focus=["passage"], focus_cards=3)
+    assert "up to 3 flashcards" in prompts[0]
+    assert "EXACTLY 3 flashcards in total" in prompts[0]
+
+
+def test_generate_cards_focus_caps_to_passage_count(monkeypatch):
+    prompts = []
+
+    def fake_chat(config, prompt):
+        prompts.append(prompt)
+        return '[{"front": "Q", "back": "A"}]'
+
+    monkeypatch.setattr(qgen, "_chat_ollama", fake_chat)
+    cfg = {"qgen_provider": "ollama", "qgen_feedback": False,
+           "qgen_max_cards": 4}
+    qgen.generate_cards(
+        "source text about offences", cfg, focus=["passage one", "two x"]
+    )
+    assert "up to 2 flashcards" in prompts[0]
+    assert "1. passage one" in prompts[0] and "2. two x" in prompts[0]
+
+
 def test_parse_cards_keeps_optional_notes():
     raw = (
         '[{"front": "Q", "back": "A", "notes": "Lister [2002]"},'

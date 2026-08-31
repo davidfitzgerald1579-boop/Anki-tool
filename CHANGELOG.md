@@ -4,6 +4,132 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.25.0 — 2026-08-31
+
+- **Accent-coloured words are flagged to the AI as key terms.** Slides
+  often print the crucial words in a different colour; the snip is now
+  re-read with word positions, each word's ink colour is sampled, and
+  words that clearly differ from the page's dominant ink — on lines
+  that mix both colours, so all-accent headings don't trigger — are
+  handed to the model as terms the cards must incorporate. Adjacent
+  accent words are joined into phrases. Best-effort: if the OCR
+  backend can't give word boxes, generation continues without the
+  hint. Sensitivity via `ocr_accent_threshold` in the config (0 turns
+  it off).
+- **B / I / U now properly toggle off on a second click** in the
+  Suggested Cards Use→ window and the Write Card tab. The on/off state
+  is read from the selected text itself, so it also works when the
+  selection was dragged right-to-left.
+
+## v0.24.0 — 2026-08-31
+
+- **Choose how many cards to make from highlighted text.** Right-click
+  a selection in the source pane: "✨ Make a card from this selection"
+  still writes one, and a new "✨ Make several cards from it…" submenu
+  asks for 2–8 cards about that passage. In 🖍 Pick mode a selector
+  appears next to ✨ Make cards: "1 per pick" (the default, one card
+  per highlighted passage) or a number 1–8 for that many cards in
+  total across the picked passages. The prompt tells the model the
+  EXACT number either way.
+
+## v0.23.1 — 2026-08-31
+
+- **The Added cards tray now moves with the view**: bottom of the
+  sidebar in the Image Editor (below the tools), top of the sidebar —
+  directly under "📋 Load new snip" — in the Suggested Cards and
+  Write Card views.
+- **Removed the "📝 Text card" sidebar button** (the Write Card tab at
+  the top does the same job) and **the "🔍 Text preview" button** (the
+  OCR text is always visible under the Suggested Cards view now); its
+  Settings checkbox is gone too.
+
+## v0.23.0 — 2026-08-31
+
+- **The Suggested Cards and Write Card views now show a minimal
+  sidebar**: just "📋 Load new snip" and the Added cards list — no
+  drawing tools, no queue. Everything comes back when you switch to
+  the Image Editor. (The existing keep/hide setting still hides the
+  sidebar entirely if you prefer.)
+- **Trim the Image Editor sidebar in ⚙ Settings**: new checkboxes let
+  you switch off sections you don't use — New card queue, See-through,
+  Text preview, Shortcuts help. Untick to hide, re-tick any time; the
+  choice is saved and only affects the Image Editor tab.
+- **Added cards are now readable** — each entry is a slide-style
+  preview card showing the question and answer text (like the queue's
+  PowerPoint thumbnails, but for text), with a count in the heading
+  and newest first. Click a card to edit & redeploy or delete it.
+- **The sidebar can be dragged out to half the window** (the old 400px
+  cap is gone), so the added cards on the left read as large and
+  clearly as the suggested cards on the right.
+
+## v0.22.0 — 2026-08-31
+
+- **Added cards can be fixed after the fact.** Every text card you add
+  now appears under "Added cards" in the sidebar (newest first). Click
+  one to reopen it: edit and press **Redeploy** — the corrected note is
+  added first, then the old one is deleted, so nothing can be lost —
+  or **🗑 Delete card** to remove it from the deck. The entry keeps
+  tracking the replacement, so a card can be redeployed repeatedly.
+  (The list is per Anki session.)
+- **Right-click a selection in the source text → "✨ Make a card from
+  this selection".** The AI writes a card that specifically teaches the
+  passage you highlighted, using the rest of the slide only as context.
+- **🖍 Pick mode** (button beside the source-text heading): turn it on,
+  drag over each sentence you want a card about — every selection stays
+  marked in blue — then press **✨ Make cards (N)** and the AI writes
+  exactly one card per picked passage. Focused cards append to the
+  current suggestions, carry the usual verdict buttons and 🔎 trace,
+  and count in the model bake-off.
+
+## v0.21.2 — 2026-08-31
+
+- **The OCR text no longer waits for the AI.** It used to appear only
+  when the whole prefetch (OCR + card generation) finished. Now the
+  moment a snip's text is read — seconds after the image loads — it
+  shows up in the Suggested Cards source pane (embedded and popped-out)
+  AND the Write Card source pane, while the LLM keeps generating in
+  the background. A pasted-lesson run's source text is never
+  clobbered, and a snip that's been replaced by a newer one is
+  ignored.
+
+## v0.21.1 — 2026-08-31
+
+- **Pasting into card fields is now always plain text.** Copying from
+  the source text pane (or anywhere) used to drag its colours and 🔎
+  highlight backgrounds onto the card. Pasted text now takes on the
+  Front/Back/Notes field's own font and style at the cursor; the
+  B/I/U toolbar still formats normally afterwards.
+
+## v0.21.0 — 2026-08-31
+
+- **Hover tooltips are finally readable** — crisp dark-on-cream, in
+  every add-on window. Root cause found: Qt draws a tooltip in its own
+  top-level window parented to the *screen*, so the `QToolTip` styling
+  in the dialog's stylesheet never reached it and Anki's (dark)
+  app-wide look won. The add-on now intercepts the tooltip event
+  itself and shows its own styled tip for widgets inside its windows —
+  Anki's global tooltips are untouched. The same dead-styling
+  assumption was fixed elsewhere: the word-detection debug
+  notification used a native tooltip too and now uses the cream
+  notification.
+- **"Cards:" selector on the Suggested Cards view** (next to the ↶
+  undo button): choose 1–8 suggested cards per slide, default 4. The
+  choice is saved and applies from the next generation — press ↻ to
+  redo the current one with the new count.
+
+## v0.20.0 — 2026-08-31
+
+- **✎ Fix: correct a suggested card purely to teach the AI.** When the
+  style is right but the content is wrong (confused concepts, a missed
+  distinction), click ✎ Fix on the suggestion, edit the Front/Back/
+  Notes, and save "Teach corrected version". YOUR corrected card
+  becomes a kept example for future generations — no flashcard is
+  added to your deck. The ↶ undo button reverses it like any other
+  verdict.
+- In the bake-off scoreboard, a correction counts as a new "fixed"
+  verdict against the model that generated the card: it lowers that
+  model's kept-rate and shows as "N needed correcting" next to it.
+
 ## v0.19.1 — 2026-08-31
 
 - **Write Card: the source text pane auto-sizes to the whole text** —

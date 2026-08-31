@@ -9,7 +9,10 @@ first queued card into the editor as a fresh image to occlude.
 
 from __future__ import annotations
 
+import re
+
 from .qtshim import *  # noqa: F401,F403
+from . import added_cards
 from .newcard import NewCardQueue, QueuedCard
 
 PATCH_MIME = "application/x-snip-occlusion-patch"
@@ -296,3 +299,139 @@ class NewCardQueuePanel(QWidget):
         self.start_btn.setEnabled(n > 0)
         self.start_btn.setText("Start ▸" if n == 0 else "Start ▸ (%d)" % n)
         self._renumber()
+
+
+# --------------------------------------------------------- added cards
+
+
+def _html_to_text(html: str) -> str:
+    """Plain preview text from a field's HTML."""
+    text = re.sub(r"<br\s*/?>", " ", html or "")
+    text = re.sub(r"<[^>]+>", "", text)
+    for entity, ch in (
+        ("&nbsp;", " "),
+        ("&lt;", "<"),
+        ("&gt;", ">"),
+        ("&quot;", '"'),
+        ("&#39;", "'"),
+        ("&amp;", "&"),
+    ):
+        text = text.replace(entity, ch)
+    return " ".join(text.split())
+
+
+def _clip(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+class AddedCardWidget(QFrame):
+    """One added card, slide-style: readable Q and A preview, clickable."""
+
+    def __init__(self, entry: dict, index: int, owner: "AddedCardsList"):
+        super().__init__(owner)
+        self.note_id = entry["note_id"]
+        self.owner = owner
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet(
+            "QFrame{background:#ffffff;border:1px solid #e3dcd0;"
+            "border-radius:8px;}"
+            "QFrame:hover{border-color:#d97757;background:#fdf6ee;}"
+        )
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(8, 6, 8, 6)
+        lay.setSpacing(2)
+        front = _clip(_html_to_text(entry.get("front", "")), 160)
+        back = _clip(_html_to_text(entry.get("back", "")), 140)
+        body = QLabel(
+            "<span style='color:#8a8171;font-size:8.5pt;'>Card %d</span>"
+            "<br><b>Q:</b> %s<br><b>A:</b> %s"
+            % (
+                index,
+                front.replace("&", "&amp;").replace("<", "&lt;"),
+                back.replace("&", "&amp;").replace("<", "&lt;"),
+            ),
+            self,
+        )
+        body.setWordWrap(True)
+        body.setTextInteractionFlags(
+            Qt.TextInteractionFlag.NoTextInteraction
+        )
+        lay.addWidget(body)
+        self.setToolTip(
+            "Click to edit & redeploy this card (replacing it in your "
+            "deck) or delete it."
+        )
+
+    def activate(self) -> None:
+        self.owner.open(self.note_id)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.activate()
+        super().mousePressEvent(event)
+
+
+class AddedCardsList(QWidget):
+    """Sidebar list of text cards added this session (newest first)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.open_added_handler = None  # set by the dialog
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+        self.title = QLabel("Added cards", self)
+        self.title.setStyleSheet("font-weight:600;")
+        self.title.setToolTip(
+            "Text cards added this session — click one to edit and "
+            "redeploy it (replacing the card in your deck) or delete it"
+        )
+        lay.addWidget(self.title)
+        self.hint = QLabel(
+            "Cards you add appear here — click one to fix or delete it.",
+            self,
+        )
+        self.hint.setWordWrap(True)
+        self.hint.setStyleSheet("color:#8a8171;font-size:9pt;")
+        lay.addWidget(self.hint)
+
+        self.scroll = QScrollArea(self)
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll.setMinimumHeight(70)
+        self.scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        inner = QWidget(self)
+        inner.setStyleSheet("background:transparent;")
+        self.cards_lay = QVBoxLayout(inner)
+        self.cards_lay.setContentsMargins(0, 0, 4, 0)
+        self.cards_lay.setSpacing(6)
+        self.cards_lay.addStretch(1)
+        self.scroll.setWidget(inner)
+        lay.addWidget(self.scroll, 1)
+
+        added_cards.add_listener(self.refresh)
+        self.refresh()
+
+    def open(self, note_id: int) -> None:
+        if self.open_added_handler is not None:
+            self.open_added_handler(note_id)
+
+    def refresh(self) -> None:
+        while self.cards_lay.count() > 1:
+            item = self.cards_lay.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        entries = added_cards.entries()
+        self.title.setText(
+            "Added cards (%d)" % len(entries) if entries else "Added cards"
+        )
+        self.hint.setVisible(not entries)
+        self.scroll.setVisible(bool(entries))
+        for i, entry in enumerate(reversed(entries)):  # newest on top
+            w = AddedCardWidget(entry, len(entries) - i, self)
+            self.cards_lay.insertWidget(
+                self.cards_lay.count() - 1, w
+            )
