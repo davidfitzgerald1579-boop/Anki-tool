@@ -41,6 +41,23 @@ def _escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;")
 
 
+class _CardEdit(QTextEdit):
+    """A field editor that always pastes as plain text.
+
+    Text copied from the source pane (or a web page) carries its
+    colours and highlight backgrounds; pasted as-is they end up on the
+    card. Inserting the plain text instead makes the paste take on the
+    field's own font and style at the cursor - the B/I/U toolbar still
+    formats normally afterwards.
+    """
+
+    def insertFromMimeData(self, source) -> None:
+        if source.hasText():
+            self.insertPlainText(source.text())
+        else:
+            super().insertFromMimeData(source)
+
+
 class TextCardPanel(QWidget):
     """Front/Back/Notes editor; optionally with the source text on top."""
 
@@ -154,7 +171,7 @@ class TextCardPanel(QWidget):
         lay.addLayout(bar)
 
         def make_edit(min_h: int) -> QTextEdit:
-            edit = QTextEdit(self)
+            edit = _CardEdit(self)
             edit.setMinimumHeight(min_h)
             edit.setAcceptRichText(True)
             edit.installEventFilter(self)

@@ -4,6 +4,14 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.21.1 — 2026-08-31
+
+- **Pasting into card fields is now always plain text.** Copying from
+  the source text pane (or anywhere) used to drag its colours and 🔎
+  highlight backgrounds onto the card. Pasted text now takes on the
+  Front/Back/Notes field's own font and style at the cursor; the
+  B/I/U toolbar still formats normally afterwards.
+
 ## v0.21.0 — 2026-08-31
 
 - **Hover tooltips are finally readable** — crisp dark-on-cream, in
