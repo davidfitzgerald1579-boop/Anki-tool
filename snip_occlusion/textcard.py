@@ -23,7 +23,7 @@ from aqt.utils import showWarning, tooltip
 
 from .qtshim import *  # noqa: F401,F403
 from . import notes as notes_mod
-from . import qgen, qgen_feedback, qgen_prefetch
+from . import qgen, qgen_doc, qgen_feedback, qgen_prefetch
 from .consts import ADDON_NAME
 from .dialog import _STYLE, get_config, get_previous_snip_text
 
@@ -50,6 +50,11 @@ class TextCardPanel(QWidget):
         self._active_edit: QTextEdit | None = None
         self._shown_state = None  # the prefetch whose cards are displayed
         self._busy = False
+        self._doc_job = 0  # incremented to cancel a pasted-text run
+        self._doc_running = False
+        self._undo_stack: list = []  # (card, verdict|None, row index)
+        self._batch_id = 0  # bumped when the row list is replaced
+        self.added_any = False  # did add_card() succeed at least once
         self._build_ui(standalone_shortcuts)
 
     def _build_ui(self, standalone_shortcuts: bool) -> None:
@@ -84,15 +89,28 @@ class TextCardPanel(QWidget):
             self.suggest_status = QLabel("", self)
             self.suggest_status.setStyleSheet("color:#8a8171;")
             title_row.addWidget(self.suggest_status, 1)
+            self.undo_btn = QToolButton(self)
+            self.undo_btn.setText("↶")
+            self.undo_btn.setToolTip(
+                "Undo the last Skip / ★ Great / ✗ Bad — bring the card "
+                "back and forget the verdict"
+            )
+            self.undo_btn.setEnabled(False)
+            qconnect(self.undo_btn.clicked, self._undo_verdict)
+            title_row.addWidget(self.undo_btn)
+            paste_btn = QPushButton("📄 Paste text…", self)
+            paste_btn.setToolTip(
+                "Paste a whole lesson or element text; cards are "
+                "generated section by section and stream in above"
+            )
+            qconnect(paste_btn.clicked, self._open_paste_dialog)
+            title_row.addWidget(paste_btn)
             self.regen_btn = QToolButton(self)
             self.regen_btn.setText("↻")
             self.regen_btn.setToolTip(
                 "Regenerate suggestions from the current snip"
             )
-            qconnect(
-                self.regen_btn.clicked,
-                lambda _=False: self.refresh_suggestions(force=True),
-            )
+            qconnect(self.regen_btn.clicked, self._regen_clicked)
             title_row.addWidget(self.regen_btn)
             panel_lay.addLayout(title_row)
             self.suggest_scroll = QScrollArea(self)
@@ -306,6 +324,7 @@ class TextCardPanel(QWidget):
             _body_html(self.notes),
         )
         mw.reset()
+        self.added_any = True
         tooltip("Card added", parent=self)
         self.front.clear()
         self.back.clear()
@@ -321,6 +340,136 @@ class TextCardPanel(QWidget):
     def _splitter_dragged(self, *_args) -> None:
         # once the user drags the divider, stop auto-sizing this batch
         self._user_sized = True
+
+    # -------------------------------------------- pasted-text generation
+
+    def _regen_clicked(self) -> None:
+        if self._doc_running:
+            # the ↻ button reads ■ while a pasted-text run is going
+            self._doc_job += 1  # workers see the change and bail
+            self._doc_finish("stopped")
+            return
+        self.refresh_suggestions(force=True)
+
+    def _open_paste_dialog(self) -> None:
+        if self._busy or self._doc_running:
+            tooltip("Still generating — one moment.", parent=self)
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle(ADDON_NAME + " — Cards from pasted text")
+        dlg.setMinimumSize(560, 420)
+        dlg.setStyleSheet(_STYLE)
+        lay = QVBoxLayout(dlg)
+        info = QLabel(
+            "Paste a whole lesson or element text below. It is split "
+            "into sections and the cards stream in above as each "
+            "section finishes — start reviewing them straight away.",
+            dlg,
+        )
+        info.setWordWrap(True)
+        lay.addWidget(info)
+        edit = QPlainTextEdit(dlg)
+        edit.setPlaceholderText("Paste the text here…")
+        lay.addWidget(edit, 1)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel,
+            dlg,
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(
+            "Generate cards"
+        )
+        qconnect(buttons.accepted, dlg.accept)
+        qconnect(buttons.rejected, dlg.reject)
+        lay.addWidget(buttons)
+        edit.setFocus()
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        text = edit.toPlainText().strip()
+        if len(text) < 40:
+            tooltip("Paste a longer piece of text first.", parent=self)
+            return
+        self._start_doc_job(text)
+
+    def _start_doc_job(self, text: str) -> None:
+        config = get_config()
+        chunks = qgen_doc.split_into_chunks(text)
+        if not chunks:
+            tooltip("Nothing to work with in that text.", parent=self)
+            return
+        self._doc_job += 1
+        job = self._doc_job
+        self._doc_running = True
+        self._busy = True  # blocks snip refreshes while this runs
+        self._user_sized = False
+        self._clear_rows()
+        self.regen_btn.setText("■")
+        self.regen_btn.setToolTip("Stop generating")
+        self._set_suggest_status("section 1/%d…" % len(chunks))
+
+        def work():
+            for i, chunk in enumerate(chunks):
+                if self._doc_job != job:
+                    return
+                try:
+                    cards = qgen.generate_cards(
+                        chunk, config, source="document"
+                    )
+                except qgen.EmptyReplyError:
+                    cards = []  # a section with nothing card-worthy is fine
+                except qgen.QGenError as exc:
+                    mw.taskman.run_on_main(
+                        lambda m=str(exc): self._doc_finish(
+                            "failed — ↻ to retry", m
+                        )
+                    )
+                    return
+                mw.taskman.run_on_main(
+                    lambda c=cards, done_count=i + 1: self._doc_progress(
+                        job, c, done_count, len(chunks)
+                    )
+                )
+            mw.taskman.run_on_main(lambda: self._doc_finish(""))
+
+        def done(future) -> None:
+            try:
+                future.result()
+            except Exception as exc:
+                self._doc_finish("failed — ↻ to retry", str(exc))
+
+        mw.taskman.run_in_background(work, done)
+
+    def _doc_progress(
+        self, job: int, cards: list, done_count: int, total: int
+    ) -> None:
+        if job != self._doc_job:
+            return
+        for card in cards:
+            self._add_suggestion_row(
+                card["front"], card["back"], card.get("notes", "")
+            )
+        if done_count < total:
+            self._set_suggest_status(
+                "section %d/%d…" % (done_count + 1, total)
+            )
+        QTimer.singleShot(0, self._fit_suggestions_if_auto)
+
+    def _doc_finish(self, status: str, detail: str | None = None) -> None:
+        if not self._doc_running:
+            return
+        self._doc_running = False
+        self._busy = False
+        self.regen_btn.setText("↻")
+        self.regen_btn.setToolTip(
+            "Regenerate suggestions from the current snip"
+        )
+        self._set_suggest_status(status)
+        # mark the current snip's prefetch as already shown so merely
+        # toggling views doesn't clobber these results; a NEW snip (or ↻)
+        # still takes the panel over
+        self._shown_state = qgen_prefetch.current()
+        if detail:
+            tooltip("Card generation: %s" % detail, parent=self, period=6000)
 
     def _fit_suggestions_if_auto(self) -> None:
         if self.with_suggestions and not self._user_sized:
@@ -428,13 +577,35 @@ class TextCardPanel(QWidget):
         mw.taskman.run_in_background(work, done)
 
     def _clear_rows(self) -> None:
+        self._batch_id += 1  # invalidates undo entries and Use-returns
+        self._undo_stack.clear()
+        self.undo_btn.setEnabled(False)
         while self.suggest_lay.count() > 1:
             item = self.suggest_lay.takeAt(0)
             if item.widget() is not None:
                 item.widget().deleteLater()
 
+    def _push_undo(self, card: dict, verdict, index: int) -> None:
+        self._undo_stack.append((card, verdict, index))
+        self.undo_btn.setEnabled(True)
+
+    def _undo_verdict(self) -> None:
+        if not self._undo_stack:
+            return
+        card, verdict, index = self._undo_stack.pop()
+        self.undo_btn.setEnabled(bool(self._undo_stack))
+        if verdict is not None:
+            try:
+                qgen_feedback.unrecord(card)
+            except Exception:
+                pass
+        self._add_suggestion_row(
+            card["front"], card["back"], card.get("notes", ""), index=index
+        )
+        QTimer.singleShot(0, self._fit_suggestions_if_auto)
+
     def _add_suggestion_row(
-        self, front: str, back: str, notes: str = ""
+        self, front: str, back: str, notes: str = "", index=None
     ) -> None:
         row = QFrame(self)
         row.setStyleSheet(
@@ -459,6 +630,9 @@ class TextCardPanel(QWidget):
         if notes:
             card["notes"] = notes
 
+        def row_index() -> int:
+            return max(0, self.suggest_lay.indexOf(row))
+
         def remove_row() -> None:
             row.setParent(None)
             row.deleteLater()
@@ -470,12 +644,38 @@ class TextCardPanel(QWidget):
                 qgen_feedback.record(card, qgen_feedback.KEPT)
             except Exception:
                 pass
+            batch = self._batch_id
+            index = row_index()
+
+            def on_discard() -> None:
+                # the Use window was closed without adding: the card
+                # comes back, and the "kept" verdict is forgotten so a
+                # ✗ Bad afterwards is what the learning loop remembers
+                try:
+                    qgen_feedback.unrecord(card)
+                except Exception:
+                    pass
+                if self._batch_id == batch:
+                    self._add_suggestion_row(
+                        front, back, notes, index=index
+                    )
+                    QTimer.singleShot(0, self._fit_suggestions_if_auto)
+                    tooltip(
+                        "Card returned to the suggestions — no longer "
+                        "counted as kept.",
+                        parent=self,
+                    )
+
             open_text_card_dialog(
-                front_text=front, back_text=back, notes_text=notes
+                front_text=front,
+                back_text=back,
+                notes_text=notes,
+                on_discard=on_discard,
             )
             remove_row()
 
         def skip() -> None:
+            self._push_undo(card, None, row_index())
             remove_row()
 
         def great() -> None:
@@ -483,6 +683,7 @@ class TextCardPanel(QWidget):
                 qgen_feedback.record(card, qgen_feedback.KEPT)
             except Exception:
                 pass
+            self._push_undo(card, qgen_feedback.KEPT, row_index())
             remove_row()
 
         def bad() -> None:
@@ -490,6 +691,7 @@ class TextCardPanel(QWidget):
                 qgen_feedback.record(card, qgen_feedback.BAD)
             except Exception:
                 pass
+            self._push_undo(card, qgen_feedback.BAD, row_index())
             remove_row()
 
         # left to right: use / don't use (no signal) / great, not using /
@@ -530,7 +732,10 @@ class TextCardPanel(QWidget):
                 btn.setStyleSheet("QPushButton{%s}" % style)
             qconnect(btn.clicked, lambda _=False, c=cb: c())
             row_lay.addWidget(btn)
-        self.suggest_lay.insertWidget(self.suggest_lay.count() - 1, row)
+        last = self.suggest_lay.count() - 1  # keep the stretch at the end
+        if index is None or not (0 <= index < last):
+            index = last
+        self.suggest_lay.insertWidget(index, row)
 
 
 class TextCardDialog(QDialog):
@@ -542,8 +747,10 @@ class TextCardDialog(QDialog):
         front_text: str = "",
         back_text: str = "",
         notes_text: str = "",
+        on_discard=None,
     ):
         super().__init__(parent or mw)
+        self._on_discard = on_discard
         self.setWindowTitle(ADDON_NAME + " — Text Card")
         self.setMinimumSize(560, 560)
         self.setWindowFlags(
@@ -581,10 +788,20 @@ class TextCardDialog(QDialog):
                 event.ignore()
                 return
         event.accept()
+        # closed without ever adding: hand the card back to the caller
+        # (the suggestions panel restores it and forgets the verdict)
+        if self._on_discard is not None and not self.panel.added_any:
+            try:
+                self._on_discard()
+            except Exception:
+                pass
 
 
 def open_text_card_dialog(
-    front_text: str = "", back_text: str = "", notes_text: str = ""
+    front_text: str = "",
+    back_text: str = "",
+    notes_text: str = "",
+    on_discard=None,
 ) -> None:
     if mw.col is None:
         showWarning("Open a profile first.", title=ADDON_NAME)
@@ -598,7 +815,11 @@ def open_text_card_dialog(
             existing.activateWindow()
             return
     dlg = TextCardDialog(
-        mw, front_text=front_text, back_text=back_text, notes_text=notes_text
+        mw,
+        front_text=front_text,
+        back_text=back_text,
+        notes_text=notes_text,
+        on_discard=on_discard,
     )
     if not front_text and not back_text:
         mw._snip_occlusion_text_dialog = dlg  # keep a reference (GC gotcha)

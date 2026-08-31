@@ -92,3 +92,21 @@ def test_bundled_seed_file_is_valid():
         seed = json.load(fh)
     assert len(seed) >= 20
     assert all(c.get("front") and c.get("back") for c in seed)
+
+
+def test_unrecord_forgets_verdict_then_new_verdict_wins():
+    card = {"front": "Q", "back": "A"}
+    qgen_feedback.record(card, qgen_feedback.KEPT)
+    qgen_feedback.unrecord(card)
+    assert qgen_feedback.examples({}) == ([], [])
+    # Use -> undone -> Bad: only the Bad survives
+    qgen_feedback.record(card, qgen_feedback.BAD)
+    kept, bad = qgen_feedback.examples({})
+    assert kept == [] and bad == [card]
+
+
+def test_unrecord_unknown_card_is_noop():
+    qgen_feedback.record({"front": "Q", "back": "A"}, qgen_feedback.KEPT)
+    qgen_feedback.unrecord({"front": "other", "back": "card"})
+    kept, _ = qgen_feedback.examples({})
+    assert kept == [{"front": "Q", "back": "A"}]

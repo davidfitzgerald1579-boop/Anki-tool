@@ -4,6 +4,30 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.14.1 — 2026-08-31
+
+- **Undo for suggestion verdicts.** The new ↶ button brings back the
+  last card you Skipped, ★'d or ✗'d — restoring it to its place in the
+  list and erasing the verdict from the learning loop. Multi-level:
+  keep clicking to walk further back. (Cleared when a new batch of
+  suggestions loads.)
+- **Closing a "Use →" window returns the card.** If you open a
+  suggestion with Use → and then close its window without adding, the
+  card automatically reappears in the suggestions list and the "kept"
+  verdict is forgotten — so clicking ✗ Bad afterwards is what the
+  learning loop remembers, not your initial Use.
+
+## v0.14.0 — 2026-08-31
+
+- **Cards from pasted text.** The suggestions panel's new "📄 Paste
+  text…" button takes a whole lesson/element text. It is split into
+  sections at its headings and the cards stream into the panel as each
+  section finishes — first cards within about a minute, review with the
+  usual Use/Skip/Great/Bad while the rest generate. The ↻ button
+  becomes ■ during a run to stop it. Section-by-section generation
+  keeps prompts small, so the local model stays fast and thorough
+  instead of being overloaded by one giant prompt.
+
 ## v0.13.2 — 2026-08-31
 
 - **Readable tooltips.** Hover text was dark-on-black and near
