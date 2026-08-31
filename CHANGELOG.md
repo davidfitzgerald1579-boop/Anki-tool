@@ -1,5 +1,9 @@
 # Changelog
 
+Each version below corresponds to a commit on the repository; the
+installed version is shown as `human_version` in
+`snip_occlusion/manifest.json`.
+
 ## v0.13.1 — 2026-08-31
 
 - **Suggestions open at full height.** The suggestions pane now sizes
@@ -32,10 +36,6 @@
 - **👍 button on suggestions.** For "not using it, but great card":
   saves the card as a positive style example without opening it — the
   full verdict set is now Use → / 👍 / ✕ (neutral) / 👎.
-
-Each version below corresponds to a commit on the repository; the
-installed version is shown as `human_version` in
-`snip_occlusion/manifest.json`.
 
 ## v0.12.0 — 2026-08-31
 
