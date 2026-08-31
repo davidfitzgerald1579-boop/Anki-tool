@@ -1,17 +1,15 @@
-"""The text card editor: Front, Back, Notes - plus AI-suggested cards.
+"""Text-side pages: AI-suggested cards, and writing cards by hand.
 
-TextCardPanel is the reusable editor widget. It lives in two places:
+Two widgets, matching the main window's three-view layout:
 
-- Embedded in the main Snip Occlusion window (the "Text Editor" view,
-  toggled at the top). There it also shows the AI suggestions panel,
-  which fills itself the moment suggestions are ready - generation
-  starts when the snip is loaded, so no button press is needed.
-- Wrapped in TextCardDialog, a small standalone window with just the
-  card fields: opened by "Use →" on a suggestion (prefilled), or by
-  Ctrl+Shift+T outside the main window.
-
-Formatting is just bold / italic / underline / font size, and one button
-pulls the OCR text of your most recent snip onto the front.
+- SuggestionsPage ("Suggested Cards" view, also the ⧉ pop-out window):
+  the AI suggestions at the top, and the source (OCR/pasted) text
+  underneath. Clicking 🔎 on a card highlights, inline in that text,
+  the sentences the card most likely came from - no popups.
+- TextCardPanel ("Write Card" view, and the Use →/Ctrl+Shift+T window):
+  Front/Back/Notes with simple formatting. In the main window it shows
+  the source text at the top for reference; the standalone window is
+  just the fields.
 """
 
 from __future__ import annotations
@@ -19,13 +17,14 @@ from __future__ import annotations
 import re
 
 from aqt import mw
-from aqt.utils import showWarning, tooltip
+from aqt.utils import showWarning
 
 from .qtshim import *  # noqa: F401,F403
 from . import notes as notes_mod
-from . import qgen, qgen_doc, qgen_feedback, qgen_prefetch
+from . import qgen, qgen_bakeoff, qgen_doc, qgen_feedback, qgen_prefetch
 from .consts import ADDON_NAME
 from .dialog import _STYLE, get_config, get_previous_snip_text
+from .uitools import notify as tooltip
 
 _SIZES = ["10", "12", "14", "16", "18", "20", "24", "28", "32"]
 
@@ -38,29 +37,31 @@ def _body_html(edit: QTextEdit) -> str:
     return (m.group(1) if m else edit.toHtml()).strip()
 
 
+def _escape(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;")
+
+
 class TextCardPanel(QWidget):
+    """Front/Back/Notes editor; optionally with the source text on top."""
+
     def __init__(
         self,
         parent=None,
-        with_suggestions: bool = False,
+        show_source: bool = False,
         standalone_shortcuts: bool = False,
     ):
         super().__init__(parent)
-        self.with_suggestions = with_suggestions
+        self.show_source = show_source
         self._active_edit: QTextEdit | None = None
-        self._shown_state = None  # the prefetch whose cards are displayed
-        self._busy = False
-        self._doc_job = 0  # incremented to cancel a pasted-text run
-        self._doc_running = False
-        self._undo_stack: list = []  # (card, verdict|None, row index)
-        self._batch_id = 0  # bumped when the row list is replaced
         self.added_any = False  # did add_card() succeed at least once
+        self.on_added = None  # callback(front, back, notes) after an add
+        self._src_user_sized = False
         self._build_ui(standalone_shortcuts)
 
     def _build_ui(self, standalone_shortcuts: bool) -> None:
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(8)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(8)
 
         deck_row = QHBoxLayout()
         deck_row.addWidget(QLabel("Deck:", self))
@@ -74,78 +75,45 @@ class TextCardPanel(QWidget):
             if entry.id == current_id:
                 self.deck_box.setCurrentIndex(i)
         deck_row.addWidget(self.deck_box, 1)
-        lay.addLayout(deck_row)
+        outer.addLayout(deck_row)
 
-        # --- AI suggestions panel (embedded Text Editor view only)
-        if self.with_suggestions:
-            self.suggest_panel = QWidget(self)
-            panel_lay = QVBoxLayout(self.suggest_panel)
-            panel_lay.setContentsMargins(0, 0, 0, 0)
-            panel_lay.setSpacing(4)
-            title_row = QHBoxLayout()
-            title_row.addWidget(
-                QLabel("<b>✨ Suggested cards</b>", self)
+        if self.show_source:
+            # source text on top, fields below, divider draggable
+            source_host = QWidget(self)
+            src_lay = QVBoxLayout(source_host)
+            src_lay.setContentsMargins(0, 0, 0, 0)
+            src_lay.setSpacing(4)
+            src_lay.addWidget(
+                QLabel(
+                    "<b>📄 Source text</b> <span style='color:#8a8171'>"
+                    "(from your snip or pasted lesson — select and copy "
+                    "freely)</span>",
+                    self,
+                )
             )
-            self.suggest_status = QLabel("", self)
-            self.suggest_status.setStyleSheet("color:#8a8171;")
-            title_row.addWidget(self.suggest_status, 1)
-            self.undo_btn = QToolButton(self)
-            self.undo_btn.setText("↶")
-            self.undo_btn.setToolTip(
-                "Undo the last Skip / ★ Great / ✗ Bad — bring the card "
-                "back and forget the verdict"
+            self.source_browser = QTextBrowser(self)
+            self.source_browser.setMinimumHeight(80)
+            self.source_browser.setPlaceholderText(
+                "Snip a slide or paste a lesson — its text appears here."
             )
-            self.undo_btn.setEnabled(False)
-            qconnect(self.undo_btn.clicked, self._undo_verdict)
-            title_row.addWidget(self.undo_btn)
-            paste_btn = QPushButton("📄 Paste text…", self)
-            paste_btn.setToolTip(
-                "Paste a whole lesson or element text; cards are "
-                "generated section by section and stream in above"
-            )
-            qconnect(paste_btn.clicked, self._open_paste_dialog)
-            title_row.addWidget(paste_btn)
-            self.regen_btn = QToolButton(self)
-            self.regen_btn.setText("↻")
-            self.regen_btn.setToolTip(
-                "Regenerate suggestions from the current snip"
-            )
-            qconnect(self.regen_btn.clicked, self._regen_clicked)
-            title_row.addWidget(self.regen_btn)
-            panel_lay.addLayout(title_row)
-            self.suggest_scroll = QScrollArea(self)
-            self.suggest_scroll.setWidgetResizable(True)
-            self.suggest_scroll.setFrameShape(QFrame.Shape.NoFrame)
-            self.suggest_scroll.setMinimumHeight(40)
-            inner = QWidget(self)
-            inner.setStyleSheet("background:transparent;")
-            self.suggest_lay = QVBoxLayout(inner)
-            self.suggest_lay.setContentsMargins(0, 0, 4, 0)
-            self.suggest_lay.setSpacing(6)
-            self.suggest_lay.addStretch(1)
-            self.suggest_scroll.setWidget(inner)
-            panel_lay.addWidget(self.suggest_scroll)
-            # suggestions sit above the editor in a splitter: they open at
-            # full height (all cards visible, editor pushed down) and the
-            # divider drags up to shrink them, like resizing a box
-            editor_host = QWidget(self)
-            edit_lay = QVBoxLayout(editor_host)
-            edit_lay.setContentsMargins(0, 0, 0, 0)
-            edit_lay.setSpacing(8)
+            src_lay.addWidget(self.source_browser)
+            fields_host = QWidget(self)
+            lay = QVBoxLayout(fields_host)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(8)
             self.vsplit = QSplitter(Qt.Orientation.Vertical, self)
             self.vsplit.setHandleWidth(7)
             self.vsplit.setChildrenCollapsible(False)
-            self.vsplit.addWidget(self.suggest_panel)
-            self.vsplit.addWidget(editor_host)
-            self.vsplit.setStretchFactor(0, 0)
-            self.vsplit.setStretchFactor(1, 1)
-            self._user_sized = False
-            qconnect(self.vsplit.splitterMoved, self._splitter_dragged)
-            lay.addWidget(self.vsplit, 1)
-            lay = edit_lay  # the editor fields build into the lower pane
-            self._set_suggest_status(
-                "Snip a slide — suggestions appear here automatically."
-            )
+            self.vsplit.addWidget(source_host)
+            self.vsplit.addWidget(fields_host)
+            self.vsplit.setStretchFactor(0, 1)
+            self.vsplit.setStretchFactor(1, 2)
+            qconnect(self.vsplit.splitterMoved, self._src_splitter_dragged)
+            outer.addWidget(self.vsplit, 1)
+            min_front, min_back, min_notes = 44, 44, 32
+        else:
+            lay = outer
+            min_front, min_back, min_notes = 110, 130, 70
 
         # --- formatting bar (applies to whichever box you're typing in)
         bar = QHBoxLayout()
@@ -195,13 +163,6 @@ class TextCardPanel(QWidget):
             edit.setFont(font)
             return edit
 
-        # embedded under the suggestions splitter the edits accept being
-        # squashed (suggestions get priority); standalone they keep a
-        # comfortable minimum
-        if self.with_suggestions:
-            min_front, min_back, min_notes = 44, 44, 32
-        else:
-            min_front, min_back, min_notes = 110, 130, 70
         lay.addWidget(QLabel("<b>Front</b>", self))
         self.front = make_edit(min_front)
         lay.addWidget(self.front, 2)
@@ -235,6 +196,62 @@ class TextCardPanel(QWidget):
             sc = QShortcut(QKeySequence(seq), self)
             sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             qconnect(sc.activated, cb)
+
+    def set_source_text(self, text: str) -> None:
+        if not self.show_source:
+            return
+        paragraphs = [
+            _escape(" ".join(p.split()))
+            for p in re.split(r"\n\s*\n", text or "")
+            if p.strip()
+        ]
+        self.source_browser.setHtml(
+            "<div style='color:#3d3929;font-size:13px;'>%s</div>"
+            % "<br><br>".join(paragraphs)
+        )
+        self._src_user_sized = False  # new text auto-sizes again
+        QTimer.singleShot(0, self._fit_source)
+
+    def _src_splitter_dragged(self, *_args) -> None:
+        self._src_user_sized = True  # a manual drag takes over
+
+    def _fit_source(self) -> None:
+        """Size the source pane to show the WHOLE text, no scrolling.
+
+        The fields below compress as needed (they have small minimums);
+        only when the text is taller than the window itself does the
+        pane cap out and scroll. A manual splitter drag takes over
+        until the next source text arrives.
+        """
+        if not self.show_source or self._src_user_sized:
+            return
+        sizes = self.vsplit.sizes()
+        total = sum(sizes)
+        if total <= 0:
+            return  # not laid out yet; showEvent refits
+        doc = self.source_browser.document()
+        doc.setTextWidth(max(60, self.source_browser.viewport().width()))
+        needed = int(doc.size().height()) + 20
+        host_lay = self.vsplit.widget(0).layout()
+        item = host_lay.itemAt(0)  # the "Source text" label
+        if item is not None:
+            needed += item.sizeHint().height() + host_lay.spacing()
+        bottom_min = max(
+            self.vsplit.widget(1).minimumSizeHint().height(), 200
+        )
+        top = max(60, min(needed, total - bottom_min))
+        self.vsplit.setSizes([top, total - top])
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self.show_source:
+            QTimer.singleShot(0, self._fit_source)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self.show_source:
+            # width changes reflow the text, changing its height
+            QTimer.singleShot(0, self._fit_source)
 
     def focus_front(self) -> None:
         self.front.setFocus()
@@ -316,6 +333,11 @@ class TextCardPanel(QWidget):
                 title=ADDON_NAME,
             )
             return
+        plain = (
+            self.front.toPlainText().strip(),
+            self.back.toPlainText().strip(),
+            self.notes.toPlainText().strip(),
+        )
         notes_mod.add_text_note(
             mw.col,
             self.deck_box.currentData(),
@@ -325,21 +347,225 @@ class TextCardPanel(QWidget):
         )
         mw.reset()
         self.added_any = True
+        if self.on_added is not None:
+            try:
+                self.on_added(*plain)
+            except Exception:
+                pass
         tooltip("Card added", parent=self)
         self.front.clear()
         self.back.clear()
         self.notes.clear()
         self.front.setFocus()
 
-    # ------------------------------------------------------ AI suggestions
+
+class SuggestionsPage(QWidget):
+    """AI suggestions on top; the source text underneath.
+
+    🔎 on a card highlights, inline in the source text below, the
+    sentences the card (and separately its Notes line) most likely came
+    from - yellow for question/answer, orange for notes.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._shown_state = None  # the prefetch whose cards are displayed
+        self._busy = False
+        self._doc_job = 0  # incremented to cancel a pasted-text run
+        self._doc_running = False
+        self._undo_stack: list = []  # (card, verdict|None, row index)
+        self._batch_id = 0  # bumped when the row list is replaced
+        self._current_source = ""
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(4)
+
+        self.suggest_panel = QWidget(self)
+        panel_lay = QVBoxLayout(self.suggest_panel)
+        panel_lay.setContentsMargins(0, 0, 0, 0)
+        panel_lay.setSpacing(4)
+        title_row = QHBoxLayout()
+        title_row.addWidget(QLabel("<b>✨ Suggested cards</b>", self))
+        self.suggest_status = QLabel("", self)
+        self.suggest_status.setStyleSheet("color:#8a8171;")
+        title_row.addWidget(self.suggest_status, 1)
+        self.undo_btn = QToolButton(self)
+        self.undo_btn.setText("↶")
+        self.undo_btn.setToolTip(
+            "Undo the last Skip / ★ Great / ✗ Bad — bring the card "
+            "back and forget the verdict"
+        )
+        self.undo_btn.setEnabled(False)
+        qconnect(self.undo_btn.clicked, self._undo_verdict)
+        title_row.addWidget(self.undo_btn)
+        paste_btn = QPushButton("📄 Paste text…", self)
+        paste_btn.setToolTip(
+            "Paste a whole lesson or element text; cards are "
+            "generated section by section and stream in above"
+        )
+        qconnect(paste_btn.clicked, self._open_paste_dialog)
+        title_row.addWidget(paste_btn)
+        self.regen_btn = QToolButton(self)
+        self.regen_btn.setText("↻")
+        self.regen_btn.setToolTip(
+            "Regenerate suggestions from the current snip"
+        )
+        qconnect(self.regen_btn.clicked, self._regen_clicked)
+        title_row.addWidget(self.regen_btn)
+        panel_lay.addLayout(title_row)
+        self.suggest_scroll = QScrollArea(self)
+        self.suggest_scroll.setWidgetResizable(True)
+        self.suggest_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.suggest_scroll.setMinimumHeight(40)
+        inner = QWidget(self)
+        inner.setStyleSheet("background:transparent;")
+        self.suggest_lay = QVBoxLayout(inner)
+        self.suggest_lay.setContentsMargins(0, 0, 4, 0)
+        self.suggest_lay.setSpacing(6)
+        self.suggest_lay.addStretch(1)
+        self.suggest_scroll.setWidget(inner)
+        panel_lay.addWidget(self.suggest_scroll)
+
+        # the source text lives directly below the suggestions
+        source_host = QWidget(self)
+        src_lay = QVBoxLayout(source_host)
+        src_lay.setContentsMargins(0, 0, 0, 0)
+        src_lay.setSpacing(4)
+        self.source_legend = QLabel(
+            "<b>📄 Source text</b> <span style='color:#8a8171'>— click "
+            "🔎 on a card to highlight where it came from.</span>",
+            self,
+        )
+        self.source_legend.setWordWrap(True)
+        src_lay.addWidget(self.source_legend)
+        self.source_browser = QTextBrowser(self)
+        self.source_browser.setMinimumHeight(90)
+        self.source_browser.setPlaceholderText(
+            "Snip a slide or paste a lesson — its text appears here."
+        )
+        src_lay.addWidget(self.source_browser)
+
+        self.vsplit = QSplitter(Qt.Orientation.Vertical, self)
+        self.vsplit.setHandleWidth(7)
+        self.vsplit.setChildrenCollapsible(False)
+        self.vsplit.addWidget(self.suggest_panel)
+        self.vsplit.addWidget(source_host)
+        self.vsplit.setStretchFactor(0, 0)
+        self.vsplit.setStretchFactor(1, 1)
+        self._user_sized = False
+        qconnect(self.vsplit.splitterMoved, self._splitter_dragged)
+        outer.addWidget(self.vsplit, 1)
+        self._set_suggest_status(
+            "Snip a slide — suggestions appear here automatically."
+        )
+
+    # ------------------------------------------------------- source view
+
+    def current_source(self) -> str:
+        return self._current_source
+
+    def set_source_text(self, text: str) -> None:
+        """Show plain source text (no highlights) and remember it."""
+        self._current_source = text or ""
+        paragraphs = [
+            _escape(" ".join(p.split()))
+            for p in re.split(r"\n\s*\n", self._current_source)
+            if p.strip()
+        ]
+        self.source_browser.setHtml(
+            "<div style='color:#3d3929;font-size:13px;'>%s</div>"
+            % "<br><br>".join(paragraphs)
+        )
+        self.source_legend.setText(
+            "<b>📄 Source text</b> <span style='color:#8a8171'>— click "
+            "🔎 on a card to highlight where it came from.</span>"
+        )
+
+    def _show_card_source(self, card: dict) -> None:
+        """🔎: highlight the card's origin inline in the browser below."""
+        source = card.get("_source") or self._current_source
+        if not source.strip():
+            tooltip("No source text stored for this card.", parent=self)
+            return
+        from . import qgen_trace
+
+        body, matches, notes_matches = qgen_trace.highlight_html(
+            card, source
+        )
+        # anchor the first highlight so the browser scrolls right to it
+        first = body.find("<span")
+        if first != -1:
+            body = body[:first] + "<a name='hit'></a>" + body[first:]
+        parts = []
+        if matches:
+            parts.append(
+                "<span style='%s'>&nbsp;yellow&nbsp;</span> = "
+                "question/answer" % qgen_trace.HIGHLIGHT_STYLE
+            )
+        else:
+            parts.append(
+                "<span style='color:#b3261e'>⚠ no close match for the "
+                "question/answer — read with suspicion</span>"
+            )
+        if card.get("notes"):
+            if notes_matches:
+                parts.append(
+                    "<span style='%s'>&nbsp;orange&nbsp;</span> = the "
+                    "Notes line" % qgen_trace.NOTE_HIGHLIGHT_STYLE
+                )
+            else:
+                parts.append(
+                    "<span style='color:#b3261e'>⚠ NOTHING matches the "
+                    "Notes line — likely invented (flag it with "
+                    "⚠ Ref)</span>"
+                )
+        self.source_legend.setText(
+            "<b>📄 Source of</b> “%s” <span style='color:#8a8171'>· "
+            "%s</span>"
+            % (_escape(card.get("front", ""))[:80], " · ".join(parts))
+        )
+        self.source_browser.setHtml(
+            "<div style='color:#3d3929;font-size:13px;'>%s</div>" % body
+        )
+        self.source_browser.scrollToAnchor("hit")
+
+    # --------------------------------------------------------- status/fit
 
     def _set_suggest_status(self, text: str) -> None:
-        if self.with_suggestions:
-            self.suggest_status.setText(text)
+        self.suggest_status.setText(text)
 
     def _splitter_dragged(self, *_args) -> None:
         # once the user drags the divider, stop auto-sizing this batch
         self._user_sized = True
+
+    def _fit_suggestions_if_auto(self) -> None:
+        if not self._user_sized:
+            self._fit_suggestions()
+
+    def _fit_suggestions(self) -> None:
+        """Show every card without scrolling; the source pane shrinks."""
+        sizes = self.vsplit.sizes()
+        total = sum(sizes)
+        if total <= 0:
+            return  # not laid out yet (view not shown); showEvent refits
+        inner = self.suggest_scroll.widget()
+        if inner.layout() is not None:
+            inner.layout().activate()
+        needed = inner.sizeHint().height() + 6  # rows
+        panel_lay = self.suggest_panel.layout()
+        item = panel_lay.itemAt(0)  # title row
+        if item is not None:
+            needed += item.sizeHint().height() + panel_lay.spacing()
+        bottom_min = 150  # keep a useful strip of source text visible
+        top = max(60, min(needed, total - bottom_min))
+        self.vsplit.setSizes([top, total - top])
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        QTimer.singleShot(0, self._fit_suggestions_if_auto)
 
     # -------------------------------------------- pasted-text generation
 
@@ -403,6 +629,7 @@ class TextCardPanel(QWidget):
         self._busy = True  # blocks snip refreshes while this runs
         self._user_sized = False
         self._clear_rows()
+        self.set_source_text(text)
         self.regen_btn.setText("■")
         self.regen_btn.setToolTip("Stop generating")
         self._set_suggest_status("section 1/%d…" % len(chunks))
@@ -412,7 +639,7 @@ class TextCardPanel(QWidget):
                 if self._doc_job != job:
                     return
                 try:
-                    cards = qgen.generate_cards(
+                    cards = qgen_bakeoff.generate(
                         chunk, config, source="document"
                     )
                 except qgen.EmptyReplyError:
@@ -445,9 +672,7 @@ class TextCardPanel(QWidget):
         if job != self._doc_job:
             return
         for card in cards:
-            self._add_suggestion_row(
-                card["front"], card["back"], card.get("notes", "")
-            )
+            self._add_card_row(card)
         if done_count < total:
             self._set_suggest_status(
                 "section %d/%d…" % (done_count + 1, total)
@@ -471,39 +696,7 @@ class TextCardPanel(QWidget):
         if detail:
             tooltip("Card generation: %s" % detail, parent=self, period=6000)
 
-    def _fit_suggestions_if_auto(self) -> None:
-        if self.with_suggestions and not self._user_sized:
-            self._fit_suggestions()
-
-    def _fit_suggestions(self) -> None:
-        """Open the suggestions pane to show every card, no scrolling.
-
-        The editor fields get pushed down; the splitter handle still
-        drags up to shrink the pane (then it scrolls internally).
-        """
-        sizes = self.vsplit.sizes()
-        total = sum(sizes)
-        if total <= 0:
-            return  # not laid out yet (view not shown); showEvent refits
-        inner = self.suggest_scroll.widget()
-        if inner.layout() is not None:
-            inner.layout().activate()
-        needed = inner.sizeHint().height() + 6  # rows
-        panel_lay = self.suggest_panel.layout()
-        item = panel_lay.itemAt(0)  # title row
-        if item is not None:
-            needed += item.sizeHint().height() + panel_lay.spacing()
-        # never squash the editor below what it needs to stay usable
-        bottom_min = max(
-            self.vsplit.widget(1).minimumSizeHint().height(), 170
-        )
-        top = max(60, min(needed, total - bottom_min))
-        self.vsplit.setSizes([top, total - top])
-
-    def showEvent(self, event) -> None:
-        super().showEvent(event)
-        if self.with_suggestions:
-            QTimer.singleShot(0, self._fit_suggestions_if_auto)
+    # ------------------------------------------------------ AI suggestions
 
     def refresh_suggestions(self, force: bool = False) -> None:
         """Show the pre-generated suggestions for the current snip.
@@ -514,7 +707,7 @@ class TextCardPanel(QWidget):
         twice is a no-op unless force=True (the ↻ button), which
         regenerates from scratch.
         """
-        if not self.with_suggestions or self._busy:
+        if self._busy:
             return
         config = get_config()
         state = qgen_prefetch.current()
@@ -548,7 +741,7 @@ class TextCardPanel(QWidget):
                     raise qgen.QGenError(
                         "No snip text available yet — snip a slide first."
                     )
-                return qgen.generate_cards(text, config)
+                return qgen_bakeoff.generate(text, config)
             timeout = int(config.get("qgen_timeout_seconds") or 300) + 30
             try:
                 return qgen_prefetch.wait_for_cards(state, timeout)
@@ -556,7 +749,7 @@ class TextCardPanel(QWidget):
                 # e.g. Ollama wasn't running when the snip landed but is
                 # now - retry live before giving up
                 if state.text.strip():
-                    return qgen.generate_cards(state.text, config)
+                    return qgen_bakeoff.generate(state.text, config)
                 raise
 
         def done(future) -> None:
@@ -568,10 +761,11 @@ class TextCardPanel(QWidget):
                 tooltip("Suggestions: %s" % exc, parent=self, period=6000)
                 return
             self._set_suggest_status("")
+            self.set_source_text(
+                (state.text if state else "").strip() or fallback_text
+            )
             for card in cards:
-                self._add_suggestion_row(
-                    card["front"], card["back"], card.get("notes", "")
-                )
+                self._add_card_row(card)
             QTimer.singleShot(0, self._fit_suggestions_if_auto)
 
         mw.taskman.run_in_background(work, done)
@@ -594,19 +788,47 @@ class TextCardPanel(QWidget):
             return
         card, verdict, index = self._undo_stack.pop()
         self.undo_btn.setEnabled(bool(self._undo_stack))
-        if verdict is not None:
-            try:
+        try:
+            if verdict is not None:
                 qgen_feedback.unrecord(card)
-            except Exception:
-                pass
-        self._add_suggestion_row(
-            card["front"], card["back"], card.get("notes", ""), index=index
-        )
+            # reverse the bake-off tally for whichever button it was
+            tally_verdict = {
+                None: "skip",
+                qgen_feedback.KEPT: "great",
+                qgen_feedback.BAD: "bad",
+            }.get(verdict)
+            if tally_verdict:
+                qgen_bakeoff.tally(card, tally_verdict, undo=True)
+        except Exception:
+            pass
+        self._add_card_row(card, index=index)
         QTimer.singleShot(0, self._fit_suggestions_if_auto)
 
     def _add_suggestion_row(
-        self, front: str, back: str, notes: str = "", index=None
+        self,
+        front: str,
+        back: str,
+        notes: str = "",
+        index=None,
+        model: str = "",
+        warn: str = "",
     ) -> None:
+        """Compatibility wrapper: build the card dict and add its row."""
+        card = {"front": front, "back": back}
+        if notes:
+            card["notes"] = notes
+        if model:
+            card["_model"] = model
+        if warn:
+            card["_warn"] = warn
+        self._add_card_row(card, index=index)
+
+    def _add_card_row(self, source_card: dict, index=None) -> None:
+        card = dict(source_card)
+        front = card.get("front", "")
+        back = card.get("back", "")
+        notes = card.get("notes", "")
+        warn = card.get("_warn", "")
         row = QFrame(self)
         row.setStyleSheet(
             "QFrame{background:#ffffff;border:1px solid #e3dcd0;"
@@ -615,20 +837,27 @@ class TextCardPanel(QWidget):
         row_lay = QHBoxLayout(row)
         row_lay.setContentsMargins(8, 6, 8, 6)
         body = "<b>Q:</b> %s<br><b>A:</b> %s" % (
-            front.replace("<", "&lt;"),
-            back.replace("<", "&lt;"),
+            _escape(front),
+            _escape(back),
         )
         if notes:
             body += (
                 "<br><span style='color:#8a8272;font-size:11px;'>%s</span>"
-                % notes.replace("<", "&lt;")
+                % _escape(notes)
+            )
+        if warn:
+            body += (
+                "<br><span style='color:#b3261e;font-size:11px;'>⚠ %s"
+                "</span>" % _escape(warn)
             )
         text = QLabel(body, row)
         text.setWordWrap(True)
+        # the preview text is selectable, so references etc. can be
+        # copied out and checked against the source material
+        text.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
         row_lay.addWidget(text, 1)
-        card = {"front": front, "back": back}
-        if notes:
-            card["notes"] = notes
 
         def row_index() -> int:
             return max(0, self.suggest_lay.indexOf(row))
@@ -642,6 +871,7 @@ class TextCardPanel(QWidget):
         def use() -> None:
             try:
                 qgen_feedback.record(card, qgen_feedback.KEPT)
+                qgen_bakeoff.tally(card, "use")
             except Exception:
                 pass
             batch = self._batch_id
@@ -653,12 +883,11 @@ class TextCardPanel(QWidget):
                 # ✗ Bad afterwards is what the learning loop remembers
                 try:
                     qgen_feedback.unrecord(card)
+                    qgen_bakeoff.tally(card, "use", undo=True)
                 except Exception:
                     pass
                 if self._batch_id == batch:
-                    self._add_suggestion_row(
-                        front, back, notes, index=index
-                    )
+                    self._add_card_row(card, index=index)
                     QTimer.singleShot(0, self._fit_suggestions_if_auto)
                     tooltip(
                         "Card returned to the suggestions — no longer "
@@ -671,16 +900,22 @@ class TextCardPanel(QWidget):
                 back_text=back,
                 notes_text=notes,
                 on_discard=on_discard,
+                original_card=card,
             )
             remove_row()
 
         def skip() -> None:
+            try:
+                qgen_bakeoff.tally(card, "skip")
+            except Exception:
+                pass
             self._push_undo(card, None, row_index())
             remove_row()
 
         def great() -> None:
             try:
                 qgen_feedback.record(card, qgen_feedback.KEPT)
+                qgen_bakeoff.tally(card, "great")
             except Exception:
                 pass
             self._push_undo(card, qgen_feedback.KEPT, row_index())
@@ -689,14 +924,47 @@ class TextCardPanel(QWidget):
         def bad() -> None:
             try:
                 qgen_feedback.record(card, qgen_feedback.BAD)
+                qgen_bakeoff.tally(card, "bad")
             except Exception:
                 pass
             self._push_undo(card, qgen_feedback.BAD, row_index())
             remove_row()
 
-        # left to right: use / don't use (no signal) / great, not using /
-        # bad, not using
-        for label, tip, cb, style in [
+        def fake_ref() -> None:
+            detected = qgen._citations(
+                " ".join([notes or "", back, front])
+            )
+            value, ok = QInputDialog.getText(
+                self,
+                ADDON_NAME,
+                "Which reference did it invent? Paste/edit the exact "
+                "text — it will be stripped from all future cards:",
+                text=detected[0] if detected else "",
+            )
+            if not ok or not value.strip():
+                return
+            try:
+                qgen_feedback.record_phantom(value)
+                qgen_feedback.record(card, qgen_feedback.BAD)
+                qgen_bakeoff.tally(card, "bad")
+            except Exception:
+                pass
+            self._push_undo(card, qgen_feedback.BAD, row_index())
+            remove_row()
+            tooltip(
+                "Noted — that reference is now blocklisted and will be "
+                "stripped from future suggestions.",
+                parent=self,
+            )
+
+        def show_source() -> None:
+            self._show_card_source(card)
+
+        # buttons sit in a compact 2-wide, 3-tall grid so the card text
+        # keeps most of the width even at half-screen
+        grid = QGridLayout()
+        grid.setSpacing(4)
+        buttons = [
             (
                 "Use →",
                 "Open this card in its own window to tweak and add — and "
@@ -725,17 +993,63 @@ class TextCardPanel(QWidget):
                 bad,
                 "color:#b3261e;",
             ),
-        ]:
+            (
+                "⚠ Ref",
+                "It invented a reference (case, statute, year…) — tell "
+                "me which, and it will be stripped from every future "
+                "card. Also counts as Bad for the learning loop.",
+                fake_ref,
+                "color:#b3261e;",
+            ),
+        ]
+        if card.get("_source"):
+            buttons.append(
+                (
+                    "🔎",
+                    "Highlight, in the source text below, the sentences "
+                    "this card most likely came from",
+                    show_source,
+                    "",
+                )
+            )
+        for i, (label, tip, cb, style) in enumerate(buttons):
             btn = QPushButton(label, row)
             btn.setToolTip(tip)
-            if style:
-                btn.setStyleSheet("QPushButton{%s}" % style)
+            css = "QPushButton{padding:4px 8px;%s}" % style
+            btn.setStyleSheet(css)
             qconnect(btn.clicked, lambda _=False, c=cb: c())
-            row_lay.addWidget(btn)
+            grid.addWidget(btn, i // 2, i % 2)
+        row_lay.addLayout(grid)
+        row_lay.setAlignment(grid, Qt.AlignmentFlag.AlignTop)
         last = self.suggest_lay.count() - 1  # keep the stretch at the end
         if index is None or not (0 <= index < last):
             index = last
         self.suggest_lay.insertWidget(index, row)
+
+
+class PoppedTextEditor(QDialog):
+    """The Suggested Cards page in its own window.
+
+    For side-by-side work: snap this to one half of the screen and the
+    source material to the other, and check the suggested cards'
+    references against it while reviewing.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent or mw)
+        self.setWindowTitle(ADDON_NAME + " — Suggested Cards")
+        self.setMinimumSize(520, 560)
+        self.resize(680, 880)
+        self.setWindowFlags(
+            self.windowFlags()
+            | Qt.WindowType.WindowMinimizeButtonHint
+            | Qt.WindowType.WindowMaximizeButtonHint
+        )
+        self.setStyleSheet(_STYLE)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(12, 12, 12, 12)
+        self.panel = SuggestionsPage(self)
+        lay.addWidget(self.panel)
 
 
 class TextCardDialog(QDialog):
@@ -748,6 +1062,7 @@ class TextCardDialog(QDialog):
         back_text: str = "",
         notes_text: str = "",
         on_discard=None,
+        original_card=None,
     ):
         super().__init__(parent or mw)
         self._on_discard = on_discard
@@ -762,7 +1077,7 @@ class TextCardDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(12, 12, 12, 12)
         self.panel = TextCardPanel(
-            self, with_suggestions=False, standalone_shortcuts=True
+            self, show_source=False, standalone_shortcuts=True
         )
         lay.addWidget(self.panel)
         if front_text:
@@ -775,6 +1090,33 @@ class TextCardDialog(QDialog):
             self.panel.back.setFocus()
         else:
             self.panel.focus_front()
+        if original_card:
+            # the learning loop should remember the card AS ADDED, not
+            # as suggested: if the user corrects wrong content before
+            # adding, the corrected version replaces the original in
+            # the kept-examples store
+            orig = dict(original_card)
+
+            def learn_corrected(front, back, notes) -> None:
+                self.panel.on_added = None  # first add only
+                edited = {"front": front, "back": back}
+                if notes:
+                    edited["notes"] = notes
+                if (
+                    edited["front"] == orig.get("front", "")
+                    and edited["back"] == orig.get("back", "")
+                    and notes == orig.get("notes", "")
+                ):
+                    return  # unchanged - the original example stands
+                try:
+                    from . import qgen_feedback
+
+                    qgen_feedback.unrecord(orig)
+                    qgen_feedback.record(edited, qgen_feedback.KEPT)
+                except Exception:
+                    pass
+
+            self.panel.on_added = learn_corrected
 
     def closeEvent(self, event) -> None:
         if self.panel.has_unsaved_text():
@@ -802,6 +1144,7 @@ def open_text_card_dialog(
     back_text: str = "",
     notes_text: str = "",
     on_discard=None,
+    original_card=None,
 ) -> None:
     if mw.col is None:
         showWarning("Open a profile first.", title=ADDON_NAME)
@@ -820,6 +1163,7 @@ def open_text_card_dialog(
         back_text=back_text,
         notes_text=notes_text,
         on_discard=on_discard,
+        original_card=original_card,
     )
     if not front_text and not back_text:
         mw._snip_occlusion_text_dialog = dlg  # keep a reference (GC gotcha)

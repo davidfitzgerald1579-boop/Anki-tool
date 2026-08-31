@@ -89,6 +89,8 @@ def test_generate_cards_via_ollama(monkeypatch):
     assert captured["body"]["keep_alive"] == "30m"
     assert "individual MPs" in captured["body"]["messages"][0]["content"]
     assert captured["timeout"] == qgen.DEFAULT_TIMEOUT_S
+    # cards remember their source text for the 🔎 trace view
+    assert cards[0]["_source"].startswith("Private members bills")
 
 
 def test_generate_cards_via_openai_compatible(monkeypatch):
@@ -166,3 +168,130 @@ def test_generate_cards_connection_and_http_errors(monkeypatch):
 def test_empty_text_raises():
     with pytest.raises(qgen.QGenError):
         qgen.generate_cards("   ", {})
+
+
+def test_ollama_leaves_cores_free(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout=None):
+        captured["body"] = json.loads(request.data.decode())
+        return _FakeResponse(
+            {"message": {"role": "assistant", "content": _CARD_JSON}}
+        )
+
+    monkeypatch.setattr(qgen.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(qgen.os, "cpu_count", lambda: 8)
+    # default: one core left free
+    qgen.generate_cards("text", {})
+    assert captured["body"]["options"] == {"num_thread": 7}
+    # explicit reserve
+    qgen.generate_cards("text", {"qgen_leave_cores_free": 3})
+    assert captured["body"]["options"] == {"num_thread": 5}
+    # 0 = use every core: no options sent at all
+    qgen.generate_cards("text", {"qgen_leave_cores_free": 0})
+    assert "options" not in captured["body"]
+    # never reserve the machine into nothing
+    monkeypatch.setattr(qgen.os, "cpu_count", lambda: 1)
+    qgen.generate_cards("text", {})
+    assert "options" not in captured["body"]
+
+
+def test_prompt_puts_source_last_and_examples_first():
+    feedback = (
+        [{"front": "StyleQ", "back": "StyleA"}],
+        [{"front": "WeakQ", "back": "WeakA"}],
+    )
+    p = qgen.build_prompt("The defendant bears no burden.", 4, feedback)
+    # examples come before the rules; the source text is the very end,
+    # right where the model's attention is when it starts writing
+    assert p.index("StyleQ") < p.index("Rules:")
+    assert p.index("Rules:") < p.index("The defendant bears no burden.")
+    assert p.rstrip().endswith("---")
+    assert "off-limits" in p  # example topics are explicitly fenced off
+    assert "must test a fact stated in the source text" in p
+
+
+def test_off_topic_cards_are_dropped():
+    source = (
+        "The prosecution bears the burden of proof in criminal "
+        "proceedings and must prove its case beyond reasonable doubt."
+    )
+    on_topic = {
+        "front": "Who bears the burden of proof in criminal proceedings?",
+        "back": "The prosecution, beyond reasonable doubt.",
+    }
+    bleed = {
+        "front": "What is the priority of an additional mortgage loan?",
+        "back": "If the lender had notice and agreed, it takes priority.",
+    }
+    kept = qgen._drop_off_topic([on_topic, bleed], source)
+    assert kept == [on_topic]
+    # fails open: if everything would be dropped, keep the originals
+    assert qgen._drop_off_topic([bleed], source) == [bleed]
+    # no usable source words -> untouched
+    assert qgen._drop_off_topic([bleed], "a b c") == [bleed]
+
+
+SOURCE_WITH_CITES = (
+    "In R v Brown [1970] 1 QBD 105 the prosecution acted for the Crown. "
+    "Consumer rights arise under s 9 CRA 2015 and the Human Rights Act "
+    "1998; see also Article 8(1)."
+)
+
+
+def test_citation_extraction():
+    cites = qgen._citations(SOURCE_WITH_CITES)
+    joined = " | ".join(cites)
+    assert "R v Brown [1970]" in joined
+    assert "Human Rights Act 1998" in joined
+    assert "Article 8(1)" in joined
+    assert "s 9 CRA 2015" in joined
+
+
+def test_verified_references_survive(monkeypatch):
+    monkeypatch.setattr(qgen.qgen_feedback, "phantom_refs", lambda: [])
+    card = {
+        "front": "Which case names the Crown as prosecutor?",
+        "back": "R v Brown [1970].",
+        "notes": "Human Rights Act 1998",
+    }
+    qgen._verify_references([card], SOURCE_WITH_CITES)
+    assert card["notes"] == "Human Rights Act 1998"
+    assert "_warn" not in card
+
+
+def test_invented_references_stripped_and_warned(monkeypatch):
+    monkeypatch.setattr(qgen.qgen_feedback, "phantom_refs", lambda: [])
+    card = {
+        "front": "What did Donoghue v Stevenson [1932] decide?",
+        "back": "The neighbour principle.",
+        "notes": "See also Sale of Goods Act 1979",  # not in source
+    }
+    qgen._verify_references([card], SOURCE_WITH_CITES)
+    assert "notes" not in card  # invented citation -> notes dropped
+    assert "Donoghue v Stevenson" in card["_warn"]  # invented case flagged
+
+
+def test_invented_year_on_real_case_is_caught(monkeypatch):
+    monkeypatch.setattr(qgen.qgen_feedback, "phantom_refs", lambda: [])
+    card = {
+        "front": "Who prosecutes?",
+        "back": "The Crown: R v Brown [1994].",  # real case, wrong year
+    }
+    qgen._verify_references([card], SOURCE_WITH_CITES)
+    assert "_warn" in card and "[1994]" in card["_warn"]
+
+
+def test_phantom_blocklist_applies(monkeypatch):
+    monkeypatch.setattr(
+        qgen.qgen_feedback,
+        "phantom_refs",
+        lambda: ["Smith v Jones [2001]"],
+    )
+    card = {
+        "front": "Q about the burden of proof and the prosecution?",
+        "back": "The prosecution bears it.",
+        "notes": "smith v jones [2001] confirms this",
+    }
+    qgen._verify_references([card], SOURCE_WITH_CITES)
+    assert "notes" not in card

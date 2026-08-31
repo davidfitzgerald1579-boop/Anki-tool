@@ -36,6 +36,8 @@ _MAX_FIELD_CHARS = 300
 
 KEPT = "kept"
 BAD = "bad"
+PHANTOMS = "phantom_refs"  # references the model has invented before
+_MAX_PHANTOMS = 200
 
 
 def _path() -> str:
@@ -55,9 +57,10 @@ def _load() -> dict:
         return {
             KEPT: list(data.get(KEPT) or []),
             BAD: list(data.get(BAD) or []),
+            PHANTOMS: list(data.get(PHANTOMS) or []),
         }
     except Exception:
-        return {KEPT: [], BAD: []}
+        return {KEPT: [], BAD: [], PHANTOMS: []}
 
 
 def _save(data: dict) -> None:
@@ -96,7 +99,7 @@ def record(card: dict, verdict: str) -> None:
     with _lock:
         data = _load()
         # a card lives in at most one list, once (latest verdict wins)
-        for lst in data.values():
+        for lst in (data[KEPT], data[BAD]):
             lst[:] = [
                 c
                 for c in lst
@@ -121,7 +124,7 @@ def unrecord(card: dict) -> None:
     with _lock:
         data = _load()
         changed = False
-        for lst in data.values():
+        for lst in (data[KEPT], data[BAD]):
             before = len(lst)
             lst[:] = [
                 c
@@ -131,6 +134,32 @@ def unrecord(card: dict) -> None:
             changed = changed or len(lst) != before
         if changed:
             _save(data)
+
+
+def record_phantom(reference: str) -> None:
+    """Remember a reference the model invented (user-flagged).
+
+    Not shown to the model - repeating a fabricated citation in the
+    prompt risks teaching a small model to produce it. Instead the
+    generation pipeline strips or warns about any future card that
+    cites a blocklisted reference.
+    """
+    reference = " ".join(str(reference or "").split())[:120]
+    if len(reference) < 3:
+        return
+    with _lock:
+        data = _load()
+        lowered = reference.lower()
+        if lowered not in (p.lower() for p in data[PHANTOMS]):
+            data[PHANTOMS].append(reference)
+            data[PHANTOMS] = data[PHANTOMS][-_MAX_PHANTOMS:]
+            _save(data)
+
+
+def phantom_refs() -> list:
+    """All user-flagged invented references."""
+    with _lock:
+        return list(_load()[PHANTOMS])
 
 
 def examples(config: dict) -> tuple[list, list]:
@@ -150,8 +179,14 @@ def examples(config: dict) -> tuple[list, list]:
         return [], []
     with _lock:
         data = _load()
+    # cap positives at n TOTAL: small models start writing cards about
+    # the example topics when shown too many, and every example costs
+    # prompt-processing time. Live "Use →"/★ cards take priority; a
+    # rotating seed sample fills whatever room is left.
     kept = data[KEPT][-n:]
-    seed = _load_seed()
-    if seed:
-        kept = random.sample(seed, min(n, len(seed))) + kept
+    room = n - len(kept)
+    if room > 0:
+        seed = _load_seed()
+        if seed:
+            kept = random.sample(seed, min(room, len(seed))) + kept
     return kept, data[BAD][-n:]

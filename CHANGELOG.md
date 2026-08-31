@@ -4,6 +4,140 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.19.1 — 2026-08-31
+
+- **Write Card: the source text pane auto-sizes to the whole text** —
+  down to the last line, no scrolling — compressing the fields below as
+  needed. It re-fits on every new snip/lesson and on window resizes; a
+  manual drag of the divider takes over until the next text arrives.
+  (If the text is taller than the window physically allows, the pane
+  takes all it can and scrolls for the remainder.)
+- **Correcting a suggestion now teaches the corrected version.** When
+  you Use → a card, fix its content in the window, and add it, the
+  learning loop replaces the model's original with YOUR corrected card
+  in the kept examples — so the loop learns the right distinction, not
+  the confusion. (Adding the card unchanged leaves things as before.)
+
+## v0.19.0 — 2026-08-31
+
+- **✋ Grab tool.** Click and hold to drag the image around the window
+  and park it wherever suits your screen — made for split-screen work.
+  (Middle-drag still pans in every tool.)
+- **Three clean views.** The top toggle is now 🖼 Image Editor /
+  ✨ Suggested Cards / 📝 Write Card. Suggested Cards shows the AI
+  suggestions with the source (OCR/pasted) text underneath; Write Card
+  shows the source text above the Front/Back/Notes fields. The ⧉
+  pop-out now opens the Suggested Cards page.
+- **🔎 highlights inline.** Clicking 🔎 no longer opens a popup — the
+  source text below simply lights up (yellow = question/answer,
+  orange = Notes) and scrolls to the first match; the caption warns in
+  red when the Notes match nothing.
+- **Readable popups everywhere.** The transient notices ("Card added",
+  etc.) no longer use Anki's dark bubble — they're now crisp dark-on-
+  cream text matching the rest of the add-on.
+
+## v0.18.2 — 2026-08-31
+
+- **The 🔎 viewer now traces the Notes line separately** — notes are
+  where hallucinations concentrate. The card's Notes are shown in the
+  viewer header, the sentences they came from are highlighted in
+  ORANGE (question/answer matches stay yellow), and when nothing in
+  the source matches the Notes a red warning says so outright: likely
+  invented — verify or flag with ⚠ Ref.
+
+## v0.18.1 — 2026-08-31
+
+- **Half-screen friendly suggestion rows.** The six row buttons now sit
+  in a compact two-wide, three-tall grid on the right (Use → / Skip,
+  ★ Great / ✗ Bad, ⚠ Ref / 🔎), so the card text keeps most of the
+  width — no more one-word-per-line cards when the window is snapped to
+  half the screen.
+
+## v0.18.0 — 2026-08-31
+
+- **🔎 Where did this card come from?** Every suggested card now has a
+  🔎 button that opens the full source text with the sentences the
+  card most likely came from highlighted — so references and facts can
+  be checked in one click. Matching is computed locally by word
+  overlap: the model is never asked, so generation speed is completely
+  unaffected. When no sentence matches closely, the viewer says so —
+  a strong hint the card deserves suspicion (or a ✗/⚠).
+
+## v0.17.0 — 2026-08-31
+
+- **Invented references get caught.** Every citation-shaped string in a
+  suggested card (case names, years, Acts, sections, Articles) is now
+  checked against the source text: a citation that isn't actually in
+  the source strips the Notes field automatically, and shows a red
+  "⚠ not in the source text" warning when it sits in the question or
+  answer. Even a real case with an invented year is caught.
+- **⚠ button: flag an invented reference.** Tell the add-on exactly
+  which reference the model made up (pre-filled with the detected
+  citation) — it goes on a permanent local blocklist and is stripped
+  from every future card, and the card counts as Bad for the learning
+  loop. Deliberately NOT shown to the model: repeating a fabricated
+  citation in the prompt could teach a small model to produce it.
+- **Suggestion text is selectable.** Click-drag over any suggested
+  card's preview to select and copy its text — for checking references
+  against the source side by side.
+- The prompt now instructs: cite only what appears word-for-word in
+  the source; if the source names no authority, cite nothing.
+
+## v0.16.0 — 2026-08-31
+
+- **Pop-out Text Editor.** The ⧉ button next to the view toggle opens
+  the full Text Editor — suggestions, verdicts, paste-text, undo, card
+  fields — in its own resizable window, and the main window returns to
+  the Image Editor. Snap the popped-out editor to one half of the
+  screen and your source material to the other to check references
+  while reviewing. New snips feed its suggestions too; closing it warns
+  about unsaved card text.
+
+## v0.15.2 — 2026-08-31
+
+- **Fixed: the smaller model writing cards about topics you never
+  pasted.** Small models were treating the style examples in the prompt
+  (drawn from the author's own deck) as content to write about. Three
+  defences: the prompt is restructured so the source text comes last —
+  right where the model anchors — with the examples clearly fenced off
+  as "other, unrelated topics"; positives are capped at 4 total (live
+  verdicts take priority over seed examples, which also trims the
+  prompt for speed); and an on-topic filter drops any card sharing no
+  substance with the source text (failing open so a batch is never
+  emptied by mistake). Also makes the bake-off comparison fairer to the
+  smaller model.
+
+## v0.15.1 — 2026-08-31
+
+- **Simpler model choice in ⚙ Settings.** Three plain options: use the
+  smaller, faster model (llama3.2:3b) · use the bigger model
+  (llama3.1:8b) · alternate between the two at random and keep score.
+  The scoreboard and all its data stay. Alternation is now random
+  rather than strict turn-taking.
+- **Clarified in the UI: both models always learn from all verdicts.**
+  Kept/flagged example cards are shared style memory, not tied to the
+  model that wrote them — so feedback given during a bake-off improves
+  whichever model you end up choosing.
+
+## v0.15.0 — 2026-08-31
+
+- **Model bake-off.** Turn it on in ⚙ Settings and generations
+  alternate between two models (default `llama3.1:8b` vs
+  `llama3.2:3b`), with each suggestion remembering which model wrote
+  it. Your Use/★/Skip/✗ clicks (undo included) score the models, and
+  generation times are recorded too. The scoreboard in ⚙ Settings shows
+  each model's kept-rate and average speed — and states whether the
+  quality gap is statistically meaningful yet or the faster model is
+  simply winning. Pick your model with evidence, not vibes.
+
+## v0.14.2 — 2026-08-31
+
+- **The model now leaves a CPU core free while generating**
+  (`qgen_leave_cores_free`, default 1), so Anki and the rest of the
+  laptop stay responsive during background generation. Raise it if the
+  machine still feels sluggish while the AI works; set `0` for maximum
+  generation speed.
+
 ## v0.14.1 — 2026-08-31
 
 - **Undo for suggestion verdicts.** The new ↶ button brings back the

@@ -18,6 +18,7 @@ SDKs). Two providers are supported:
 from __future__ import annotations
 
 import json
+import os
 import re
 import urllib.error
 import urllib.request
@@ -57,17 +58,20 @@ def build_prompt(
 ) -> str:
     if source == "document":
         intro = "Extract from the student's course materials:"
-        noun = "extract"
     else:
         intro = "Slide text (from OCR, may contain small errors):"
-        noun = "slide"
     kept, bad = feedback or ([], [])
+    # examples go FIRST and the source text LAST: models anchor on the
+    # most recent context, and small models otherwise start writing
+    # cards about the example topics instead of the source
     feedback_block = ""
     if kept:
         feedback_block += (
-            "Match the style, structure and depth of these cards the "
-            "student kept - they show the FORM to copy, not topics to "
-            "repeat:\n" + "\n".join(_example_lines(kept)) + "\n\n"
+            "Style examples - cards this student kept, from OTHER, "
+            "UNRELATED topics. Copy their form, structure and depth "
+            "only; their subject matter is off-limits:\n"
+            + "\n".join(_example_lines(kept))
+            + "\n\n"
         )
     if bad:
         feedback_block += (
@@ -79,15 +83,17 @@ def build_prompt(
     return (
         "You are helping a UK law student prepare for the SQE by turning "
         "study text into Anki flashcards.\n\n"
-        "%s\n"
-        "---\n%s\n---\n\n"
-        "Write up to %d flashcards testing the exam-relevant law on this "
-        "%s. If it contains little that is exam-relevant, "
+        "%s"
+        "Write up to %d flashcards testing the exam-relevant law in the "
+        "source text below. If it contains little that is exam-relevant, "
         "write fewer - or return an empty array - rather than padding "
         "with filler.\n"
         "Rules:\n"
+        "- Every card must test a fact stated in the source text below. "
+        "If an answer cannot be found in the source text, do not write "
+        "the card. Never write cards about the style examples' topics.\n"
         "- One specific point of law per card, answerable without seeing "
-        "the slide.\n"
+        "the source.\n"
         "- Questions are direct and well-structured. They need not be "
         "short - up to three sentences is fine, and a short scenario is "
         "often best where the point is about application, e.g.: \"A pays "
@@ -95,18 +101,21 @@ def build_prompt(
         "consideration?\"\n"
         "- Answers give the legal position precisely: \"Yes, but...\" / "
         "\"No, unless...\" where the law is conditional; numbered steps "
-        "for procedures; include the statute section or case name when "
-        "the slide provides it.\n"
+        "for procedures.\n"
+        "- Cite a case, statute, section number or year ONLY if it "
+        "appears word-for-word in the source text. Never add citations "
+        "from memory; if the source names no authority, cite nothing.\n"
         "- Prefer testable, legally significant material: rules, tests, "
         "time limits, procedures, exceptions. Skip headings and "
         "boilerplate. Fix obvious OCR typos silently.\n\n"
-        "%s"
         "Respond with ONLY a JSON array, no other text:\n"
         '[{"front": "...", "back": "...", "notes": "..."}, ...]\n'
         "\"notes\" is optional brief context (an authority, a caveat) "
         "shown small under the answer; omit it when there is nothing "
-        "worth adding."
-    ) % (intro, text.strip(), max_cards, noun, feedback_block)
+        "worth adding.\n\n"
+        "%s (write cards about THIS and nothing else):\n"
+        "---\n%s\n---"
+    ) % (feedback_block, max_cards, intro.rstrip(":"), text.strip())
 
 
 def parse_cards(raw: str) -> list:
@@ -161,22 +170,140 @@ def generate_cards(text: str, config: dict, source: str = "slide") -> list:
             'Unknown "qgen_provider" %r in the add-on config. '
             'Use "ollama" or "openai_compatible".' % provider
         )
-    return parse_cards(reply)
+    cards = _drop_off_topic(parse_cards(reply), text)
+    _verify_references(cards, text)
+    for card in cards:
+        # kept locally so the 🔎 button can show where a card came from;
+        # never sent anywhere and stripped before feedback storage
+        card["_source"] = text
+    return cards
+
+
+_TOPIC_WORD_RE = re.compile(r"[a-z]{5,}")
+
+# citation-shaped strings: case names (with optional [year]), Acts with
+# years, Article/section references, bare bracketed years
+_CITE_RES = [
+    re.compile(r"\b[A-Z][\w'’-]*(?: [A-Z][\w'’-]*)* v\.? [A-Z][\w'’-]*(?: [A-Z][\w'’-]*)*(?: ?\[\d{4}\])?"),
+    re.compile(r"\b[A-Z][a-z]+(?: [A-Z][a-z]+)* Act \d{4}"),
+    re.compile(r"\bArticle \d+(?:\(\d+\))?"),
+    re.compile(r"\bs\.? ?\d+(?:\(\d+\))?\s+[A-Z]{2,}(?: \d{4})?"),
+    re.compile(r"\[\d{4}\]"),
+]
+
+
+def _citations(text: str) -> list:
+    found = []
+    for rx in _CITE_RES:
+        found.extend(rx.findall(text or ""))
+    return found
+
+
+def _normalise_cite(text: str) -> str:
+    return " ".join(text.lower().replace("v.", "v").split())
+
+
+def _verify_references(cards: list, source_text: str) -> None:
+    """Strip/flag citations the source text doesn't actually contain.
+
+    Local models invent authorities (case names, years, sections),
+    especially in notes. A citation is trusted only if it appears in
+    the source text; anything else - including references the user has
+    flagged as previously invented (the phantom blocklist) - gets the
+    notes field dropped, and a warning attached when it sits in the
+    question or answer. Mechanical, so the model can't talk its way
+    past it.
+    """
+    src = _normalise_cite(source_text)
+    try:
+        phantoms = [
+            _normalise_cite(p) for p in qgen_feedback.phantom_refs()
+        ]
+    except Exception:
+        phantoms = []
+
+    def suspicious(text: str) -> list:
+        normalised = _normalise_cite(text)
+        out = [
+            c
+            for c in _citations(text)
+            if _normalise_cite(c) not in src
+        ]
+        out += [p for p in phantoms if p and p in normalised and p not in src]
+        return out
+
+    for card in cards:
+        notes = card.get("notes") or ""
+        if notes and suspicious(notes):
+            del card["notes"]  # optional context isn't worth a fake cite
+        issues = suspicious(
+            "%s %s" % (card.get("front", ""), card.get("back", ""))
+        )
+        if issues:
+            shown = sorted(set(" ".join(i.split()) for i in issues))[:3]
+            card["_warn"] = "not in the source text: %s" % "; ".join(shown)
+
+
+def _drop_off_topic(cards: list, source_text: str) -> list:
+    """Discard cards that share no substance with the source text.
+
+    Small models sometimes write cards about the style examples instead
+    of the source. A genuine card near-always reuses several of the
+    source's longer words; a bleed-through card reuses none. Lenient by
+    design, and fails open: if the filter would reject everything, the
+    original list is returned rather than nothing.
+    """
+    source_words = set(_TOPIC_WORD_RE.findall(source_text.lower()))
+    if not source_words:
+        return cards
+    kept = []
+    for card in cards:
+        card_text = " ".join(
+            [card.get("front", ""), card.get("back", ""), card.get("notes", "")]
+        ).lower()
+        overlap = set(_TOPIC_WORD_RE.findall(card_text)) & source_words
+        if len(overlap) >= 2:
+            kept.append(card)
+    return kept or cards
+
+
+def _ollama_options(config: dict) -> dict:
+    """Per-request Ollama options; currently just CPU-thread limiting.
+
+    Generation on CPU pegs every core, which can make the rest of the
+    machine (Anki included) feel frozen. Leaving a core or two free
+    slows generation slightly but keeps the laptop responsive - and the
+    background prefetch hides the difference anyway.
+    """
+    try:
+        reserve = int(config.get("qgen_leave_cores_free", 1))
+    except (TypeError, ValueError):
+        reserve = 1
+    if reserve <= 0:
+        return {}
+    cores = os.cpu_count() or 0
+    if cores <= reserve:
+        return {}
+    return {"num_thread": cores - reserve}
 
 
 def _chat_ollama(config: dict, prompt: str) -> str:
     base = str(config.get("qgen_ollama_url") or DEFAULT_OLLAMA_URL).rstrip("/")
     model = config.get("qgen_model") or DEFAULT_MODEL
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+        # keep the model in RAM between requests so only the first
+        # generation of a study session pays the model-load wait
+        "keep_alive": config.get("qgen_keep_alive") or "30m",
+    }
+    options = _ollama_options(config)
+    if options:
+        body["options"] = options
     payload = _post_json(
         base + "/api/chat",
-        {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": False,
-            # keep the model in RAM between requests so only the first
-            # generation of a study session pays the model-load wait
-            "keep_alive": config.get("qgen_keep_alive") or "30m",
-        },
+        body,
         headers={},
         timeout=_timeout(config),
         server_hint=(

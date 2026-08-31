@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import threading
 
-from . import ocr, qgen
+from . import ocr, qgen, qgen_bakeoff
 
 
 class _Prefetch:
@@ -55,7 +55,7 @@ def start_for_image(img, config: dict) -> None:
                 raise qgen.QGenError(
                     "No text could be read from the snip."
                 )
-            state.cards = qgen.generate_cards(state.text, config)
+            state.cards = qgen_bakeoff.generate(state.text, config)
         except Exception as exc:
             state.error = exc
         finally:

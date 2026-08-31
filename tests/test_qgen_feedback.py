@@ -65,9 +65,18 @@ def test_seed_mixed_into_positives(_isolated_store):
     qgen_feedback.record({"front": "live", "back": "A"}, qgen_feedback.KEPT)
     kept, bad = qgen_feedback.examples({"qgen_feedback_examples": 3})
     assert kept[-1] == {"front": "live", "back": "A"}
-    assert len(kept) == 4  # 3 rotating seed examples + 1 live
-    assert all(k["front"].startswith("S") for k in kept[:3])
+    # capped at 3 TOTAL: live takes priority, rotating seed fills the rest
+    assert len(kept) == 3
+    assert all(k["front"].startswith("S") for k in kept[:2])
     assert bad == []
+    # enough live examples -> no seed padding at all
+    for i in range(3):
+        qgen_feedback.record(
+            {"front": "live%d" % i, "back": "A"}, qgen_feedback.KEPT
+        )
+    kept, _ = qgen_feedback.examples({"qgen_feedback_examples": 3})
+    assert len(kept) == 3
+    assert not any(k["front"].startswith("S") for k in kept)
 
 
 def test_examples_flow_into_prompt():
@@ -75,7 +84,7 @@ def test_examples_flow_into_prompt():
     qgen_feedback.record({"front": "BadQ", "back": "BadA"}, qgen_feedback.BAD)
     prompt = qgen.build_prompt("slide", 4, feedback=qgen_feedback.examples({}))
     assert "GoodQ" in prompt and "BadQ" in prompt
-    assert "FORM to copy" in prompt
+    assert "Copy their form" in prompt
     assert "failure modes to avoid" in prompt
     # softly steered, never hard-banned
     assert "NEVER" not in prompt
@@ -110,3 +119,15 @@ def test_unrecord_unknown_card_is_noop():
     qgen_feedback.unrecord({"front": "other", "back": "card"})
     kept, _ = qgen_feedback.examples({})
     assert kept == [{"front": "Q", "back": "A"}]
+
+
+def test_phantom_refs_roundtrip_dedupe_and_length():
+    qgen_feedback.record_phantom("  Smith v  Jones [2001] ")
+    qgen_feedback.record_phantom("smith v jones [2001]")  # dupe, case-insensitive
+    qgen_feedback.record_phantom("ab")  # too short, ignored
+    assert qgen_feedback.phantom_refs() == ["Smith v Jones [2001]"]
+    # card verdicts still work alongside the phantom list
+    qgen_feedback.record({"front": "Q", "back": "A"}, qgen_feedback.KEPT)
+    qgen_feedback.unrecord({"front": "Q", "back": "A"})
+    assert qgen_feedback.examples({}) == ([], [])
+    assert qgen_feedback.phantom_refs() == ["Smith v Jones [2001]"]
