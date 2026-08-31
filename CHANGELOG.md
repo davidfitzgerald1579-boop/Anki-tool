@@ -4,6 +4,14 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.18.1 — 2026-08-31
+
+- **Half-screen friendly suggestion rows.** The six row buttons now sit
+  in a compact two-wide, three-tall grid on the right (Use → / Skip,
+  ★ Great / ✗ Bad, ⚠ Ref / 🔎), so the card text keeps most of the
+  width — no more one-word-per-line cards when the window is snapped to
+  half the screen.
+
 ## v0.18.0 — 2026-08-31
 
 - **🔎 Where did this card come from?** Every suggested card now has a

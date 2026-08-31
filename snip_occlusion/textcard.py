@@ -702,18 +702,6 @@ class TextCardPanel(QWidget):
         )
         row_lay = QHBoxLayout(row)
         row_lay.setContentsMargins(8, 6, 8, 6)
-        if card.get("_source"):
-            src_btn = QToolButton(row)
-            src_btn.setText("🔎")
-            src_btn.setToolTip(
-                "Show where this card came from — the full source text "
-                "with the matching sentences highlighted"
-            )
-            qconnect(
-                src_btn.clicked,
-                lambda _=False: self._show_card_source(card),
-            )
-            row_lay.addWidget(src_btn)
         body = "<b>Q:</b> %s<br><b>A:</b> %s" % (
             front.replace("<", "&lt;"),
             back.replace("<", "&lt;"),
@@ -834,9 +822,14 @@ class TextCardPanel(QWidget):
                 parent=self,
             )
 
-        # left to right: use / don't use (no signal) / great, not using /
-        # bad, not using
-        for label, tip, cb, style in [
+        def show_source() -> None:
+            self._show_card_source(card)
+
+        # buttons sit in a compact 2-wide, 3-tall grid so the card text
+        # keeps most of the width even at half-screen
+        grid = QGridLayout()
+        grid.setSpacing(4)
+        buttons = [
             (
                 "Use →",
                 "Open this card in its own window to tweak and add — and "
@@ -866,20 +859,33 @@ class TextCardPanel(QWidget):
                 "color:#b3261e;",
             ),
             (
-                "⚠",
+                "⚠ Ref",
                 "It invented a reference (case, statute, year…) — tell "
                 "me which, and it will be stripped from every future "
                 "card. Also counts as Bad for the learning loop.",
                 fake_ref,
                 "color:#b3261e;",
             ),
-        ]:
+        ]
+        if card.get("_source"):
+            buttons.append(
+                (
+                    "🔎",
+                    "Show where this card came from — the full source "
+                    "text with the matching sentences highlighted",
+                    show_source,
+                    "",
+                )
+            )
+        for i, (label, tip, cb, style) in enumerate(buttons):
             btn = QPushButton(label, row)
             btn.setToolTip(tip)
-            if style:
-                btn.setStyleSheet("QPushButton{%s}" % style)
+            css = "QPushButton{padding:4px 8px;%s}" % style
+            btn.setStyleSheet(css)
             qconnect(btn.clicked, lambda _=False, c=cb: c())
-            row_lay.addWidget(btn)
+            grid.addWidget(btn, i // 2, i % 2)
+        row_lay.addLayout(grid)
+        row_lay.setAlignment(grid, Qt.AlignmentFlag.AlignTop)
         last = self.suggest_lay.count() - 1  # keep the stretch at the end
         if index is None or not (0 <= index < last):
             index = last
