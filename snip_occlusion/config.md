@@ -80,6 +80,11 @@
   main window to the Text Editor view. `"keep"` (default) leaves it
   visible; `"hide"` tucks it away until you switch back to the Image
   Editor. Also settable via the ⚙ button in the main window.
+- `qgen_leave_cores_free`: CPU cores the model must leave alone while
+  generating (Ollama only). Default `1`, so Anki and the rest of the
+  laptop stay responsive during background generation; raise it if the
+  machine still feels sluggish, or set `0` to let the model use every
+  core (slightly faster generation).
 - `qgen_keep_alive`: how long Ollama keeps the model loaded in RAM
   after a request (e.g. `"30m"`, `"2h"`; `-1` for as long as Ollama
   runs). Default: `"30m"`. Longer means fewer model-load waits during a

@@ -18,6 +18,7 @@ SDKs). Two providers are supported:
 from __future__ import annotations
 
 import json
+import os
 import re
 import urllib.error
 import urllib.request
@@ -164,19 +165,43 @@ def generate_cards(text: str, config: dict, source: str = "slide") -> list:
     return parse_cards(reply)
 
 
+def _ollama_options(config: dict) -> dict:
+    """Per-request Ollama options; currently just CPU-thread limiting.
+
+    Generation on CPU pegs every core, which can make the rest of the
+    machine (Anki included) feel frozen. Leaving a core or two free
+    slows generation slightly but keeps the laptop responsive - and the
+    background prefetch hides the difference anyway.
+    """
+    try:
+        reserve = int(config.get("qgen_leave_cores_free", 1))
+    except (TypeError, ValueError):
+        reserve = 1
+    if reserve <= 0:
+        return {}
+    cores = os.cpu_count() or 0
+    if cores <= reserve:
+        return {}
+    return {"num_thread": cores - reserve}
+
+
 def _chat_ollama(config: dict, prompt: str) -> str:
     base = str(config.get("qgen_ollama_url") or DEFAULT_OLLAMA_URL).rstrip("/")
     model = config.get("qgen_model") or DEFAULT_MODEL
+    body = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+        # keep the model in RAM between requests so only the first
+        # generation of a study session pays the model-load wait
+        "keep_alive": config.get("qgen_keep_alive") or "30m",
+    }
+    options = _ollama_options(config)
+    if options:
+        body["options"] = options
     payload = _post_json(
         base + "/api/chat",
-        {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": False,
-            # keep the model in RAM between requests so only the first
-            # generation of a study session pays the model-load wait
-            "keep_alive": config.get("qgen_keep_alive") or "30m",
-        },
+        body,
         headers={},
         timeout=_timeout(config),
         server_hint=(

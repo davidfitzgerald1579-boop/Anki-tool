@@ -4,6 +4,14 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.14.2 — 2026-08-31
+
+- **The model now leaves a CPU core free while generating**
+  (`qgen_leave_cores_free`, default 1), so Anki and the rest of the
+  laptop stay responsive during background generation. Raise it if the
+  machine still feels sluggish while the AI works; set `0` for maximum
+  generation speed.
+
 ## v0.14.1 — 2026-08-31
 
 - **Undo for suggestion verdicts.** The new ↶ button brings back the

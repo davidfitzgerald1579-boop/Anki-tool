@@ -166,3 +166,29 @@ def test_generate_cards_connection_and_http_errors(monkeypatch):
 def test_empty_text_raises():
     with pytest.raises(qgen.QGenError):
         qgen.generate_cards("   ", {})
+
+
+def test_ollama_leaves_cores_free(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout=None):
+        captured["body"] = json.loads(request.data.decode())
+        return _FakeResponse(
+            {"message": {"role": "assistant", "content": _CARD_JSON}}
+        )
+
+    monkeypatch.setattr(qgen.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(qgen.os, "cpu_count", lambda: 8)
+    # default: one core left free
+    qgen.generate_cards("text", {})
+    assert captured["body"]["options"] == {"num_thread": 7}
+    # explicit reserve
+    qgen.generate_cards("text", {"qgen_leave_cores_free": 3})
+    assert captured["body"]["options"] == {"num_thread": 5}
+    # 0 = use every core: no options sent at all
+    qgen.generate_cards("text", {"qgen_leave_cores_free": 0})
+    assert "options" not in captured["body"]
+    # never reserve the machine into nothing
+    monkeypatch.setattr(qgen.os, "cpu_count", lambda: 1)
+    qgen.generate_cards("text", {})
+    assert "options" not in captured["body"]
