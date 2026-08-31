@@ -397,8 +397,8 @@ class SnipOcclusionDialog(QDialog):
 
         text_btn = self._side_button(
             "📝 Text card",
-            "Write a simple front/back card in your own words "
-            "(Ctrl+Shift+T from the main window)",
+            "Switch to the Text Editor: write a card in your own words, "
+            "with AI-suggested cards ready at the top",
         )
         qconnect(text_btn.clicked, self._open_text_card)
         side.addWidget(text_btn)
@@ -432,12 +432,55 @@ class SnipOcclusionDialog(QDialog):
         qconnect(self.collapse_btn.clicked, self._toggle_sidebar)
         right_h.addWidget(self.collapse_btn)
 
-        layout = QVBoxLayout()
-        right_h.addLayout(layout, 1)
+        right_col = QVBoxLayout()
+        right_h.addLayout(right_col, 1)
         self.splitter.addWidget(right_container)
         self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setSizes([190, 900])
+
+        # --- Image Editor / Text Editor view toggle (+ settings)
+        toggle_row = QHBoxLayout()
+        self.view_group = QButtonGroup(self)
+        self.view_group.setExclusive(True)
+        self.image_view_btn = QPushButton("🖼 Image Editor", self)
+        self.text_view_btn = QPushButton("📝 Text Editor", self)
+        for btn in (self.image_view_btn, self.text_view_btn):
+            btn.setCheckable(True)
+            self.view_group.addButton(btn)
+            toggle_row.addWidget(btn)
+        self.image_view_btn.setChecked(True)
+        self.image_view_btn.setToolTip("Occlude a snipped slide (default)")
+        self.text_view_btn.setToolTip(
+            "Write a card in your own words, with AI-suggested cards from "
+            "the current snip ready at the top"
+        )
+        qconnect(
+            self.image_view_btn.clicked, lambda _=False: self._set_view(False)
+        )
+        qconnect(
+            self.text_view_btn.clicked, lambda _=False: self._set_view(True)
+        )
+        toggle_row.addStretch(1)
+        settings_btn = QToolButton(self)
+        settings_btn.setText("⚙")
+        settings_btn.setToolTip("Snip Occlusion settings")
+        qconnect(settings_btn.clicked, self._open_settings)
+        toggle_row.addWidget(settings_btn)
+        right_col.addLayout(toggle_row)
+
+        # the two views: the whole image-editing page, or the text editor
+        self.view_stack = QStackedWidget(self)
+        right_col.addWidget(self.view_stack, 1)
+        self._image_page = QWidget(self)
+        layout = QVBoxLayout(self._image_page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.view_stack.addWidget(self._image_page)
+        from .textcard import TextCardPanel  # deferred: circular import
+
+        self.text_panel = TextCardPanel(self, with_suggestions=True)
+        self.view_stack.addWidget(self.text_panel)
+        self._sidebar_hidden_for_text = False
 
         # --- canvas / placeholder stack
         self.stack = QStackedWidget(self)
@@ -526,7 +569,7 @@ class SnipOcclusionDialog(QDialog):
         layout.addLayout(bottom)
 
         add_shortcut = QShortcut(QKeySequence("Ctrl+Return"), self)
-        qconnect(add_shortcut.activated, self.add_cards)
+        qconnect(add_shortcut.activated, self._ctrl_return)
 
         self._update_swatch()
         self._refresh_counts()
@@ -690,9 +733,11 @@ class SnipOcclusionDialog(QDialog):
         self._refresh_counts()
         self.clip_btn.setStyleSheet("")
         # start OCR + AI card suggestions now, so they're ready the moment
-        # the user asks for them in the text card dialog
+        # the user switches to the Text Editor
         try:
             qgen_prefetch.start_for_image(img.copy(), self.config)
+            # begin displaying (or queueing up) the new snip's suggestions
+            self.text_panel.refresh_suggestions()
         except Exception:
             pass  # prefetching is best-effort, never in the user's way
         # new queue cards default to this slide's background colour
@@ -784,6 +829,83 @@ class SnipOcclusionDialog(QDialog):
         hidden = self._side_widget.isVisible()
         self._side_widget.setVisible(not hidden)
         self.collapse_btn.setText("⟩" if hidden else "⟨")
+
+    # ------------------------------------------------- view toggle, settings
+
+    def _ctrl_return(self) -> None:
+        if self.view_stack.currentWidget() is self.text_panel:
+            self.text_panel.add_card()
+        else:
+            self.add_cards()
+
+    def _set_view(self, text_mode: bool) -> None:
+        self.text_view_btn.setChecked(text_mode)
+        self.image_view_btn.setChecked(not text_mode)
+        if text_mode:
+            self.view_stack.setCurrentWidget(self.text_panel)
+            if (
+                self.config.get("text_editor_sidebar", "keep") == "hide"
+                and self._side_widget.isVisible()
+            ):
+                self._sidebar_hidden_for_text = True
+                self._toggle_sidebar()
+            self.text_panel.refresh_suggestions()
+            self.text_panel.focus_front()
+        else:
+            self.view_stack.setCurrentWidget(self._image_page)
+            if (
+                self._sidebar_hidden_for_text
+                and not self._side_widget.isVisible()
+            ):
+                self._toggle_sidebar()
+            self._sidebar_hidden_for_text = False
+            self.canvas.setFocus()
+
+    def _open_settings(self) -> None:
+        dlg = QDialog(self)
+        dlg.setWindowTitle(ADDON_NAME + " — Settings")
+        dlg.setStyleSheet(_STYLE)
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(
+            QLabel("<b>When switching to the Text Editor…</b>", dlg)
+        )
+        keep_radio = QRadioButton("Keep the sidebar visible", dlg)
+        hide_radio = QRadioButton(
+            "Hide the sidebar (it comes back in the Image Editor)", dlg
+        )
+        if self.config.get("text_editor_sidebar", "keep") == "hide":
+            hide_radio.setChecked(True)
+        else:
+            keep_radio.setChecked(True)
+        lay.addWidget(keep_radio)
+        lay.addWidget(hide_radio)
+        note = QLabel(
+            "<span style='color:#8a8171'>All other settings (AI model, "
+            "OCR, colours…) live in Tools → Add-ons → Snip Occlusion → "
+            "Config.</span>",
+            dlg,
+        )
+        note.setWordWrap(True)
+        lay.addWidget(note)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save
+            | QDialogButtonBox.StandardButton.Cancel,
+            dlg,
+        )
+        qconnect(buttons.accepted, dlg.accept)
+        qconnect(buttons.rejected, dlg.reject)
+        lay.addWidget(buttons)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        value = "hide" if hide_radio.isChecked() else "keep"
+        self.config["text_editor_sidebar"] = value
+        try:
+            module = __name__.split(".")[0]
+            user_cfg = mw.addonManager.getConfig(module) or {}
+            user_cfg["text_editor_sidebar"] = value
+            mw.addonManager.writeConfig(module, user_cfg)
+        except Exception:
+            pass  # setting still applies for this window
 
     # ------------------------------------------------------- new card queue
 
@@ -916,9 +1038,7 @@ class SnipOcclusionDialog(QDialog):
         self._update_swatch()
 
     def _open_text_card(self) -> None:
-        from .textcard import open_text_card_dialog
-
-        open_text_card_dialog()
+        self._set_view(True)
 
     def _show_help(self) -> None:
         QMessageBox.information(self, ADDON_NAME + " – shortcuts", _HELP_TEXT)

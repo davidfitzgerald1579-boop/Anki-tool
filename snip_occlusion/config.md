@@ -76,6 +76,10 @@
   generates on demand. Note the suggestions come from the snip as
   loaded; cover-ups drawn afterwards don't re-run generation (delete
   unwanted suggestions with their ✕ button instead).
+- `text_editor_sidebar`: what the left toolbar does when you switch the
+  main window to the Text Editor view. `"keep"` (default) leaves it
+  visible; `"hide"` tucks it away until you switch back to the Image
+  Editor. Also settable via the ⚙ button in the main window.
 - `qgen_keep_alive`: how long Ollama keeps the model loaded in RAM
   after a request (e.g. `"30m"`, `"2h"`; `-1` for as long as Ollama
   runs). Default: `"30m"`. Longer means fewer model-load waits during a

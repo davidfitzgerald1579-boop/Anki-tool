@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.13.0 — 2026-08-31
+
+- **Text Editor built into the main window.** Two buttons at the top —
+  🖼 Image Editor (default) / 📝 Text Editor — switch the editing area
+  in place, no separate window. The sidebar stays put (or hides, via
+  the new ⚙ Settings button — your choice).
+- **Suggestions appear on their own.** The Text Editor shows the
+  AI-suggested cards for the current snip at the top automatically —
+  a "generating…" note while the model is still working, cards as soon
+  as it's done. No button to press; ↻ regenerates on demand.
+- **Clearer verdict buttons**, left to right: **Use →** (make this
+  card), **Skip** (don't want it, teaches nothing), **★ Great** (not
+  using it, but write more like this), **✗ Bad** (write less like
+  this). No more squinting at thumbs.
+- "Use →" still opens the card in its own small window to tweak and
+  add; that window is now just the card fields. Ctrl+Shift+T outside
+  the main window opens the same standalone window.
+
 ## v0.12.1 — 2026-08-31
 
 - **👍 button on suggestions.** For "not using it, but great card":
