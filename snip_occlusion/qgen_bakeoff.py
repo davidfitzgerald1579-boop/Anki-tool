@@ -25,7 +25,7 @@ from . import qgen
 
 _lock = threading.Lock()
 
-VERDICTS = ("use", "great", "skip", "bad")
+VERDICTS = ("use", "great", "skip", "bad", "fixed")
 _MIN_VERDICTS = 10  # per model, before a comparison is attempted
 _SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*b\b", re.I)
 
@@ -60,18 +60,12 @@ def _save(data: dict) -> None:
 
 
 def _stats(data: dict, model: str) -> dict:
-    return data["models"].setdefault(
-        model,
-        {
-            "use": 0,
-            "great": 0,
-            "skip": 0,
-            "bad": 0,
-            "seconds": 0.0,
-            "gens": 0,
-            "cards": 0,
-        },
+    s = data["models"].setdefault(
+        model, {"seconds": 0.0, "gens": 0, "cards": 0}
     )
+    for verdict in VERDICTS:  # fills keys missing from older files too
+        s.setdefault(verdict, 0)
+    return s
 
 
 def enabled(config: dict) -> bool:
@@ -159,11 +153,13 @@ def summary() -> str:
     for model in sorted(data["models"]):
         s = _stats(data, model)
         judged = sum(s[v] for v in VERDICTS)
-        kept = s["use"] + s["great"]
+        kept = s["use"] + s["great"]  # "fixed" counts as judged, not kept
         parts = [model + ":"]
         if judged:
             rate = kept / judged
             parts.append("kept %d%% (%d of %d)" % (round(rate * 100), kept, judged))
+            if s["fixed"]:
+                parts.append("· %d needed correcting" % s["fixed"])
             rates.append((rate, judged))
         else:
             parts.append("no verdicts yet")

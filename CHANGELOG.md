@@ -4,6 +4,19 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.20.0 — 2026-08-31
+
+- **✎ Fix: correct a suggested card purely to teach the AI.** When the
+  style is right but the content is wrong (confused concepts, a missed
+  distinction), click ✎ Fix on the suggestion, edit the Front/Back/
+  Notes, and save "Teach corrected version". YOUR corrected card
+  becomes a kept example for future generations — no flashcard is
+  added to your deck. The ↶ undo button reverses it like any other
+  verdict.
+- In the bake-off scoreboard, a correction counts as a new "fixed"
+  verdict against the model that generated the card: it lowers that
+  model's kept-rate and shows as "N needed correcting" next to it.
+
 ## v0.19.1 — 2026-08-31
 
 - **Write Card: the source text pane auto-sizes to the whole text** —

@@ -128,6 +128,48 @@ def test_summary_detects_real_difference(fake_generate, alternate):
     assert "kept 100%" in text and "kept 0%" in text
 
 
+def test_fixed_verdict_judged_not_kept(fake_generate, alternate):
+    # ✎ Fix: the correction counts against the model's kept-rate and
+    # shows up in the scoreboard, without ever counting as "kept"
+    card = qgen_bakeoff.generate("text", CFG)[0]
+    qgen_bakeoff.tally(card, "use")
+    qgen_bakeoff.tally(card, "fixed")
+    s = qgen_bakeoff._load()["models"][card["_model"]]
+    assert s["fixed"] == 1
+    text = qgen_bakeoff.summary()
+    assert "kept 50% (1 of 2)" in text
+    assert "1 needed correcting" in text
+    # undo (the ↶ button) takes the correction back out
+    qgen_bakeoff.tally(card, "fixed", undo=True)
+    assert "needed correcting" not in qgen_bakeoff.summary()
+
+
+def test_stats_backfills_older_files(tmp_path):
+    # a stats file written before the "fixed" verdict existed must not
+    # crash the scoreboard - missing keys are treated as zero
+    import json
+
+    path = qgen_bakeoff._path()
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "next": 0,
+                "models": {
+                    "old:1b": {
+                        "seconds": 1.0,
+                        "gens": 1,
+                        "cards": 2,
+                        "use": 2,
+                    }
+                },
+            },
+            fh,
+        )
+    text = qgen_bakeoff.summary()
+    assert "kept 100% (2 of 2)" in text
+    assert "needed correcting" not in text
+
+
 def test_timings_recorded(fake_generate, alternate):
     qgen_bakeoff.generate("text", CFG)
     s = qgen_bakeoff._load()["models"]["llama3.1:8b"]

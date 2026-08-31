@@ -779,30 +779,120 @@ class SuggestionsPage(QWidget):
             if item.widget() is not None:
                 item.widget().deleteLater()
 
-    def _push_undo(self, card: dict, verdict, index: int) -> None:
-        self._undo_stack.append((card, verdict, index))
+    def _push_undo(
+        self,
+        row_card: dict,
+        index: int,
+        unrecord_card=None,
+        tally: str | None = None,
+    ) -> None:
+        """Remember how to reverse a verdict: which card comes back to
+        the list, which feedback entry to forget, which tally to undo."""
+        self._undo_stack.append((row_card, index, unrecord_card, tally))
         self.undo_btn.setEnabled(True)
 
     def _undo_verdict(self) -> None:
         if not self._undo_stack:
             return
-        card, verdict, index = self._undo_stack.pop()
+        row_card, index, unrecord_card, tally = self._undo_stack.pop()
         self.undo_btn.setEnabled(bool(self._undo_stack))
         try:
-            if verdict is not None:
-                qgen_feedback.unrecord(card)
-            # reverse the bake-off tally for whichever button it was
-            tally_verdict = {
-                None: "skip",
-                qgen_feedback.KEPT: "great",
-                qgen_feedback.BAD: "bad",
-            }.get(verdict)
-            if tally_verdict:
-                qgen_bakeoff.tally(card, tally_verdict, undo=True)
+            if unrecord_card is not None:
+                qgen_feedback.unrecord(unrecord_card)
+            if tally:
+                qgen_bakeoff.tally(row_card, tally, undo=True)
         except Exception:
             pass
-        self._add_card_row(card, index=index)
+        self._add_card_row(row_card, index=index)
         QTimer.singleShot(0, self._fit_suggestions_if_auto)
+
+    def _teach_correction(
+        self, card: dict, corrected: dict, index: int
+    ) -> None:
+        """Record the user's corrected card as the lesson (no card added).
+
+        The model's original is recorded nowhere - its style was fine,
+        so no negative example - but the correction counts as "fixed"
+        against the generating model in the bake-off.
+        """
+        try:
+            qgen_feedback.record(corrected, qgen_feedback.KEPT)
+            qgen_bakeoff.tally(card, "fixed")
+        except Exception:
+            pass
+        self._push_undo(card, index, unrecord_card=corrected, tally="fixed")
+        tooltip(
+            "Corrected version learned — future cards imitate yours.",
+            parent=self,
+        )
+
+    def _open_fix_dialog(self, card: dict, index: int) -> bool:
+        """✎ Fix: edit the card's content purely to teach the AI.
+
+        Returns True when a correction was saved (the row then clears).
+        """
+        dlg = QDialog(self)
+        dlg.setWindowTitle(ADDON_NAME + " — Correct this card")
+        dlg.setMinimumSize(520, 420)
+        dlg.setStyleSheet(_STYLE)
+        lay = QVBoxLayout(dlg)
+        info = QLabel(
+            "Fix the content below (the style stays). Your corrected "
+            "version is saved as an example for future generations — "
+            "no flashcard is added.",
+            dlg,
+        )
+        info.setWordWrap(True)
+        lay.addWidget(info)
+        edits = {}
+        for key, label in (
+            ("front", "Front"),
+            ("back", "Back"),
+            ("notes", "Notes (optional)"),
+        ):
+            lay.addWidget(QLabel("<b>%s</b>" % label, dlg))
+            edit = QPlainTextEdit(dlg)
+            edit.setPlainText(card.get(key, ""))
+            edit.setMinimumHeight(56)
+            lay.addWidget(edit, 1)
+            edits[key] = edit
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save
+            | QDialogButtonBox.StandardButton.Cancel,
+            dlg,
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText(
+            "Teach corrected version"
+        )
+        qconnect(buttons.accepted, dlg.accept)
+        qconnect(buttons.rejected, dlg.reject)
+        lay.addWidget(buttons)
+        edits["front"].setFocus()
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return False
+        corrected = {
+            "front": edits["front"].toPlainText().strip(),
+            "back": edits["back"].toPlainText().strip(),
+        }
+        notes_value = edits["notes"].toPlainText().strip()
+        if notes_value:
+            corrected["notes"] = notes_value
+        if not corrected["front"] or not corrected["back"]:
+            tooltip("Front and Back can't be empty.", parent=self)
+            return False
+        if (
+            corrected["front"] == card.get("front", "")
+            and corrected["back"] == card.get("back", "")
+            and notes_value == card.get("notes", "")
+        ):
+            tooltip(
+                "No changes made — use ★ Great if the card is fine "
+                "as-is.",
+                parent=self,
+            )
+            return False
+        self._teach_correction(card, corrected, index)
+        return True
 
     def _add_suggestion_row(
         self,
@@ -909,7 +999,7 @@ class SuggestionsPage(QWidget):
                 qgen_bakeoff.tally(card, "skip")
             except Exception:
                 pass
-            self._push_undo(card, None, row_index())
+            self._push_undo(card, row_index(), tally="skip")
             remove_row()
 
         def great() -> None:
@@ -918,7 +1008,9 @@ class SuggestionsPage(QWidget):
                 qgen_bakeoff.tally(card, "great")
             except Exception:
                 pass
-            self._push_undo(card, qgen_feedback.KEPT, row_index())
+            self._push_undo(
+                card, row_index(), unrecord_card=card, tally="great"
+            )
             remove_row()
 
         def bad() -> None:
@@ -927,8 +1019,14 @@ class SuggestionsPage(QWidget):
                 qgen_bakeoff.tally(card, "bad")
             except Exception:
                 pass
-            self._push_undo(card, qgen_feedback.BAD, row_index())
+            self._push_undo(
+                card, row_index(), unrecord_card=card, tally="bad"
+            )
             remove_row()
+
+        def fix() -> None:
+            if self._open_fix_dialog(card, row_index()):
+                remove_row()
 
         def fake_ref() -> None:
             detected = qgen._citations(
@@ -949,7 +1047,9 @@ class SuggestionsPage(QWidget):
                 qgen_bakeoff.tally(card, "bad")
             except Exception:
                 pass
-            self._push_undo(card, qgen_feedback.BAD, row_index())
+            self._push_undo(
+                card, row_index(), unrecord_card=card, tally="bad"
+            )
             remove_row()
             tooltip(
                 "Noted — that reference is now blocklisted and will be "
@@ -1000,6 +1100,14 @@ class SuggestionsPage(QWidget):
                 "card. Also counts as Bad for the learning loop.",
                 fake_ref,
                 "color:#b3261e;",
+            ),
+            (
+                "✎ Fix",
+                "The style is right but the content is wrong — correct "
+                "it, and the AI learns YOUR version instead. No "
+                "flashcard is added.",
+                fix,
+                "color:#8a5a00;",
             ),
         ]
         if card.get("_source"):
