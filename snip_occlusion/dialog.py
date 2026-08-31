@@ -100,6 +100,13 @@ _STYLE = """
 QDialog {
     background: #faf6ef;
 }
+QToolTip {
+    background: #fffdf6;
+    color: #2f2b1e;
+    border: 1px solid #c9bda8;
+    padding: 6px 8px;
+    font-size: 10pt;
+}
 QToolButton, QPushButton {
     background: #ffffff;
     border: 1px solid #e3dcd0;

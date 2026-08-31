@@ -4,6 +4,12 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.13.2 — 2026-08-31
+
+- **Readable tooltips.** Hover text was dark-on-black and near
+  invisible; tooltips now use a cream background with dark text,
+  matching the rest of the UI.
+
 ## v0.13.1 — 2026-08-31
 
 - **Suggestions open at full height.** The suggestions pane now sizes
