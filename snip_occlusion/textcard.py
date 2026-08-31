@@ -369,6 +369,13 @@ class TextCardDialog(QDialog):
                 pass
             remove_row()
 
+        def discard_good() -> None:
+            try:
+                qgen_feedback.record(card, qgen_feedback.KEPT)
+            except Exception:
+                pass
+            remove_row()
+
         use_btn = QPushButton("Use →", row)
         use_btn.setToolTip(
             "Open this card in a new window to tweak and add — and teach "
@@ -376,6 +383,14 @@ class TextCardDialog(QDialog):
         )
         qconnect(use_btn.clicked, use)
         row_lay.addWidget(use_btn)
+        good_btn = QPushButton("👍", row)
+        good_btn.setFixedWidth(28)
+        good_btn.setToolTip(
+            "Not using this card, but it's well written — teach the AI "
+            "to write more like this"
+        )
+        qconnect(good_btn.clicked, discard_good)
+        row_lay.addWidget(good_btn)
         del_btn = QPushButton("✕", row)
         del_btn.setFixedWidth(28)
         del_btn.setToolTip(
