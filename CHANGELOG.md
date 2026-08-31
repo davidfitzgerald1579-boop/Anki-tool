@@ -4,6 +4,17 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.14.0 — 2026-08-31
+
+- **Cards from pasted text.** The suggestions panel's new "📄 Paste
+  text…" button takes a whole lesson/element text. It is split into
+  sections at its headings and the cards stream into the panel as each
+  section finishes — first cards within about a minute, review with the
+  usual Use/Skip/Great/Bad while the rest generate. The ↻ button
+  becomes ■ during a run to stop it. Section-by-section generation
+  keeps prompts small, so the local model stays fast and thorough
+  instead of being overloaded by one giant prompt.
+
 ## v0.13.2 — 2026-08-31
 
 - **Readable tooltips.** Hover text was dark-on-black and near

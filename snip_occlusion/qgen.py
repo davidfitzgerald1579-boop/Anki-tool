@@ -34,6 +34,14 @@ class QGenError(Exception):
     """A user-presentable failure of question generation."""
 
 
+class EmptyReplyError(QGenError):
+    """The model replied but offered no usable cards.
+
+    Distinct from transport failures so batch (document) generation can
+    treat a card-less section as fine and carry on.
+    """
+
+
 def _example_lines(cards: list) -> list:
     lines = []
     for c in cards:
@@ -44,7 +52,15 @@ def _example_lines(cards: list) -> list:
     return lines
 
 
-def build_prompt(text: str, max_cards: int, feedback=None) -> str:
+def build_prompt(
+    text: str, max_cards: int, feedback=None, source: str = "slide"
+) -> str:
+    if source == "document":
+        intro = "Extract from the student's course materials:"
+        noun = "extract"
+    else:
+        intro = "Slide text (from OCR, may contain small errors):"
+        noun = "slide"
     kept, bad = feedback or ([], [])
     feedback_block = ""
     if kept:
@@ -62,11 +78,11 @@ def build_prompt(text: str, max_cards: int, feedback=None) -> str:
         )
     return (
         "You are helping a UK law student prepare for the SQE by turning "
-        "lecture-slide text into Anki flashcards.\n\n"
-        "Slide text (from OCR, may contain small errors):\n"
+        "study text into Anki flashcards.\n\n"
+        "%s\n"
         "---\n%s\n---\n\n"
         "Write up to %d flashcards testing the exam-relevant law on this "
-        "slide. If the slide contains little that is exam-relevant, "
+        "%s. If it contains little that is exam-relevant, "
         "write fewer - or return an empty array - rather than padding "
         "with filler.\n"
         "Rules:\n"
@@ -90,7 +106,7 @@ def build_prompt(text: str, max_cards: int, feedback=None) -> str:
         "\"notes\" is optional brief context (an authority, a caveat) "
         "shown small under the answer; omit it when there is nothing "
         "worth adding."
-    ) % (text.strip(), max_cards, feedback_block)
+    ) % (intro, text.strip(), max_cards, noun, feedback_block)
 
 
 def parse_cards(raw: str) -> list:
@@ -100,7 +116,7 @@ def parse_cards(raw: str) -> list:
     start = raw.find("[")
     end = raw.rfind("]")
     if start == -1 or end == -1 or end <= start:
-        raise QGenError("The AI reply contained no card list.")
+        raise EmptyReplyError("The AI reply contained no card list.")
     try:
         data = json.loads(raw[start : end + 1])
     except ValueError as exc:
@@ -118,17 +134,17 @@ def parse_cards(raw: str) -> list:
                 card["notes"] = notes
             cards.append(card)
     if not cards:
-        raise QGenError("The AI reply contained no usable cards.")
+        raise EmptyReplyError("The AI reply contained no usable cards.")
     return cards
 
 
-def generate_cards(text: str, config: dict) -> list:
-    """Blocking call: OCR text -> [{front, back}, ...]. Raises QGenError."""
+def generate_cards(text: str, config: dict, source: str = "slide") -> list:
+    """Blocking call: source text -> [{front, back}, ...]. Raises QGenError."""
     if not text.strip():
         raise QGenError("There is no snip text to work from.")
     max_cards = int(config.get("qgen_max_cards", 4) or 4)
     prompt = build_prompt(
-        text, max_cards, feedback=qgen_feedback.examples(config)
+        text, max_cards, feedback=qgen_feedback.examples(config), source=source
     )
     provider = (
         str(config.get("qgen_provider") or "ollama")
