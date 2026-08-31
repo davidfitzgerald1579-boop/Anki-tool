@@ -14,7 +14,7 @@ from aqt.utils import showWarning, tooltip
 
 from .qtshim import *  # noqa: F401,F403
 from . import notes as notes_mod
-from . import qgen, qgen_prefetch
+from . import qgen, qgen_feedback, qgen_prefetch
 from .consts import ADDON_NAME
 from .dialog import _STYLE, get_config, get_previous_snip_text
 
@@ -30,7 +30,13 @@ def _body_html(edit: QTextEdit) -> str:
 
 
 class TextCardDialog(QDialog):
-    def __init__(self, parent=None, front_text: str = "", back_text: str = ""):
+    def __init__(
+        self,
+        parent=None,
+        front_text: str = "",
+        back_text: str = "",
+        notes_text: str = "",
+    ):
         super().__init__(parent or mw)
         self.setWindowTitle(ADDON_NAME + " — Text Card")
         self.setMinimumSize(560, 640)
@@ -46,6 +52,8 @@ class TextCardDialog(QDialog):
             self.front.insertPlainText(front_text)
         if back_text:
             self.back.insertPlainText(back_text)
+        if notes_text:
+            self.notes.insertPlainText(notes_text)
         if front_text or back_text:
             self.back.setFocus()
 
@@ -307,10 +315,14 @@ class TextCardDialog(QDialog):
             if item.widget() is not None:
                 item.widget().deleteLater()
         for card in cards:
-            self._add_suggestion_row(card["front"], card["back"])
+            self._add_suggestion_row(
+                card["front"], card["back"], card.get("notes", "")
+            )
         self.suggest_panel.show()
 
-    def _add_suggestion_row(self, front: str, back: str) -> None:
+    def _add_suggestion_row(
+        self, front: str, back: str, notes: str = ""
+    ) -> None:
         row = QFrame(self)
         row.setStyleSheet(
             "QFrame{background:#ffffff;border:1px solid #e3dcd0;"
@@ -318,18 +330,20 @@ class TextCardDialog(QDialog):
         )
         row_lay = QHBoxLayout(row)
         row_lay.setContentsMargins(8, 6, 8, 6)
-        text = QLabel(
-            "<b>Q:</b> %s<br><b>A:</b> %s"
-            % (front.replace("<", "&lt;"), back.replace("<", "&lt;")),
-            row,
+        body = "<b>Q:</b> %s<br><b>A:</b> %s" % (
+            front.replace("<", "&lt;"),
+            back.replace("<", "&lt;"),
         )
+        if notes:
+            body += "<br><span style='color:#8a8272;font-size:11px;'>%s</span>" % (
+                notes.replace("<", "&lt;")
+            )
+        text = QLabel(body, row)
         text.setWordWrap(True)
         row_lay.addWidget(text, 1)
-        use_btn = QPushButton("Use →", row)
-        use_btn.setToolTip(
-            "Open this card in a new window to tweak and add — this list "
-            "stays here for the rest"
-        )
+        card = {"front": front, "back": back}
+        if notes:
+            card["notes"] = notes
 
         def remove_row() -> None:
             row.setParent(None)
@@ -339,16 +353,45 @@ class TextCardDialog(QDialog):
                 self.suggest_panel.hide()
 
         def use() -> None:
-            open_text_card_dialog(front_text=front, back_text=back)
+            try:
+                qgen_feedback.record(card, qgen_feedback.KEPT)
+            except Exception:
+                pass
+            open_text_card_dialog(
+                front_text=front, back_text=back, notes_text=notes
+            )
             remove_row()
 
+        def discard_bad() -> None:
+            try:
+                qgen_feedback.record(card, qgen_feedback.BAD)
+            except Exception:
+                pass
+            remove_row()
+
+        use_btn = QPushButton("Use →", row)
+        use_btn.setToolTip(
+            "Open this card in a new window to tweak and add — and teach "
+            "the AI to write more like this"
+        )
         qconnect(use_btn.clicked, use)
         row_lay.addWidget(use_btn)
         del_btn = QPushButton("✕", row)
         del_btn.setFixedWidth(28)
-        del_btn.setToolTip("Delete this suggestion")
+        del_btn.setToolTip(
+            "Discard — you just don't want this card (teaches the AI "
+            "nothing)"
+        )
         qconnect(del_btn.clicked, remove_row)
         row_lay.addWidget(del_btn)
+        bad_btn = QPushButton("👎", row)
+        bad_btn.setFixedWidth(28)
+        bad_btn.setToolTip(
+            "Discard — this is a badly written card; teach the AI to "
+            "write less like this"
+        )
+        qconnect(bad_btn.clicked, discard_bad)
+        row_lay.addWidget(bad_btn)
         self.suggest_lay.insertWidget(self.suggest_lay.count() - 1, row)
 
     def add_card(self) -> None:
@@ -391,7 +434,9 @@ class TextCardDialog(QDialog):
         event.accept()
 
 
-def open_text_card_dialog(front_text: str = "", back_text: str = "") -> None:
+def open_text_card_dialog(
+    front_text: str = "", back_text: str = "", notes_text: str = ""
+) -> None:
     if mw.col is None:
         showWarning("Open a profile first.", title=ADDON_NAME)
         return
@@ -403,7 +448,9 @@ def open_text_card_dialog(front_text: str = "", back_text: str = "") -> None:
             existing.raise_()
             existing.activateWindow()
             return
-    dlg = TextCardDialog(mw, front_text=front_text, back_text=back_text)
+    dlg = TextCardDialog(
+        mw, front_text=front_text, back_text=back_text, notes_text=notes_text
+    )
     if not front_text and not back_text:
         mw._snip_occlusion_text_dialog = dlg  # keep a reference (GC gotcha)
     else:

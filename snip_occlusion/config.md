@@ -53,7 +53,20 @@
 - `qgen_api_key`: optional Bearer token for `"openai_compatible"`
   servers that require one; local servers normally don't. Unused by
   Ollama. Default: empty.
-- `qgen_max_cards`: maximum suggested cards per slide. Default: `8`.
+- `qgen_max_cards`: maximum suggested cards per slide. Default: `4`.
+  The model is told to write fewer (or none) when a slide has little
+  exam-relevant material, rather than padding with filler.
+- `qgen_feedback`: learn your card taste from the suggestion buttons.
+  "Use →" saves a card as a positive style example, "👎" as a negative
+  one, and "✕" (a neutral discard) deliberately saves nothing. Recent
+  examples of both are folded into future prompts as form-to-copy /
+  habits-to-avoid, alongside a rotating sample of a bundled seed drawn
+  from the author's real deck. All data stays on your machine in
+  `user_files/qgen_feedback.json` (survives add-on updates). Default:
+  `true`.
+- `qgen_feedback_examples`: roughly how many examples of each kind go
+  into a prompt. More examples steer harder but generate slower on CPU.
+  Default: `4`.
 - `qgen_timeout_seconds`: how long to wait for the model. Default:
   `300` — the first request after Ollama loads a model can be slow.
 - `qgen_prefetch`: start generating suggestions in the background the

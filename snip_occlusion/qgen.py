@@ -22,6 +22,8 @@ import re
 import urllib.error
 import urllib.request
 
+from . import qgen_feedback
+
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_OPENAI_BASE_URL = "http://localhost:1234/v1"
 DEFAULT_MODEL = "llama3.1:8b"
@@ -32,27 +34,63 @@ class QGenError(Exception):
     """A user-presentable failure of question generation."""
 
 
-def build_prompt(text: str, max_cards: int) -> str:
+def _example_lines(cards: list) -> list:
+    lines = []
+    for c in cards:
+        line = "- Q: %s | A: %s" % (c.get("front", ""), c.get("back", ""))
+        if c.get("notes"):
+            line += " | Notes: %s" % c["notes"]
+        lines.append(line)
+    return lines
+
+
+def build_prompt(text: str, max_cards: int, feedback=None) -> str:
+    kept, bad = feedback or ([], [])
+    feedback_block = ""
+    if kept:
+        feedback_block += (
+            "Match the style, structure and depth of these cards the "
+            "student kept - they show the FORM to copy, not topics to "
+            "repeat:\n" + "\n".join(_example_lines(kept)) + "\n\n"
+        )
+    if bad:
+        feedback_block += (
+            "The student flagged these earlier suggestions as poorly "
+            "written. Identify what makes them weak and steer away from "
+            "those habits - they show failure modes to avoid, not banned "
+            "topics:\n" + "\n".join(_example_lines(bad)) + "\n\n"
+        )
     return (
-        "You are helping a UK law student (SQE) turn lecture-slide text "
-        "into Anki flashcards.\n\n"
+        "You are helping a UK law student prepare for the SQE by turning "
+        "lecture-slide text into Anki flashcards.\n\n"
         "Slide text (from OCR, may contain small errors):\n"
         "---\n%s\n---\n\n"
-        "Write up to %d high-quality question/answer flashcards from the "
-        "facts on this slide.\n"
+        "Write up to %d flashcards testing the exam-relevant law on this "
+        "slide. If the slide contains little that is exam-relevant, "
+        "write fewer - or return an empty array - rather than padding "
+        "with filler.\n"
         "Rules:\n"
-        "- One specific fact per card; the question must be answerable "
-        "without seeing the slide.\n"
-        "- Questions are short and direct (e.g. \"Who can bring forward "
-        "private members' bills?\").\n"
-        "- Answers are the fact only, as briefly as possible (e.g. "
-        "\"Individual MPs\").\n"
-        "- Prefer the legally significant facts; skip filler, headings "
-        "and boilerplate.\n"
-        "- Fix obvious OCR typos silently.\n\n"
+        "- One specific point of law per card, answerable without seeing "
+        "the slide.\n"
+        "- Questions are direct and well-structured. They need not be "
+        "short - up to three sentences is fine, and a short scenario is "
+        "often best where the point is about application, e.g.: \"A pays "
+        "B less than the agreed sum. B accepts. Is this good "
+        "consideration?\"\n"
+        "- Answers give the legal position precisely: \"Yes, but...\" / "
+        "\"No, unless...\" where the law is conditional; numbered steps "
+        "for procedures; include the statute section or case name when "
+        "the slide provides it.\n"
+        "- Prefer testable, legally significant material: rules, tests, "
+        "time limits, procedures, exceptions. Skip headings and "
+        "boilerplate. Fix obvious OCR typos silently.\n\n"
+        "%s"
         "Respond with ONLY a JSON array, no other text:\n"
-        '[{"front": "...", "back": "..."}, ...]'
-    ) % (text.strip(), max_cards)
+        '[{"front": "...", "back": "...", "notes": "..."}, ...]\n'
+        "\"notes\" is optional brief context (an authority, a caveat) "
+        "shown small under the answer; omit it when there is nothing "
+        "worth adding."
+    ) % (text.strip(), max_cards, feedback_block)
 
 
 def parse_cards(raw: str) -> list:
@@ -74,7 +112,11 @@ def parse_cards(raw: str) -> list:
         front = str(item.get("front") or "").strip()
         back = str(item.get("back") or "").strip()
         if front and back:
-            cards.append({"front": front, "back": back})
+            card = {"front": front, "back": back}
+            notes = str(item.get("notes") or "").strip()
+            if notes:
+                card["notes"] = notes
+            cards.append(card)
     if not cards:
         raise QGenError("The AI reply contained no usable cards.")
     return cards
@@ -84,8 +126,10 @@ def generate_cards(text: str, config: dict) -> list:
     """Blocking call: OCR text -> [{front, back}, ...]. Raises QGenError."""
     if not text.strip():
         raise QGenError("There is no snip text to work from.")
-    max_cards = int(config.get("qgen_max_cards", 8) or 8)
-    prompt = build_prompt(text, max_cards)
+    max_cards = int(config.get("qgen_max_cards", 4) or 4)
+    prompt = build_prompt(
+        text, max_cards, feedback=qgen_feedback.examples(config)
+    )
     provider = (
         str(config.get("qgen_provider") or "ollama")
         .strip()

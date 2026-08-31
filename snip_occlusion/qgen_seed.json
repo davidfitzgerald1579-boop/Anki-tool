@@ -1,0 +1,163 @@
+[
+ {
+  "front": "If both parties to an agreement make a mistake, and neither is at fault, is the agreement effective?",
+  "back": "No, it is void due to mutual mistake"
+ },
+ {
+  "front": "If it becomes economically unfeasible for a party to perform a contract, is the contract frustrated?",
+  "back": "No, unless due to an unforeseeable event. For frustration it is not sufficient for the job to be more difficult, it must be a fundamentally different job from what was contemplated.",
+  "notes": "Davis Contractors v Fareham [1956]: Contract to build houses ran way over budget due to materials and labour shortages."
+ },
+ {
+  "front": "If a secured creditor sells the charged assets for more than it is owed, what happens to the surplus?",
+  "back": "Paid to the trustee/liquidator"
+ },
+ {
+  "front": "If A has a contractual obligation to B, can he use the performance of that obligation as consideration for a contract with C?",
+  "back": "Yes"
+ },
+ {
+  "front": "If a case is accepted by the magistrates' court, is the defendant safe from any sentence greater than 12 months?",
+  "back": "No - the magistrates can find him guilty then commit him to the Crown Court for sentencing",
+  "notes": "Assuming an either way offence"
+ },
+ {
+  "front": "An additional loan is tacked onto Mortgage A after Mortgage B has been registered. What is the priority of the additional loan?",
+  "back": "If Lender B had notice and agreed, the additional loan has priority. Otherwise, Mortgage B has priority."
+ },
+ {
+  "front": "Member A wishes to transfer his shares to B but is blocked by the board. What are his options?",
+  "back": "Board has absolute discretion under the MAs so he has to amend by SR to complete the transfer.Otherwise he can hold the shares in trust for B indefinitely."
+ },
+ {
+  "front": "A tries to sell B a fake Picasso, but B refuses to buy it. C overhears their conversation by chance, and buys the painting. He later discovers it is fake. Can he sue A for misrepresentation?",
+  "back": "Amazingly, no. A intended to induce B, not C."
+ },
+ {
+  "front": "If A conducts due diligence but does not discover B's negligent or innocent misrepresentation, can A claim against B?",
+  "back": "Yes, but A's claim may be limited to the extent that he relied on B's statement.",
+  "notes": "e.g. rescission may not be possible; damages may be partial / Case law here is very inconsistent."
+ },
+ {
+  "front": "If damage is foreseeable in kind, but the amount of damage that arises in fact was unforeseeable, is there legal causation?",
+  "back": "Yes.",
+  "notes": "e.g. If a fire is foreseeable, then there is full liability whether it's one house or the whole town."
+ },
+ {
+  "front": "What are the main examples of zero-rated supplies?",
+  "back": "(1) Non-catering food(2) Water(3) Books"
+ },
+ {
+  "front": "What are the requirements for the St Martin's Property exception?",
+  "back": "(1) It is contemplated in the agreement that the property will be transferred to a third party / (2) It is the intention of the parties that the contract is for the benefit of the future transferee"
+ },
+ {
+  "front": "What property cannot be taken by CRAR?",
+  "back": "- Tools of the trade up to the first £1,350 value / - Property belonging to a sub-tenant or other third party"
+ },
+ {
+  "front": "What is the required procedure at incorporation if a company is not using the MAs?",
+  "back": "(1) Articles must be submitted with the application to register a company(2) Registered articles must specifically exclude or modify the MAs",
+  "notes": "Failure to do (2) means the model articles are incorporated by default"
+ },
+ {
+  "front": "What are the factors that must be considered for the interests of justice test?",
+  "back": "(1) Is D likely to lose their liberty or suffer severe reputational damage? / (2) Significant or complex legal question? / (3) Is D unable to understand the proceedings or present their own case? / (4) Will the proceedings involve interviewing or cross-examining witnesses? / (5) Is representation in the interest of a third party other than D? /",
+  "notes": "Access to Justice Act 1999 (AJA)"
+ },
+ {
+  "front": "How many trustees can a trust have?",
+  "back": "Personalty only: 1 to ∞ / Includes realty: 2 to 4"
+ },
+ {
+  "front": "What is the procedure for serving a claim outside England & Wales?",
+  "back": "(1) Permission of the court must be obtained first / (2) Claimant then provides the claim form and other documents to the authorities in England & Wales / (3) Authorities in the foreign country will serve the document and provide a certificate of service"
+ },
+ {
+  "front": "What are the elements of murder?",
+  "back": "(1) Unlawful: No available defences (e.g. self-defence) / (2) Killing: Acceleration of death / (3) Malice aforethought: Intention to kill or cause GBH / (4) Peacetime",
+  "notes": "Malice aforethought does not imply premeditation. / Foetuses cannot be murdered."
+ },
+ {
+  "front": "Can unlawful act manslaughter be committed by omission?",
+  "back": "No, the unlawful act must be an intentional, positive act"
+ },
+ {
+  "front": "A new client approaches a solicitor with a small transaction. Is customer due diligence required?",
+  "back": "Yes. CDD is required for all new relationships.",
+  "notes": "If the approach is by email and the solicitor has not met the client in person, EDD is required"
+ },
+ {
+  "front": "Can a joint tenancy be severed by a will?",
+  "back": "No, never",
+  "notes": "Absolutely not"
+ },
+ {
+  "front": "Do the interests of the other occupiers of a bankrupt’s house always outweigh those of the creditors?",
+  "back": "No, after one year the creditors’ interests are paramount"
+ },
+ {
+  "front": "A and B have a history of dealings. Sometimes A signs a rider exempting B from liability and sometimes he does not. Can B claim incorporation by consistent course of dealing on an occasion where A did not sign?",
+  "back": "No, because it was not consistent whether he signed or not.",
+  "notes": "McCutcheon v David MacBrayne Ltd [1964]"
+ },
+ {
+  "front": "Can a trustee be held liable for breaches committed before his appointment?",
+  "back": "No, but he is liable if he failed to properly inspect the trust documents on appointment"
+ },
+ {
+  "front": "When is a claimant required to file a reply to defence?",
+  "back": "When the claimant wishes to make a new matter which must be pleaded (such as misrepresentation, fraud, illegality, etc.)",
+  "notes": "Otherwise optional but can be done to narrow the issues in dispute"
+ },
+ {
+  "front": "How does the eggshell skull theory apply to legal causation in tort?",
+  "back": "If the type of damage is foreseeable, then the extent is irrelevant, even if the claimant's own circumstances contribute to the extent"
+ },
+ {
+  "front": "At what stage does the court officer provisionally assign a track to a case?",
+  "back": "When the defendant files a defence",
+  "notes": "The court officer then serves a notice on each party of the proposed track, including a directions questionnaire that they must return"
+ },
+ {
+  "front": "What happens if a party breaches a consent order?",
+  "back": "The other party has to file new proceedings in breach of contract",
+  "notes": "A consent order is basically a contract"
+ },
+ {
+  "front": "What is a marriage settlement?",
+  "back": "A trust established on the occasion of a marriage. The partners and their children are deemed to have given marriage consideration, so the trust is enforceable even if incompletely constituted",
+  "notes": "Any other beneficiaries remain volunteers"
+ },
+ {
+  "front": "When can damages be claimed in contract for loss of reputation?",
+  "back": "Only by an ex-employee against his former employer whose bad reputation affects his career prospects"
+ },
+ {
+  "front": "When would a court make a wasted costs order?",
+  "back": "When the legal representatives' own poor conduct has caused the costs to arise"
+ },
+ {
+  "front": "What is a fixed trust?",
+  "back": "A trust where each beneficiary is entitled to a specific share of the trust property",
+  "notes": "Opposite of a discretionary trust"
+ },
+ {
+  "front": "What can a member do with a 50% shareholding?",
+  "back": "Block an ordinary resolution"
+ },
+ {
+  "front": "What is the biggest difference between mediation and arbitration?",
+  "back": "Arbitration is binding and precludes subsequent litigation in court."
+ },
+ {
+  "front": "When and how can a party apply for pre-action disclosure?",
+  "back": "When a party suspects that the other side is deliberately withholding a document that could have a material impact on the pre-action process, they can request an interim order (form N244) to disclose a specific document or class of documents.",
+  "notes": "Must show in the witness statement that the other party would be required to disclose this document at trial anyway, and that it is desirable to disclose it before trial"
+ },
+ {
+  "front": "What is an 'assent' by an executor or administrator?",
+  "back": "A transfer of estate property to a beneficiary.",
+  "notes": "An assent of land must be in writing and name the beneficiary. No rules for assents of personalty but it's nice to have them in writing."
+ }
+]

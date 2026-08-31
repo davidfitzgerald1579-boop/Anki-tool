@@ -4,6 +4,27 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.12.0 — 2026-08-31
+
+- **The AI learns your card taste.** Suggestions now have three
+  verdicts: "Use →" (write more like this), "✕" (neutral discard —
+  teaches nothing; the slide may simply not be card-worthy), and "👎"
+  (badly written — write less like this). Kept and flagged cards are
+  folded into future prompts as form-to-copy / habits-to-avoid, and the
+  positive list is seeded from the author's real SQE deck so the very
+  first generation already imitates it. Configurable via
+  `qgen_feedback` / `qgen_feedback_examples`; everything stays local.
+- **Rewritten generation prompt.** Four suggestions by default instead
+  of eight (`qgen_max_cards`), and the model is told to write fewer —
+  or none — when a slide has little exam-relevant material. Questions
+  may now run to three sentences, with short scenario-style questions
+  encouraged ("A pays B less than the agreed sum. B accepts. Is this
+  good consideration?"); answers state the legal position precisely
+  ("Yes, but…", numbered procedure steps, statute/case references).
+- **Notes on suggestions.** The model can attach brief context (an
+  authority, a caveat) to a card; it shows small under the answer in
+  the suggestion list and prefills the Notes field on "Use →".
+
 ## v0.11.0 — 2026-08-31
 
 - **Suggestions are pre-generated.** The moment a snip lands in the
