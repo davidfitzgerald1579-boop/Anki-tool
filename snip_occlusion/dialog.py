@@ -771,12 +771,14 @@ class SnipOcclusionDialog(QDialog):
         # the user switches to the Text Editor
         try:
             # fresh config: the Cards: selector may have changed the count
-            qgen_prefetch.start_for_image(img.copy(), get_config())
+            qgen_prefetch.start_for_image(
+                img.copy(),
+                get_config(),
+                on_text=self._prefetch_text_ready,
+            )
             # begin displaying (or queueing up) the new snip's suggestions
-            self.suggest_page.refresh_suggestions()
-            popped = getattr(self, "_popped_text_editor", None)
-            if popped is not None and popped.isVisible():
-                popped.panel.refresh_suggestions()
+            for panel in self._suggestion_panels():
+                panel.refresh_suggestions()
         except Exception:
             pass  # prefetching is best-effort, never in the user's way
         # new queue cards default to this slide's background colour
@@ -876,6 +878,35 @@ class SnipOcclusionDialog(QDialog):
             self.write_page.add_card()
         elif self.view_stack.currentWidget() is self._image_page:
             self.add_cards()
+
+    def _prefetch_text_ready(self, state) -> None:
+        """Show the OCR text the moment it's read - the LLM is still
+        generating, but the source panes shouldn't wait for it.
+
+        Called from the prefetch worker thread; hops to the main thread
+        before touching any widget.
+        """
+
+        def apply() -> None:
+            if qgen_prefetch.current() is not state:
+                return  # a newer snip took over in the meantime
+            for panel in self._suggestion_panels():
+                # never clobber a pasted-lesson run's source text
+                if not panel._doc_running:
+                    panel.set_source_text(state.text)
+            self.write_page.set_source_text(state.text)
+
+        try:
+            mw.taskman.run_on_main(apply)
+        except Exception:
+            pass  # display is a bonus; never break the snip flow
+
+    def _suggestion_panels(self) -> list:
+        panels = [self.suggest_page]
+        popped = getattr(self, "_popped_text_editor", None)
+        if popped is not None and popped.isVisible():
+            panels.append(popped.panel)
+        return panels
 
     def _current_source_text(self) -> str:
         text = self.suggest_page.current_source()

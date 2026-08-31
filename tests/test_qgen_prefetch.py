@@ -83,6 +83,64 @@ def test_prefetch_empty_ocr_is_an_error(monkeypatch):
         qgen_prefetch.wait_for_cards(state, timeout=5)
 
 
+def test_on_text_fires_after_ocr_before_generation(monkeypatch):
+    order = []
+    monkeypatch.setattr(
+        qgen_prefetch.ocr, "extract_text", lambda img, cfg: "slide text"
+    )
+
+    def fake_generate(text, cfg, source="slide"):
+        order.append("generate")
+        return []
+
+    monkeypatch.setattr(
+        qgen_prefetch.qgen, "generate_cards", fake_generate
+    )
+    qgen_prefetch.start_for_image(
+        object(), {}, on_text=lambda st: order.append("text:" + st.text)
+    )
+    state = qgen_prefetch.current()
+    assert state.done.wait(5)
+    assert order == ["text:slide text", "generate"]
+
+
+def test_on_text_error_never_blocks_generation(monkeypatch):
+    monkeypatch.setattr(
+        qgen_prefetch.ocr, "extract_text", lambda img, cfg: "text"
+    )
+    monkeypatch.setattr(
+        qgen_prefetch.qgen,
+        "generate_cards",
+        lambda text, cfg, source="slide": [{"front": "Q", "back": "A"}],
+    )
+
+    def broken(state):
+        raise RuntimeError("display blew up")
+
+    qgen_prefetch.start_for_image(object(), {}, on_text=broken)
+    state = qgen_prefetch.current()
+    assert qgen_prefetch.wait_for_cards(state, timeout=5) == [
+        {"front": "Q", "back": "A"}
+    ]
+
+
+def test_on_text_not_called_for_empty_ocr(monkeypatch):
+    monkeypatch.setattr(
+        qgen_prefetch.ocr, "extract_text", lambda img, cfg: ""
+    )
+    monkeypatch.setattr(
+        qgen_prefetch.qgen,
+        "generate_cards",
+        lambda text, cfg, source="slide": pytest.fail("should not generate"),
+    )
+    qgen_prefetch.start_for_image(
+        object(), {}, on_text=lambda st: pytest.fail("no text to show")
+    )
+    state = qgen_prefetch.current()
+    assert state.done.wait(5)
+    assert state.error is not None
+
+
 def test_new_snip_replaces_previous_prefetch(monkeypatch):
     monkeypatch.setattr(
         qgen_prefetch.ocr, "extract_text", lambda img, cfg: "text"

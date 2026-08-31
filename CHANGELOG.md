@@ -4,6 +4,17 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.21.2 — 2026-08-31
+
+- **The OCR text no longer waits for the AI.** It used to appear only
+  when the whole prefetch (OCR + card generation) finished. Now the
+  moment a snip's text is read — seconds after the image loads — it
+  shows up in the Suggested Cards source pane (embedded and popped-out)
+  AND the Write Card source pane, while the LLM keeps generating in
+  the background. A pasted-lesson run's source text is never
+  clobbered, and a snip that's been replaced by a newer one is
+  ignored.
+
 ## v0.21.1 — 2026-08-31
 
 - **Pasting into card fields is now always plain text.** Copying from
