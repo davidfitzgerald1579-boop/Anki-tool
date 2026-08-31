@@ -84,6 +84,8 @@ DEFAULT_CONFIG = {
     "qgen_prefetch": True,
     "qgen_keep_alive": "30m",
     "qgen_leave_cores_free": 1,
+    "qgen_bakeoff": False,
+    "qgen_bakeoff_models": ["llama3.1:8b", "llama3.2:3b"],
     "text_editor_sidebar": "keep",  # "keep" | "hide" the sidebar in text view
     "qgen_feedback": True,
     "qgen_feedback_examples": 4,

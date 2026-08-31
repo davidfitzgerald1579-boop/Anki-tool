@@ -21,7 +21,7 @@ def test_prefetch_generates_in_background(monkeypatch):
     started = threading.Event()
     release = threading.Event()
 
-    def slow_generate(text, cfg):
+    def slow_generate(text, cfg, source="slide"):
         started.set()
         assert release.wait(5)
         return [{"front": "Q", "back": "A"}]
@@ -55,7 +55,7 @@ def test_prefetch_error_is_stored_and_raised(monkeypatch):
         qgen_prefetch.ocr, "extract_text", lambda img, cfg: "text"
     )
 
-    def boom(text, cfg):
+    def boom(text, cfg, source="slide"):
         raise qgen.QGenError("server down")
 
     monkeypatch.setattr(qgen_prefetch.qgen, "generate_cards", boom)
@@ -74,7 +74,7 @@ def test_prefetch_empty_ocr_is_an_error(monkeypatch):
     monkeypatch.setattr(
         qgen_prefetch.qgen,
         "generate_cards",
-        lambda text, cfg: pytest.fail("should not generate"),
+        lambda text, cfg, source="slide": pytest.fail("should not generate"),
     )
     qgen_prefetch.start_for_image(object(), {})
     state = qgen_prefetch.current()
@@ -90,7 +90,7 @@ def test_new_snip_replaces_previous_prefetch(monkeypatch):
     monkeypatch.setattr(
         qgen_prefetch.qgen,
         "generate_cards",
-        lambda text, cfg: [{"front": "Q", "back": "A"}],
+        lambda text, cfg, source="slide": [{"front": "Q", "back": "A"}],
     )
     qgen_prefetch.start_for_image(object(), {})
     first = qgen_prefetch.current()

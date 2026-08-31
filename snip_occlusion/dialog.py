@@ -11,7 +11,7 @@ from aqt.utils import showWarning, tooltip
 
 from .qtshim import *  # noqa: F401,F403
 from . import notes as notes_mod
-from . import ocr, qgen_prefetch
+from . import ocr, qgen_bakeoff, qgen_prefetch
 from .newcard_panel import NewCardQueuePanel
 from .consts import (
     ADDON_NAME,
@@ -886,6 +886,36 @@ class SnipOcclusionDialog(QDialog):
             keep_radio.setChecked(True)
         lay.addWidget(keep_radio)
         lay.addWidget(hide_radio)
+
+        lay.addSpacing(8)
+        lay.addWidget(QLabel("<b>AI model bake-off</b>", dlg))
+        bake_box = QCheckBox(
+            "Alternate between models and score them by my verdicts", dlg
+        )
+        bake_box.setToolTip(
+            "Each generation uses the next model in turn (%s). Your "
+            "Use/★/Skip/✗ clicks are tallied per model, with timings, "
+            "so the scoreboard below shows which model earns its keep."
+            % " vs ".join(qgen_bakeoff.contenders(self.config))
+        )
+        bake_box.setChecked(bool(self.config.get("qgen_bakeoff", False)))
+        lay.addWidget(bake_box)
+        try:
+            score = qgen_bakeoff.summary()
+        except Exception:
+            score = ""
+        if score:
+            score_label = QLabel(
+                "<span style='color:#6b6252'>%s</span>"
+                % score.replace("\n", "<br>"),
+                dlg,
+            )
+            score_label.setWordWrap(True)
+            score_label.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+            )
+            lay.addWidget(score_label)
+
         note = QLabel(
             "<span style='color:#8a8171'>All other settings (AI model, "
             "OCR, colours…) live in Tools → Add-ons → Snip Occlusion → "
@@ -905,14 +935,17 @@ class SnipOcclusionDialog(QDialog):
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         value = "hide" if hide_radio.isChecked() else "keep"
+        bakeoff = bake_box.isChecked()
         self.config["text_editor_sidebar"] = value
+        self.config["qgen_bakeoff"] = bakeoff
         try:
             module = __name__.split(".")[0]
             user_cfg = mw.addonManager.getConfig(module) or {}
             user_cfg["text_editor_sidebar"] = value
+            user_cfg["qgen_bakeoff"] = bakeoff
             mw.addonManager.writeConfig(module, user_cfg)
         except Exception:
-            pass  # setting still applies for this window
+            pass  # settings still apply for this window
 
     # ------------------------------------------------------- new card queue
 

@@ -80,6 +80,15 @@
   main window to the Text Editor view. `"keep"` (default) leaves it
   visible; `"hide"` tucks it away until you switch back to the Image
   Editor. Also settable via the ⚙ button in the main window.
+- `qgen_bakeoff`: alternate generations between the models in
+  `qgen_bakeoff_models` and score each by your Use/★/Skip/✗ verdicts
+  (plus generation times). The scoreboard — including whether the
+  quality difference is statistically meaningful yet — lives in the ⚙
+  Settings dialog, which is also the easy on/off switch. Default:
+  `false`.
+- `qgen_bakeoff_models`: the contenders when the bake-off is on.
+  Default: `["llama3.1:8b", "llama3.2:3b"]` — pull each with
+  `ollama pull <name>` first.
 - `qgen_leave_cores_free`: CPU cores the model must leave alone while
   generating (Ollama only). Default `1`, so Anki and the rest of the
   laptop stay responsive during background generation; raise it if the

@@ -4,6 +4,17 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.15.0 — 2026-08-31
+
+- **Model bake-off.** Turn it on in ⚙ Settings and generations
+  alternate between two models (default `llama3.1:8b` vs
+  `llama3.2:3b`), with each suggestion remembering which model wrote
+  it. Your Use/★/Skip/✗ clicks (undo included) score the models, and
+  generation times are recorded too. The scoreboard in ⚙ Settings shows
+  each model's kept-rate and average speed — and states whether the
+  quality gap is statistically meaningful yet or the faster model is
+  simply winning. Pick your model with evidence, not vibes.
+
 ## v0.14.2 — 2026-08-31
 
 - **The model now leaves a CPU core free while generating**

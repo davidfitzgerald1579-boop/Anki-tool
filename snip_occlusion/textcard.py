@@ -23,7 +23,7 @@ from aqt.utils import showWarning, tooltip
 
 from .qtshim import *  # noqa: F401,F403
 from . import notes as notes_mod
-from . import qgen, qgen_doc, qgen_feedback, qgen_prefetch
+from . import qgen, qgen_bakeoff, qgen_doc, qgen_feedback, qgen_prefetch
 from .consts import ADDON_NAME
 from .dialog import _STYLE, get_config, get_previous_snip_text
 
@@ -412,7 +412,7 @@ class TextCardPanel(QWidget):
                 if self._doc_job != job:
                     return
                 try:
-                    cards = qgen.generate_cards(
+                    cards = qgen_bakeoff.generate(
                         chunk, config, source="document"
                     )
                 except qgen.EmptyReplyError:
@@ -446,7 +446,10 @@ class TextCardPanel(QWidget):
             return
         for card in cards:
             self._add_suggestion_row(
-                card["front"], card["back"], card.get("notes", "")
+                card["front"],
+                card["back"],
+                card.get("notes", ""),
+                model=card.get("_model", ""),
             )
         if done_count < total:
             self._set_suggest_status(
@@ -548,7 +551,7 @@ class TextCardPanel(QWidget):
                     raise qgen.QGenError(
                         "No snip text available yet — snip a slide first."
                     )
-                return qgen.generate_cards(text, config)
+                return qgen_bakeoff.generate(text, config)
             timeout = int(config.get("qgen_timeout_seconds") or 300) + 30
             try:
                 return qgen_prefetch.wait_for_cards(state, timeout)
@@ -556,7 +559,7 @@ class TextCardPanel(QWidget):
                 # e.g. Ollama wasn't running when the snip landed but is
                 # now - retry live before giving up
                 if state.text.strip():
-                    return qgen.generate_cards(state.text, config)
+                    return qgen_bakeoff.generate(state.text, config)
                 raise
 
         def done(future) -> None:
@@ -570,7 +573,10 @@ class TextCardPanel(QWidget):
             self._set_suggest_status("")
             for card in cards:
                 self._add_suggestion_row(
-                    card["front"], card["back"], card.get("notes", "")
+                    card["front"],
+                    card["back"],
+                    card.get("notes", ""),
+                    model=card.get("_model", ""),
                 )
             QTimer.singleShot(0, self._fit_suggestions_if_auto)
 
@@ -594,18 +600,35 @@ class TextCardPanel(QWidget):
             return
         card, verdict, index = self._undo_stack.pop()
         self.undo_btn.setEnabled(bool(self._undo_stack))
-        if verdict is not None:
-            try:
+        try:
+            if verdict is not None:
                 qgen_feedback.unrecord(card)
-            except Exception:
-                pass
+            # reverse the bake-off tally for whichever button it was
+            tally_verdict = {
+                None: "skip",
+                qgen_feedback.KEPT: "great",
+                qgen_feedback.BAD: "bad",
+            }.get(verdict)
+            if tally_verdict:
+                qgen_bakeoff.tally(card, tally_verdict, undo=True)
+        except Exception:
+            pass
         self._add_suggestion_row(
-            card["front"], card["back"], card.get("notes", ""), index=index
+            card["front"],
+            card["back"],
+            card.get("notes", ""),
+            index=index,
+            model=card.get("_model", ""),
         )
         QTimer.singleShot(0, self._fit_suggestions_if_auto)
 
     def _add_suggestion_row(
-        self, front: str, back: str, notes: str = "", index=None
+        self,
+        front: str,
+        back: str,
+        notes: str = "",
+        index=None,
+        model: str = "",
     ) -> None:
         row = QFrame(self)
         row.setStyleSheet(
@@ -629,6 +652,8 @@ class TextCardPanel(QWidget):
         card = {"front": front, "back": back}
         if notes:
             card["notes"] = notes
+        if model:
+            card["_model"] = model  # bake-off: who wrote this card
 
         def row_index() -> int:
             return max(0, self.suggest_lay.indexOf(row))
@@ -642,6 +667,7 @@ class TextCardPanel(QWidget):
         def use() -> None:
             try:
                 qgen_feedback.record(card, qgen_feedback.KEPT)
+                qgen_bakeoff.tally(card, "use")
             except Exception:
                 pass
             batch = self._batch_id
@@ -653,11 +679,12 @@ class TextCardPanel(QWidget):
                 # ✗ Bad afterwards is what the learning loop remembers
                 try:
                     qgen_feedback.unrecord(card)
+                    qgen_bakeoff.tally(card, "use", undo=True)
                 except Exception:
                     pass
                 if self._batch_id == batch:
                     self._add_suggestion_row(
-                        front, back, notes, index=index
+                        front, back, notes, index=index, model=model
                     )
                     QTimer.singleShot(0, self._fit_suggestions_if_auto)
                     tooltip(
@@ -675,12 +702,17 @@ class TextCardPanel(QWidget):
             remove_row()
 
         def skip() -> None:
+            try:
+                qgen_bakeoff.tally(card, "skip")
+            except Exception:
+                pass
             self._push_undo(card, None, row_index())
             remove_row()
 
         def great() -> None:
             try:
                 qgen_feedback.record(card, qgen_feedback.KEPT)
+                qgen_bakeoff.tally(card, "great")
             except Exception:
                 pass
             self._push_undo(card, qgen_feedback.KEPT, row_index())
@@ -689,6 +721,7 @@ class TextCardPanel(QWidget):
         def bad() -> None:
             try:
                 qgen_feedback.record(card, qgen_feedback.BAD)
+                qgen_bakeoff.tally(card, "bad")
             except Exception:
                 pass
             self._push_undo(card, qgen_feedback.BAD, row_index())
