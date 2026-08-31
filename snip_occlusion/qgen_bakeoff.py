@@ -1,7 +1,7 @@
 """Model bake-off: let the user's own verdicts pick the best model.
 
-When enabled, generations alternate round-robin between the configured
-models. Each suggested card remembers which model wrote it; the user's
+When enabled, each generation picks one of the configured models at
+random. Each suggested card remembers which model wrote it; the user's
 verdicts (Use / ★ Great / Skip / ✗ Bad) are tallied per model, along
 with generation times. The summary reports each model's kept-rate and
 speed, and says whether the quality difference is statistically
@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 import math
 import os
+import random
+import re
 import threading
 import time
 
@@ -25,6 +27,7 @@ _lock = threading.Lock()
 
 VERDICTS = ("use", "great", "skip", "bad")
 _MIN_VERDICTS = 10  # per model, before a comparison is attempted
+_SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)\s*b\b", re.I)
 
 
 def _path() -> str:
@@ -87,20 +90,32 @@ def contenders(config: dict) -> list:
     return ["llama3.1:8b", "llama3.2:3b"]
 
 
+def small_large(config: dict) -> tuple:
+    """(smaller model, bigger model) of the first two contenders.
+
+    Sizes are read from the name ("3b", "8b", "1.5b"); if neither name
+    carries a size, the configured order decides (second = smaller).
+    """
+    names = contenders(config)[:2]
+
+    def size(name: str) -> float:
+        m = _SIZE_RE.search(name)
+        return float(m.group(1)) if m else float("inf")
+
+    ordered = sorted(names, key=size)
+    return ordered[0], ordered[-1]
+
+
 def generate(text: str, config: dict, source: str = "slide") -> list:
-    """qgen.generate_cards, alternating and timing models when enabled.
+    """qgen.generate_cards, randomising and timing models when enabled.
 
     Cards from a bake-off generation carry a "_model" key so verdicts
     can be credited to the right model.
     """
     if not enabled(config):
         return qgen.generate_cards(text, config, source=source)
-    names = contenders(config)
-    with _lock:
-        data = _load()
-        model = names[data["next"] % len(names)]
-        data["next"] = (data["next"] + 1) % len(names)
-        _save(data)
+    # random choice, so verdicts can't be biased by a predictable order
+    model = random.choice(contenders(config))
     cfg = dict(config)
     cfg["qgen_model"] = model
     start = time.monotonic()

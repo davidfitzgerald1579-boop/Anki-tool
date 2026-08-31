@@ -4,6 +4,18 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.15.1 — 2026-08-31
+
+- **Simpler model choice in ⚙ Settings.** Three plain options: use the
+  smaller, faster model (llama3.2:3b) · use the bigger model
+  (llama3.1:8b) · alternate between the two at random and keep score.
+  The scoreboard and all its data stay. Alternation is now random
+  rather than strict turn-taking.
+- **Clarified in the UI: both models always learn from all verdicts.**
+  Kept/flagged example cards are shared style memory, not tied to the
+  model that wrote them — so feedback given during a bake-off improves
+  whichever model you end up choosing.
+
 ## v0.15.0 — 2026-08-31
 
 - **Model bake-off.** Turn it on in ⚙ Settings and generations

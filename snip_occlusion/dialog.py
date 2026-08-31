@@ -880,6 +880,9 @@ class SnipOcclusionDialog(QDialog):
         hide_radio = QRadioButton(
             "Hide the sidebar (it comes back in the Image Editor)", dlg
         )
+        sidebar_group = QButtonGroup(dlg)
+        sidebar_group.addButton(keep_radio)
+        sidebar_group.addButton(hide_radio)
         if self.config.get("text_editor_sidebar", "keep") == "hide":
             hide_radio.setChecked(True)
         else:
@@ -888,18 +891,41 @@ class SnipOcclusionDialog(QDialog):
         lay.addWidget(hide_radio)
 
         lay.addSpacing(8)
-        lay.addWidget(QLabel("<b>AI model bake-off</b>", dlg))
-        bake_box = QCheckBox(
-            "Alternate between models and score them by my verdicts", dlg
+        lay.addWidget(QLabel("<b>AI model for card suggestions</b>", dlg))
+        smaller, bigger = qgen_bakeoff.small_large(self.config)
+        small_radio = QRadioButton(
+            "Smaller, faster model (%s)" % smaller, dlg
         )
-        bake_box.setToolTip(
-            "Each generation uses the next model in turn (%s). Your "
-            "Use/★/Skip/✗ clicks are tallied per model, with timings, "
-            "so the scoreboard below shows which model earns its keep."
-            % " vs ".join(qgen_bakeoff.contenders(self.config))
+        big_radio = QRadioButton(
+            "Bigger, slower model (%s)" % bigger, dlg
         )
-        bake_box.setChecked(bool(self.config.get("qgen_bakeoff", False)))
-        lay.addWidget(bake_box)
+        alt_radio = QRadioButton(
+            "Alternate between the two at random, and keep score", dlg
+        )
+        alt_radio.setToolTip(
+            "Each generation randomly picks one of the two models; your "
+            "Use/★/Skip/✗ verdicts and generation times are tallied per "
+            "model in the scoreboard below."
+        )
+        model_group = QButtonGroup(dlg)
+        for btn in (small_radio, big_radio, alt_radio):
+            model_group.addButton(btn)
+            lay.addWidget(btn)
+        if self.config.get("qgen_bakeoff", False):
+            alt_radio.setChecked(True)
+        elif (self.config.get("qgen_model") or "") == bigger:
+            big_radio.setChecked(True)
+        else:
+            small_radio.setChecked(True)
+        learn_note = QLabel(
+            "<span style='color:#8a8171'>Whichever you pick, BOTH models "
+            "keep learning from all your verdicts — your kept/flagged "
+            "examples are shared, not tied to the model that wrote "
+            "them.</span>",
+            dlg,
+        )
+        learn_note.setWordWrap(True)
+        lay.addWidget(learn_note)
         try:
             score = qgen_bakeoff.summary()
         except Exception:
@@ -917,9 +943,9 @@ class SnipOcclusionDialog(QDialog):
             lay.addWidget(score_label)
 
         note = QLabel(
-            "<span style='color:#8a8171'>All other settings (AI model, "
-            "OCR, colours…) live in Tools → Add-ons → Snip Occlusion → "
-            "Config.</span>",
+            "<span style='color:#8a8171'>All other settings (OCR, "
+            "colours, other models…) live in Tools → Add-ons → "
+            "Snip Occlusion → Config.</span>",
             dlg,
         )
         note.setWordWrap(True)
@@ -935,14 +961,20 @@ class SnipOcclusionDialog(QDialog):
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         value = "hide" if hide_radio.isChecked() else "keep"
-        bakeoff = bake_box.isChecked()
+        bakeoff = alt_radio.isChecked()
         self.config["text_editor_sidebar"] = value
         self.config["qgen_bakeoff"] = bakeoff
+        if not bakeoff:
+            self.config["qgen_model"] = (
+                bigger if big_radio.isChecked() else smaller
+            )
         try:
             module = __name__.split(".")[0]
             user_cfg = mw.addonManager.getConfig(module) or {}
             user_cfg["text_editor_sidebar"] = value
             user_cfg["qgen_bakeoff"] = bakeoff
+            if not bakeoff:
+                user_cfg["qgen_model"] = self.config["qgen_model"]
             mw.addonManager.writeConfig(module, user_cfg)
         except Exception:
             pass  # settings still apply for this window

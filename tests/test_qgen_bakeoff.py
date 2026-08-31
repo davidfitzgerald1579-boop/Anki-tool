@@ -28,13 +28,36 @@ def fake_generate(monkeypatch):
 CFG = {"qgen_bakeoff": True}
 
 
+@pytest.fixture
+def alternate(monkeypatch):
+    """Make the random model pick deterministic: cycle the contenders."""
+    state = {"i": 0}
+
+    def cycling_choice(seq):
+        value = seq[state["i"] % len(seq)]
+        state["i"] += 1
+        return value
+
+    monkeypatch.setattr(qgen_bakeoff.random, "choice", cycling_choice)
+
+
 def test_disabled_passes_through_without_stamping(fake_generate):
     cards = qgen_bakeoff.generate("text", {"qgen_bakeoff": False})
     assert "_model" not in cards[0]
     assert fake_generate == [None]  # model untouched
 
 
-def test_enabled_alternates_and_stamps(fake_generate):
+def test_enabled_picks_at_random_and_stamps(fake_generate, monkeypatch):
+    # the pick goes through random.choice over the contenders
+    monkeypatch.setattr(
+        qgen_bakeoff.random, "choice", lambda seq: seq[-1]
+    )
+    card = qgen_bakeoff.generate("text", CFG)[0]
+    assert card["_model"] == "llama3.2:3b"
+    assert fake_generate == ["llama3.2:3b"]  # config carried the model
+
+
+def test_alternation_over_many_calls(fake_generate, alternate):
     stamped = [qgen_bakeoff.generate("text", CFG)[0]["_model"] for _ in range(4)]
     assert stamped == [
         "llama3.1:8b",
@@ -42,17 +65,27 @@ def test_enabled_alternates_and_stamps(fake_generate):
         "llama3.1:8b",
         "llama3.2:3b",
     ]
-    assert fake_generate == stamped  # config really carried the model
+    assert fake_generate == stamped
 
 
-def test_custom_contenders_and_timing():
+def test_custom_contenders_and_fallback():
     cfg = dict(CFG, qgen_bakeoff_models=["a:1", "b:2", "c:3"])
     assert qgen_bakeoff.contenders(cfg) == ["a:1", "b:2", "c:3"]
     # a broken value falls back to the default pair
     assert len(qgen_bakeoff.contenders(dict(CFG, qgen_bakeoff_models="x"))) == 2
 
 
-def test_tally_and_undo(fake_generate):
+def test_small_large_orders_by_parameter_count():
+    assert qgen_bakeoff.small_large({}) == ("llama3.2:3b", "llama3.1:8b")
+    cfg = {"qgen_bakeoff_models": ["qwen2.5:14b", "qwen2.5:1.5b"]}
+    assert qgen_bakeoff.small_large(cfg) == ("qwen2.5:1.5b", "qwen2.5:14b")
+    # unparsable names keep configured order (second treated as smaller)
+    cfg = {"qgen_bakeoff_models": ["mystery-big", "mystery-small"]}
+    small, large = qgen_bakeoff.small_large(cfg)
+    assert {small, large} == {"mystery-big", "mystery-small"}
+
+
+def test_tally_and_undo(fake_generate, alternate):
     card = qgen_bakeoff.generate("text", CFG)[0]
     qgen_bakeoff.tally(card, "great")
     qgen_bakeoff.tally(card, "bad")
@@ -69,7 +102,7 @@ def test_tally_and_undo(fake_generate):
     assert qgen_bakeoff._load()["models"][card["_model"]]["skip"] == 0
 
 
-def test_summary_verdicts(fake_generate):
+def test_summary_verdicts(fake_generate, alternate):
     assert "No bake-off data yet" in qgen_bakeoff.summary()
     # two models, few verdicts -> too early
     for _ in range(2):
@@ -84,7 +117,7 @@ def test_summary_verdicts(fake_generate):
     assert "no meaningful quality difference" in qgen_bakeoff.summary()
 
 
-def test_summary_detects_real_difference(fake_generate):
+def test_summary_detects_real_difference(fake_generate, alternate):
     # model A keeps everything, model B loses everything
     for _ in range(30):
         card = qgen_bakeoff.generate("text", CFG)[0]
@@ -95,7 +128,7 @@ def test_summary_detects_real_difference(fake_generate):
     assert "kept 100%" in text and "kept 0%" in text
 
 
-def test_timings_recorded(fake_generate):
+def test_timings_recorded(fake_generate, alternate):
     qgen_bakeoff.generate("text", CFG)
     s = qgen_bakeoff._load()["models"]["llama3.1:8b"]
     assert s["gens"] == 1 and s["cards"] == 1 and s["seconds"] >= 0
