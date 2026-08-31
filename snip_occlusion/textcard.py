@@ -52,6 +52,9 @@ class TextCardPanel(QWidget):
         self._busy = False
         self._doc_job = 0  # incremented to cancel a pasted-text run
         self._doc_running = False
+        self._undo_stack: list = []  # (card, verdict|None, row index)
+        self._batch_id = 0  # bumped when the row list is replaced
+        self.added_any = False  # did add_card() succeed at least once
         self._build_ui(standalone_shortcuts)
 
     def _build_ui(self, standalone_shortcuts: bool) -> None:
@@ -86,6 +89,15 @@ class TextCardPanel(QWidget):
             self.suggest_status = QLabel("", self)
             self.suggest_status.setStyleSheet("color:#8a8171;")
             title_row.addWidget(self.suggest_status, 1)
+            self.undo_btn = QToolButton(self)
+            self.undo_btn.setText("↶")
+            self.undo_btn.setToolTip(
+                "Undo the last Skip / ★ Great / ✗ Bad — bring the card "
+                "back and forget the verdict"
+            )
+            self.undo_btn.setEnabled(False)
+            qconnect(self.undo_btn.clicked, self._undo_verdict)
+            title_row.addWidget(self.undo_btn)
             paste_btn = QPushButton("📄 Paste text…", self)
             paste_btn.setToolTip(
                 "Paste a whole lesson or element text; cards are "
@@ -312,6 +324,7 @@ class TextCardPanel(QWidget):
             _body_html(self.notes),
         )
         mw.reset()
+        self.added_any = True
         tooltip("Card added", parent=self)
         self.front.clear()
         self.back.clear()
@@ -564,13 +577,35 @@ class TextCardPanel(QWidget):
         mw.taskman.run_in_background(work, done)
 
     def _clear_rows(self) -> None:
+        self._batch_id += 1  # invalidates undo entries and Use-returns
+        self._undo_stack.clear()
+        self.undo_btn.setEnabled(False)
         while self.suggest_lay.count() > 1:
             item = self.suggest_lay.takeAt(0)
             if item.widget() is not None:
                 item.widget().deleteLater()
 
+    def _push_undo(self, card: dict, verdict, index: int) -> None:
+        self._undo_stack.append((card, verdict, index))
+        self.undo_btn.setEnabled(True)
+
+    def _undo_verdict(self) -> None:
+        if not self._undo_stack:
+            return
+        card, verdict, index = self._undo_stack.pop()
+        self.undo_btn.setEnabled(bool(self._undo_stack))
+        if verdict is not None:
+            try:
+                qgen_feedback.unrecord(card)
+            except Exception:
+                pass
+        self._add_suggestion_row(
+            card["front"], card["back"], card.get("notes", ""), index=index
+        )
+        QTimer.singleShot(0, self._fit_suggestions_if_auto)
+
     def _add_suggestion_row(
-        self, front: str, back: str, notes: str = ""
+        self, front: str, back: str, notes: str = "", index=None
     ) -> None:
         row = QFrame(self)
         row.setStyleSheet(
@@ -595,6 +630,9 @@ class TextCardPanel(QWidget):
         if notes:
             card["notes"] = notes
 
+        def row_index() -> int:
+            return max(0, self.suggest_lay.indexOf(row))
+
         def remove_row() -> None:
             row.setParent(None)
             row.deleteLater()
@@ -606,12 +644,38 @@ class TextCardPanel(QWidget):
                 qgen_feedback.record(card, qgen_feedback.KEPT)
             except Exception:
                 pass
+            batch = self._batch_id
+            index = row_index()
+
+            def on_discard() -> None:
+                # the Use window was closed without adding: the card
+                # comes back, and the "kept" verdict is forgotten so a
+                # ✗ Bad afterwards is what the learning loop remembers
+                try:
+                    qgen_feedback.unrecord(card)
+                except Exception:
+                    pass
+                if self._batch_id == batch:
+                    self._add_suggestion_row(
+                        front, back, notes, index=index
+                    )
+                    QTimer.singleShot(0, self._fit_suggestions_if_auto)
+                    tooltip(
+                        "Card returned to the suggestions — no longer "
+                        "counted as kept.",
+                        parent=self,
+                    )
+
             open_text_card_dialog(
-                front_text=front, back_text=back, notes_text=notes
+                front_text=front,
+                back_text=back,
+                notes_text=notes,
+                on_discard=on_discard,
             )
             remove_row()
 
         def skip() -> None:
+            self._push_undo(card, None, row_index())
             remove_row()
 
         def great() -> None:
@@ -619,6 +683,7 @@ class TextCardPanel(QWidget):
                 qgen_feedback.record(card, qgen_feedback.KEPT)
             except Exception:
                 pass
+            self._push_undo(card, qgen_feedback.KEPT, row_index())
             remove_row()
 
         def bad() -> None:
@@ -626,6 +691,7 @@ class TextCardPanel(QWidget):
                 qgen_feedback.record(card, qgen_feedback.BAD)
             except Exception:
                 pass
+            self._push_undo(card, qgen_feedback.BAD, row_index())
             remove_row()
 
         # left to right: use / don't use (no signal) / great, not using /
@@ -666,7 +732,10 @@ class TextCardPanel(QWidget):
                 btn.setStyleSheet("QPushButton{%s}" % style)
             qconnect(btn.clicked, lambda _=False, c=cb: c())
             row_lay.addWidget(btn)
-        self.suggest_lay.insertWidget(self.suggest_lay.count() - 1, row)
+        last = self.suggest_lay.count() - 1  # keep the stretch at the end
+        if index is None or not (0 <= index < last):
+            index = last
+        self.suggest_lay.insertWidget(index, row)
 
 
 class TextCardDialog(QDialog):
@@ -678,8 +747,10 @@ class TextCardDialog(QDialog):
         front_text: str = "",
         back_text: str = "",
         notes_text: str = "",
+        on_discard=None,
     ):
         super().__init__(parent or mw)
+        self._on_discard = on_discard
         self.setWindowTitle(ADDON_NAME + " — Text Card")
         self.setMinimumSize(560, 560)
         self.setWindowFlags(
@@ -717,10 +788,20 @@ class TextCardDialog(QDialog):
                 event.ignore()
                 return
         event.accept()
+        # closed without ever adding: hand the card back to the caller
+        # (the suggestions panel restores it and forgets the verdict)
+        if self._on_discard is not None and not self.panel.added_any:
+            try:
+                self._on_discard()
+            except Exception:
+                pass
 
 
 def open_text_card_dialog(
-    front_text: str = "", back_text: str = "", notes_text: str = ""
+    front_text: str = "",
+    back_text: str = "",
+    notes_text: str = "",
+    on_discard=None,
 ) -> None:
     if mw.col is None:
         showWarning("Open a profile first.", title=ADDON_NAME)
@@ -734,7 +815,11 @@ def open_text_card_dialog(
             existing.activateWindow()
             return
     dlg = TextCardDialog(
-        mw, front_text=front_text, back_text=back_text, notes_text=notes_text
+        mw,
+        front_text=front_text,
+        back_text=back_text,
+        notes_text=notes_text,
+        on_discard=on_discard,
     )
     if not front_text and not back_text:
         mw._snip_occlusion_text_dialog = dlg  # keep a reference (GC gotcha)

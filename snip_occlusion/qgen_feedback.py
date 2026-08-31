@@ -108,6 +108,31 @@ def record(card: dict, verdict: str) -> None:
         _save(data)
 
 
+def unrecord(card: dict) -> None:
+    """Forget any verdict on this card (the user undid their decision).
+
+    Removes it from both lists; recording a new verdict afterwards
+    starts fresh - so Use -> undone -> "Bad" remembers only the Bad.
+    """
+    front = str(card.get("front") or "").strip()[:_MAX_FIELD_CHARS]
+    back = str(card.get("back") or "").strip()[:_MAX_FIELD_CHARS]
+    if not front or not back:
+        return
+    with _lock:
+        data = _load()
+        changed = False
+        for lst in data.values():
+            before = len(lst)
+            lst[:] = [
+                c
+                for c in lst
+                if (c.get("front"), c.get("back")) != (front, back)
+            ]
+            changed = changed or len(lst) != before
+        if changed:
+            _save(data)
+
+
 def examples(config: dict) -> tuple[list, list]:
     """(positive style examples, negative style examples) for the prompt.
 
