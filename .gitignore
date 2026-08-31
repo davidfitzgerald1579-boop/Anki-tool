@@ -5,3 +5,4 @@ meta.json
 dist/
 docs/_slide.png
 .pytest_cache/
+snip_occlusion/user_files/

@@ -16,6 +16,16 @@ def test_prompt_contains_text_and_limit():
     assert "JSON array" in p
 
 
+def test_parse_cards_keeps_optional_notes():
+    raw = (
+        '[{"front": "Q", "back": "A", "notes": "Lister [2002]"},'
+        ' {"front": "Q2", "back": "A2", "notes": ""}]'
+    )
+    cards = qgen.parse_cards(raw)
+    assert cards[0]["notes"] == "Lister [2002]"
+    assert "notes" not in cards[1]
+
+
 def test_parse_cards_plain_and_fenced():
     raw = '[{"front": "Who?", "back": "Individual MPs"}]'
     assert qgen.parse_cards(raw) == [
@@ -76,6 +86,7 @@ def test_generate_cards_via_ollama(monkeypatch):
     assert captured["url"] == "http://localhost:11434/api/chat"
     assert captured["body"]["model"] == qgen.DEFAULT_MODEL
     assert captured["body"]["stream"] is False
+    assert captured["body"]["keep_alive"] == "30m"
     assert "individual MPs" in captured["body"]["messages"][0]["content"]
     assert captured["timeout"] == qgen.DEFAULT_TIMEOUT_S
 

@@ -79,8 +79,13 @@ DEFAULT_CONFIG = {
     "qgen_ollama_url": "http://localhost:11434",
     "qgen_openai_base_url": "http://localhost:1234/v1",
     "qgen_api_key": "",
-    "qgen_max_cards": 8,
+    "qgen_max_cards": 4,
     "qgen_timeout_seconds": 300,
+    "qgen_prefetch": True,
+    "qgen_keep_alive": "30m",
+    "text_editor_sidebar": "keep",  # "keep" | "hide" the sidebar in text view
+    "qgen_feedback": True,
+    "qgen_feedback_examples": 4,
 }
 
 # Distinct colors used for group badges in the editor

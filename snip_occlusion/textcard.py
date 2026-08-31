@@ -1,8 +1,17 @@
-"""A deliberately simple text card: Front, Back, Notes.
+"""The text card editor: Front, Back, Notes - plus AI-suggested cards.
 
-For the facts you'd rather phrase yourself than occlude. Formatting is
-just bold / italic / underline / font size, and one button pulls the OCR
-text of your most recent snip onto the front.
+TextCardPanel is the reusable editor widget. It lives in two places:
+
+- Embedded in the main Snip Occlusion window (the "Text Editor" view,
+  toggled at the top). There it also shows the AI suggestions panel,
+  which fills itself the moment suggestions are ready - generation
+  starts when the snip is loaded, so no button press is needed.
+- Wrapped in TextCardDialog, a small standalone window with just the
+  card fields: opened by "Use →" on a suggestion (prefilled), or by
+  Ctrl+Shift+T outside the main window.
+
+Formatting is just bold / italic / underline / font size, and one button
+pulls the OCR text of your most recent snip onto the front.
 """
 
 from __future__ import annotations
@@ -14,7 +23,7 @@ from aqt.utils import showWarning, tooltip
 
 from .qtshim import *  # noqa: F401,F403
 from . import notes as notes_mod
-from . import qgen
+from . import qgen, qgen_feedback, qgen_prefetch
 from .consts import ADDON_NAME
 from .dialog import _STYLE, get_config, get_previous_snip_text
 
@@ -29,29 +38,23 @@ def _body_html(edit: QTextEdit) -> str:
     return (m.group(1) if m else edit.toHtml()).strip()
 
 
-class TextCardDialog(QDialog):
-    def __init__(self, parent=None, front_text: str = "", back_text: str = ""):
-        super().__init__(parent or mw)
-        self.setWindowTitle(ADDON_NAME + " — Text Card")
-        self.setMinimumSize(560, 640)
-        self.setWindowFlags(
-            self.windowFlags()
-            | Qt.WindowType.WindowMinimizeButtonHint
-            | Qt.WindowType.WindowMaximizeButtonHint
-        )
-        self.setStyleSheet(_STYLE)
+class TextCardPanel(QWidget):
+    def __init__(
+        self,
+        parent=None,
+        with_suggestions: bool = False,
+        standalone_shortcuts: bool = False,
+    ):
+        super().__init__(parent)
+        self.with_suggestions = with_suggestions
         self._active_edit: QTextEdit | None = None
-        self._build_ui()
-        if front_text:
-            self.front.insertPlainText(front_text)
-        if back_text:
-            self.back.insertPlainText(back_text)
-        if front_text or back_text:
-            self.back.setFocus()
+        self._shown_state = None  # the prefetch whose cards are displayed
+        self._busy = False
+        self._build_ui(standalone_shortcuts)
 
-    def _build_ui(self) -> None:
+    def _build_ui(self, standalone_shortcuts: bool) -> None:
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(12, 12, 12, 12)
+        lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
 
         deck_row = QHBoxLayout()
@@ -67,6 +70,64 @@ class TextCardDialog(QDialog):
                 self.deck_box.setCurrentIndex(i)
         deck_row.addWidget(self.deck_box, 1)
         lay.addLayout(deck_row)
+
+        # --- AI suggestions panel (embedded Text Editor view only)
+        if self.with_suggestions:
+            self.suggest_panel = QWidget(self)
+            panel_lay = QVBoxLayout(self.suggest_panel)
+            panel_lay.setContentsMargins(0, 0, 0, 0)
+            panel_lay.setSpacing(4)
+            title_row = QHBoxLayout()
+            title_row.addWidget(
+                QLabel("<b>✨ Suggested cards</b>", self)
+            )
+            self.suggest_status = QLabel("", self)
+            self.suggest_status.setStyleSheet("color:#8a8171;")
+            title_row.addWidget(self.suggest_status, 1)
+            self.regen_btn = QToolButton(self)
+            self.regen_btn.setText("↻")
+            self.regen_btn.setToolTip(
+                "Regenerate suggestions from the current snip"
+            )
+            qconnect(
+                self.regen_btn.clicked,
+                lambda _=False: self.refresh_suggestions(force=True),
+            )
+            title_row.addWidget(self.regen_btn)
+            panel_lay.addLayout(title_row)
+            self.suggest_scroll = QScrollArea(self)
+            self.suggest_scroll.setWidgetResizable(True)
+            self.suggest_scroll.setFrameShape(QFrame.Shape.NoFrame)
+            self.suggest_scroll.setMinimumHeight(40)
+            inner = QWidget(self)
+            inner.setStyleSheet("background:transparent;")
+            self.suggest_lay = QVBoxLayout(inner)
+            self.suggest_lay.setContentsMargins(0, 0, 4, 0)
+            self.suggest_lay.setSpacing(6)
+            self.suggest_lay.addStretch(1)
+            self.suggest_scroll.setWidget(inner)
+            panel_lay.addWidget(self.suggest_scroll)
+            # suggestions sit above the editor in a splitter: they open at
+            # full height (all cards visible, editor pushed down) and the
+            # divider drags up to shrink them, like resizing a box
+            editor_host = QWidget(self)
+            edit_lay = QVBoxLayout(editor_host)
+            edit_lay.setContentsMargins(0, 0, 0, 0)
+            edit_lay.setSpacing(8)
+            self.vsplit = QSplitter(Qt.Orientation.Vertical, self)
+            self.vsplit.setHandleWidth(7)
+            self.vsplit.setChildrenCollapsible(False)
+            self.vsplit.addWidget(self.suggest_panel)
+            self.vsplit.addWidget(editor_host)
+            self.vsplit.setStretchFactor(0, 0)
+            self.vsplit.setStretchFactor(1, 1)
+            self._user_sized = False
+            qconnect(self.vsplit.splitterMoved, self._splitter_dragged)
+            lay.addWidget(self.vsplit, 1)
+            lay = edit_lay  # the editor fields build into the lower pane
+            self._set_suggest_status(
+                "Snip a slide — suggestions appear here automatically."
+            )
 
         # --- formatting bar (applies to whichever box you're typing in)
         bar = QHBoxLayout()
@@ -104,42 +165,7 @@ class TextCardDialog(QDialog):
         )
         qconnect(snip_btn.clicked, self._copy_previous_snip)
         bar.addWidget(snip_btn)
-        self.suggest_btn = QPushButton("✨ Suggest cards", self)
-        self.suggest_btn.setToolTip(
-            "Ask a local AI model to draft question/answer cards from "
-            "your most recent snip's text — then pick your favourites.\n"
-            "Free and private: runs on your own computer via Ollama "
-            "(install from ollama.com, then: ollama pull llama3.1:8b)."
-        )
-        qconnect(self.suggest_btn.clicked, self._suggest_cards)
-        bar.addWidget(self.suggest_btn)
         lay.addLayout(bar)
-
-        # --- AI suggestions panel (hidden until suggestions arrive)
-        self.suggest_panel = QWidget(self)
-        panel_lay = QVBoxLayout(self.suggest_panel)
-        panel_lay.setContentsMargins(0, 0, 0, 0)
-        panel_lay.setSpacing(4)
-        self.suggest_title = QLabel(
-            "<b>Suggested cards</b> — pick your favourites; each opens in "
-            "its own window", self
-        )
-        panel_lay.addWidget(self.suggest_title)
-        self.suggest_scroll = QScrollArea(self)
-        self.suggest_scroll.setWidgetResizable(True)
-        self.suggest_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.suggest_scroll.setMinimumHeight(140)
-        self.suggest_scroll.setMaximumHeight(240)
-        inner = QWidget(self)
-        inner.setStyleSheet("background:transparent;")
-        self.suggest_lay = QVBoxLayout(inner)
-        self.suggest_lay.setContentsMargins(0, 0, 4, 0)
-        self.suggest_lay.setSpacing(6)
-        self.suggest_lay.addStretch(1)
-        self.suggest_scroll.setWidget(inner)
-        panel_lay.addWidget(self.suggest_scroll)
-        self.suggest_panel.hide()
-        lay.addWidget(self.suggest_panel)
 
         def make_edit(min_h: int) -> QTextEdit:
             edit = QTextEdit(self)
@@ -151,15 +177,22 @@ class TextCardDialog(QDialog):
             edit.setFont(font)
             return edit
 
+        # embedded under the suggestions splitter the edits accept being
+        # squashed (suggestions get priority); standalone they keep a
+        # comfortable minimum
+        if self.with_suggestions:
+            min_front, min_back, min_notes = 44, 44, 32
+        else:
+            min_front, min_back, min_notes = 110, 130, 70
         lay.addWidget(QLabel("<b>Front</b>", self))
-        self.front = make_edit(110)
+        self.front = make_edit(min_front)
         lay.addWidget(self.front, 2)
         lay.addWidget(QLabel("<b>Back</b>", self))
-        self.back = make_edit(130)
+        self.back = make_edit(min_back)
         lay.addWidget(self.back, 3)
         lay.addWidget(QLabel("Notes <span style='color:#8a8171'>(shown "
                              "small under the answer)</span>", self))
-        self.notes = make_edit(70)
+        self.notes = make_edit(min_notes)
         lay.addWidget(self.notes, 1)
 
         bottom = QHBoxLayout()
@@ -172,14 +205,27 @@ class TextCardDialog(QDialog):
         bottom.addWidget(self.add_btn)
         lay.addLayout(bottom)
 
-        for seq, cb in [
-            ("Ctrl+Return", self.add_card),
+        shortcuts = [
             ("Ctrl+B", self._bold),
             ("Ctrl+I", self._italic),
             ("Ctrl+U", self._underline),
-        ]:
-            qconnect(QShortcut(QKeySequence(seq), self).activated, cb)
+        ]
+        if standalone_shortcuts:
+            # embedded, the main window routes Ctrl+Return by active view
+            shortcuts.append(("Ctrl+Return", self.add_card))
+        for seq, cb in shortcuts:
+            sc = QShortcut(QKeySequence(seq), self)
+            sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+            qconnect(sc.activated, cb)
+
+    def focus_front(self) -> None:
         self.front.setFocus()
+
+    def has_unsaved_text(self) -> bool:
+        return any(
+            e.toPlainText().strip()
+            for e in (self.front, self.back, self.notes)
+        )
 
     # ---------------------------------------------------------- formatting
 
@@ -243,90 +289,6 @@ class TextCardDialog(QDialog):
         self.front.setTextCursor(cursor)
         self.front.setFocus()
 
-    # ------------------------------------------------------ AI suggestions
-
-    def _suggest_cards(self) -> None:
-        config = get_config()
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            text = get_previous_snip_text()
-        finally:
-            QApplication.restoreOverrideCursor()
-        if not text:
-            tooltip(
-                "No snip text available yet — snip a slide (or add its "
-                "cards) first.",
-                parent=self,
-            )
-            return
-        self.suggest_btn.setEnabled(False)
-        self.suggest_btn.setText("✨ Generating…")
-
-        def work():
-            return qgen.generate_cards(text, config)
-
-        def done(future) -> None:
-            self.suggest_btn.setEnabled(True)
-            self.suggest_btn.setText("✨ Suggest cards")
-            try:
-                cards = future.result()
-            except qgen.QGenError as exc:
-                showWarning(str(exc), parent=self, title=ADDON_NAME)
-                return
-            except Exception as exc:
-                showWarning(
-                    "Card suggestion failed: %s" % exc,
-                    parent=self,
-                    title=ADDON_NAME,
-                )
-                return
-            self._show_suggestions(cards)
-
-        mw.taskman.run_in_background(work, done)
-
-    def _show_suggestions(self, cards: list) -> None:
-        # clear previous suggestions, keep the trailing stretch
-        while self.suggest_lay.count() > 1:
-            item = self.suggest_lay.takeAt(0)
-            if item.widget() is not None:
-                item.widget().deleteLater()
-        for card in cards:
-            self._add_suggestion_row(card["front"], card["back"])
-        self.suggest_panel.show()
-
-    def _add_suggestion_row(self, front: str, back: str) -> None:
-        row = QFrame(self)
-        row.setStyleSheet(
-            "QFrame{background:#ffffff;border:1px solid #e3dcd0;"
-            "border-radius:8px;}"
-        )
-        row_lay = QHBoxLayout(row)
-        row_lay.setContentsMargins(8, 6, 8, 6)
-        text = QLabel(
-            "<b>Q:</b> %s<br><b>A:</b> %s"
-            % (front.replace("<", "&lt;"), back.replace("<", "&lt;")),
-            row,
-        )
-        text.setWordWrap(True)
-        row_lay.addWidget(text, 1)
-        use_btn = QPushButton("Use →", row)
-        use_btn.setToolTip(
-            "Open this card in a new window to tweak and add — this list "
-            "stays here for the rest"
-        )
-
-        def use() -> None:
-            open_text_card_dialog(front_text=front, back_text=back)
-            row.setParent(None)
-            row.deleteLater()
-            # hide the panel once every suggestion has been used
-            if self.suggest_lay.count() <= 1:
-                self.suggest_panel.hide()
-
-        qconnect(use_btn.clicked, use)
-        row_lay.addWidget(use_btn)
-        self.suggest_lay.insertWidget(self.suggest_lay.count() - 1, row)
-
     def add_card(self) -> None:
         front = _body_html(self.front)
         if not front:
@@ -350,11 +312,265 @@ class TextCardDialog(QDialog):
         self.notes.clear()
         self.front.setFocus()
 
+    # ------------------------------------------------------ AI suggestions
+
+    def _set_suggest_status(self, text: str) -> None:
+        if self.with_suggestions:
+            self.suggest_status.setText(text)
+
+    def _splitter_dragged(self, *_args) -> None:
+        # once the user drags the divider, stop auto-sizing this batch
+        self._user_sized = True
+
+    def _fit_suggestions_if_auto(self) -> None:
+        if self.with_suggestions and not self._user_sized:
+            self._fit_suggestions()
+
+    def _fit_suggestions(self) -> None:
+        """Open the suggestions pane to show every card, no scrolling.
+
+        The editor fields get pushed down; the splitter handle still
+        drags up to shrink the pane (then it scrolls internally).
+        """
+        sizes = self.vsplit.sizes()
+        total = sum(sizes)
+        if total <= 0:
+            return  # not laid out yet (view not shown); showEvent refits
+        inner = self.suggest_scroll.widget()
+        if inner.layout() is not None:
+            inner.layout().activate()
+        needed = inner.sizeHint().height() + 6  # rows
+        panel_lay = self.suggest_panel.layout()
+        item = panel_lay.itemAt(0)  # title row
+        if item is not None:
+            needed += item.sizeHint().height() + panel_lay.spacing()
+        # never squash the editor below what it needs to stay usable
+        bottom_min = max(
+            self.vsplit.widget(1).minimumSizeHint().height(), 170
+        )
+        top = max(60, min(needed, total - bottom_min))
+        self.vsplit.setSizes([top, total - top])
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if self.with_suggestions:
+            QTimer.singleShot(0, self._fit_suggestions_if_auto)
+
+    def refresh_suggestions(self, force: bool = False) -> None:
+        """Show the pre-generated suggestions for the current snip.
+
+        Generation starts when the snip is loaded (qgen_prefetch); this
+        just displays the result - with a loading note while it's still
+        in flight. Safe to call repeatedly: showing the same prefetch
+        twice is a no-op unless force=True (the ↻ button), which
+        regenerates from scratch.
+        """
+        if not self.with_suggestions or self._busy:
+            return
+        config = get_config()
+        state = qgen_prefetch.current()
+        if state is None and not force:
+            return  # nothing snipped yet; keep the hint text
+        if state is not None and state is self._shown_state and not force:
+            return  # already showing (or loading) this snip's cards
+        fallback_text = ""
+        if force and (state is None or not state.text.strip()):
+            # OCR touches the canvas widget: main thread only
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                fallback_text = get_previous_snip_text()
+            finally:
+                QApplication.restoreOverrideCursor()
+            if state is None and not fallback_text:
+                self._set_suggest_status(
+                    "no snip yet — snip a slide first"
+                )
+                return
+        self._shown_state = state
+        self._busy = True
+        self._user_sized = False  # a fresh batch auto-sizes again
+        self._clear_rows()
+        self._set_suggest_status("generating on your machine…")
+
+        def work():
+            if force:
+                text = (state.text if state else "").strip() or fallback_text
+                if not text:
+                    raise qgen.QGenError(
+                        "No snip text available yet — snip a slide first."
+                    )
+                return qgen.generate_cards(text, config)
+            timeout = int(config.get("qgen_timeout_seconds") or 300) + 30
+            try:
+                return qgen_prefetch.wait_for_cards(state, timeout)
+            except qgen.QGenError:
+                # e.g. Ollama wasn't running when the snip landed but is
+                # now - retry live before giving up
+                if state.text.strip():
+                    return qgen.generate_cards(state.text, config)
+                raise
+
+        def done(future) -> None:
+            self._busy = False
+            try:
+                cards = future.result()
+            except Exception as exc:
+                self._set_suggest_status("failed — ↻ to retry")
+                tooltip("Suggestions: %s" % exc, parent=self, period=6000)
+                return
+            self._set_suggest_status("")
+            for card in cards:
+                self._add_suggestion_row(
+                    card["front"], card["back"], card.get("notes", "")
+                )
+            QTimer.singleShot(0, self._fit_suggestions_if_auto)
+
+        mw.taskman.run_in_background(work, done)
+
+    def _clear_rows(self) -> None:
+        while self.suggest_lay.count() > 1:
+            item = self.suggest_lay.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+
+    def _add_suggestion_row(
+        self, front: str, back: str, notes: str = ""
+    ) -> None:
+        row = QFrame(self)
+        row.setStyleSheet(
+            "QFrame{background:#ffffff;border:1px solid #e3dcd0;"
+            "border-radius:8px;}"
+        )
+        row_lay = QHBoxLayout(row)
+        row_lay.setContentsMargins(8, 6, 8, 6)
+        body = "<b>Q:</b> %s<br><b>A:</b> %s" % (
+            front.replace("<", "&lt;"),
+            back.replace("<", "&lt;"),
+        )
+        if notes:
+            body += (
+                "<br><span style='color:#8a8272;font-size:11px;'>%s</span>"
+                % notes.replace("<", "&lt;")
+            )
+        text = QLabel(body, row)
+        text.setWordWrap(True)
+        row_lay.addWidget(text, 1)
+        card = {"front": front, "back": back}
+        if notes:
+            card["notes"] = notes
+
+        def remove_row() -> None:
+            row.setParent(None)
+            row.deleteLater()
+            # shrink back to fit the remaining cards (unless hand-sized)
+            QTimer.singleShot(0, self._fit_suggestions_if_auto)
+
+        def use() -> None:
+            try:
+                qgen_feedback.record(card, qgen_feedback.KEPT)
+            except Exception:
+                pass
+            open_text_card_dialog(
+                front_text=front, back_text=back, notes_text=notes
+            )
+            remove_row()
+
+        def skip() -> None:
+            remove_row()
+
+        def great() -> None:
+            try:
+                qgen_feedback.record(card, qgen_feedback.KEPT)
+            except Exception:
+                pass
+            remove_row()
+
+        def bad() -> None:
+            try:
+                qgen_feedback.record(card, qgen_feedback.BAD)
+            except Exception:
+                pass
+            remove_row()
+
+        # left to right: use / don't use (no signal) / great, not using /
+        # bad, not using
+        for label, tip, cb, style in [
+            (
+                "Use →",
+                "Open this card in its own window to tweak and add — and "
+                "teach the AI to write more like this",
+                use,
+                "",
+            ),
+            (
+                "Skip",
+                "Discard — you just don't want this card (teaches the AI "
+                "nothing)",
+                skip,
+                "",
+            ),
+            (
+                "★ Great",
+                "Not using this card, but it's well written — teach the "
+                "AI to write more like this",
+                great,
+                "color:#2e7d32;",
+            ),
+            (
+                "✗ Bad",
+                "Discard — this card is badly written; teach the AI to "
+                "write less like this",
+                bad,
+                "color:#b3261e;",
+            ),
+        ]:
+            btn = QPushButton(label, row)
+            btn.setToolTip(tip)
+            if style:
+                btn.setStyleSheet("QPushButton{%s}" % style)
+            qconnect(btn.clicked, lambda _=False, c=cb: c())
+            row_lay.addWidget(btn)
+        self.suggest_lay.insertWidget(self.suggest_lay.count() - 1, row)
+
+
+class TextCardDialog(QDialog):
+    """Standalone window with just the card fields (no suggestions)."""
+
+    def __init__(
+        self,
+        parent=None,
+        front_text: str = "",
+        back_text: str = "",
+        notes_text: str = "",
+    ):
+        super().__init__(parent or mw)
+        self.setWindowTitle(ADDON_NAME + " — Text Card")
+        self.setMinimumSize(560, 560)
+        self.setWindowFlags(
+            self.windowFlags()
+            | Qt.WindowType.WindowMinimizeButtonHint
+            | Qt.WindowType.WindowMaximizeButtonHint
+        )
+        self.setStyleSheet(_STYLE)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(12, 12, 12, 12)
+        self.panel = TextCardPanel(
+            self, with_suggestions=False, standalone_shortcuts=True
+        )
+        lay.addWidget(self.panel)
+        if front_text:
+            self.panel.front.insertPlainText(front_text)
+        if back_text:
+            self.panel.back.insertPlainText(back_text)
+        if notes_text:
+            self.panel.notes.insertPlainText(notes_text)
+        if front_text or back_text:
+            self.panel.back.setFocus()
+        else:
+            self.panel.focus_front()
+
     def closeEvent(self, event) -> None:
-        if any(
-            e.toPlainText().strip()
-            for e in (self.front, self.back, self.notes)
-        ):
+        if self.panel.has_unsaved_text():
             resp = QMessageBox.question(
                 self,
                 ADDON_NAME,
@@ -367,7 +583,9 @@ class TextCardDialog(QDialog):
         event.accept()
 
 
-def open_text_card_dialog(front_text: str = "", back_text: str = "") -> None:
+def open_text_card_dialog(
+    front_text: str = "", back_text: str = "", notes_text: str = ""
+) -> None:
     if mw.col is None:
         showWarning("Open a profile first.", title=ADDON_NAME)
         return
@@ -379,7 +597,9 @@ def open_text_card_dialog(front_text: str = "", back_text: str = "") -> None:
             existing.raise_()
             existing.activateWindow()
             return
-    dlg = TextCardDialog(mw, front_text=front_text, back_text=back_text)
+    dlg = TextCardDialog(
+        mw, front_text=front_text, back_text=back_text, notes_text=notes_text
+    )
     if not front_text and not back_text:
         mw._snip_occlusion_text_dialog = dlg  # keep a reference (GC gotcha)
     else:

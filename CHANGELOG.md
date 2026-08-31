@@ -4,6 +4,78 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.13.2 — 2026-08-31
+
+- **Readable tooltips.** Hover text was dark-on-black and near
+  invisible; tooltips now use a cream background with dark text,
+  matching the rest of the UI.
+
+## v0.13.1 — 2026-08-31
+
+- **Suggestions open at full height.** The suggestions pane now sizes
+  itself to show every suggested card with no scrolling, pushing the
+  Front/Back/Notes boxes down as needed. A splitter handle under the
+  pane drags up to shrink it (it scrolls internally once shrunk), and
+  it re-fits automatically as cards are used or dismissed — until you
+  drag it yourself, which takes over for that batch.
+
+## v0.13.0 — 2026-08-31
+
+- **Text Editor built into the main window.** Two buttons at the top —
+  🖼 Image Editor (default) / 📝 Text Editor — switch the editing area
+  in place, no separate window. The sidebar stays put (or hides, via
+  the new ⚙ Settings button — your choice).
+- **Suggestions appear on their own.** The Text Editor shows the
+  AI-suggested cards for the current snip at the top automatically —
+  a "generating…" note while the model is still working, cards as soon
+  as it's done. No button to press; ↻ regenerates on demand.
+- **Clearer verdict buttons**, left to right: **Use →** (make this
+  card), **Skip** (don't want it, teaches nothing), **★ Great** (not
+  using it, but write more like this), **✗ Bad** (write less like
+  this). No more squinting at thumbs.
+- "Use →" still opens the card in its own small window to tweak and
+  add; that window is now just the card fields. Ctrl+Shift+T outside
+  the main window opens the same standalone window.
+
+## v0.12.1 — 2026-08-31
+
+- **👍 button on suggestions.** For "not using it, but great card":
+  saves the card as a positive style example without opening it — the
+  full verdict set is now Use → / 👍 / ✕ (neutral) / 👎.
+
+## v0.12.0 — 2026-08-31
+
+- **The AI learns your card taste.** Suggestions now have three
+  verdicts: "Use →" (write more like this), "✕" (neutral discard —
+  teaches nothing; the slide may simply not be card-worthy), and "👎"
+  (badly written — write less like this). Kept and flagged cards are
+  folded into future prompts as form-to-copy / habits-to-avoid, and the
+  positive list is seeded from the author's real SQE deck so the very
+  first generation already imitates it. Configurable via
+  `qgen_feedback` / `qgen_feedback_examples`; everything stays local.
+- **Rewritten generation prompt.** Four suggestions by default instead
+  of eight (`qgen_max_cards`), and the model is told to write fewer —
+  or none — when a slide has little exam-relevant material. Questions
+  may now run to three sentences, with short scenario-style questions
+  encouraged ("A pays B less than the agreed sum. B accepts. Is this
+  good consideration?"); answers state the legal position precisely
+  ("Yes, but…", numbered procedure steps, statute/case references).
+- **Notes on suggestions.** The model can attach brief context (an
+  authority, a caveat) to a card; it shows small under the answer in
+  the suggestion list and prefills the Notes field on "Use →".
+
+## v0.11.0 — 2026-08-31
+
+- **Suggestions are pre-generated.** The moment a snip lands in the
+  editor, OCR and the AI model start working in the background — by the
+  time you open the text card dialog and click "✨ Suggest cards", the
+  drafts usually appear instantly. Configurable via `qgen_prefetch`.
+- **Delete suggestions.** Each suggestion row now has a ✕ button next
+  to "Use →", so you can discard the duds as you work down the list.
+- **Fewer model-load waits.** Ollama is now asked to keep the model in
+  RAM between requests (`qgen_keep_alive`, default 30 minutes), so only
+  the first generation of a study session pays the load time.
+
 ## v0.10.0 — 2026-08-30
 
 - **AI card suggestions are now free, private, and fully open source.**

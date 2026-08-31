@@ -23,6 +23,8 @@ def main() -> None:
         for path in sorted(SRC.rglob("*")):
             if path.is_dir() or "__pycache__" in path.parts:
                 continue
+            if "user_files" in path.parts:
+                continue  # per-user data (e.g. AI feedback); never shipped
             if path.name in EXCLUDE:
                 continue
             zf.write(path, path.relative_to(SRC))
