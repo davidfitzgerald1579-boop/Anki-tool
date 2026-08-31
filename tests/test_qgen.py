@@ -228,3 +228,68 @@ def test_off_topic_cards_are_dropped():
     assert qgen._drop_off_topic([bleed], source) == [bleed]
     # no usable source words -> untouched
     assert qgen._drop_off_topic([bleed], "a b c") == [bleed]
+
+
+SOURCE_WITH_CITES = (
+    "In R v Brown [1970] 1 QBD 105 the prosecution acted for the Crown. "
+    "Consumer rights arise under s 9 CRA 2015 and the Human Rights Act "
+    "1998; see also Article 8(1)."
+)
+
+
+def test_citation_extraction():
+    cites = qgen._citations(SOURCE_WITH_CITES)
+    joined = " | ".join(cites)
+    assert "R v Brown [1970]" in joined
+    assert "Human Rights Act 1998" in joined
+    assert "Article 8(1)" in joined
+    assert "s 9 CRA 2015" in joined
+
+
+def test_verified_references_survive(monkeypatch):
+    monkeypatch.setattr(qgen.qgen_feedback, "phantom_refs", lambda: [])
+    card = {
+        "front": "Which case names the Crown as prosecutor?",
+        "back": "R v Brown [1970].",
+        "notes": "Human Rights Act 1998",
+    }
+    qgen._verify_references([card], SOURCE_WITH_CITES)
+    assert card["notes"] == "Human Rights Act 1998"
+    assert "_warn" not in card
+
+
+def test_invented_references_stripped_and_warned(monkeypatch):
+    monkeypatch.setattr(qgen.qgen_feedback, "phantom_refs", lambda: [])
+    card = {
+        "front": "What did Donoghue v Stevenson [1932] decide?",
+        "back": "The neighbour principle.",
+        "notes": "See also Sale of Goods Act 1979",  # not in source
+    }
+    qgen._verify_references([card], SOURCE_WITH_CITES)
+    assert "notes" not in card  # invented citation -> notes dropped
+    assert "Donoghue v Stevenson" in card["_warn"]  # invented case flagged
+
+
+def test_invented_year_on_real_case_is_caught(monkeypatch):
+    monkeypatch.setattr(qgen.qgen_feedback, "phantom_refs", lambda: [])
+    card = {
+        "front": "Who prosecutes?",
+        "back": "The Crown: R v Brown [1994].",  # real case, wrong year
+    }
+    qgen._verify_references([card], SOURCE_WITH_CITES)
+    assert "_warn" in card and "[1994]" in card["_warn"]
+
+
+def test_phantom_blocklist_applies(monkeypatch):
+    monkeypatch.setattr(
+        qgen.qgen_feedback,
+        "phantom_refs",
+        lambda: ["Smith v Jones [2001]"],
+    )
+    card = {
+        "front": "Q about the burden of proof and the prosecution?",
+        "back": "The prosecution bears it.",
+        "notes": "smith v jones [2001] confirms this",
+    }
+    qgen._verify_references([card], SOURCE_WITH_CITES)
+    assert "notes" not in card

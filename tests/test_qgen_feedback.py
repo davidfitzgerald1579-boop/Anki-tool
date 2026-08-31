@@ -119,3 +119,15 @@ def test_unrecord_unknown_card_is_noop():
     qgen_feedback.unrecord({"front": "other", "back": "card"})
     kept, _ = qgen_feedback.examples({})
     assert kept == [{"front": "Q", "back": "A"}]
+
+
+def test_phantom_refs_roundtrip_dedupe_and_length():
+    qgen_feedback.record_phantom("  Smith v  Jones [2001] ")
+    qgen_feedback.record_phantom("smith v jones [2001]")  # dupe, case-insensitive
+    qgen_feedback.record_phantom("ab")  # too short, ignored
+    assert qgen_feedback.phantom_refs() == ["Smith v Jones [2001]"]
+    # card verdicts still work alongside the phantom list
+    qgen_feedback.record({"front": "Q", "back": "A"}, qgen_feedback.KEPT)
+    qgen_feedback.unrecord({"front": "Q", "back": "A"})
+    assert qgen_feedback.examples({}) == ([], [])
+    assert qgen_feedback.phantom_refs() == ["Smith v Jones [2001]"]

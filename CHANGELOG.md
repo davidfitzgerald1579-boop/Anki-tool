@@ -4,6 +4,26 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.17.0 — 2026-08-31
+
+- **Invented references get caught.** Every citation-shaped string in a
+  suggested card (case names, years, Acts, sections, Articles) is now
+  checked against the source text: a citation that isn't actually in
+  the source strips the Notes field automatically, and shows a red
+  "⚠ not in the source text" warning when it sits in the question or
+  answer. Even a real case with an invented year is caught.
+- **⚠ button: flag an invented reference.** Tell the add-on exactly
+  which reference the model made up (pre-filled with the detected
+  citation) — it goes on a permanent local blocklist and is stripped
+  from every future card, and the card counts as Bad for the learning
+  loop. Deliberately NOT shown to the model: repeating a fabricated
+  citation in the prompt could teach a small model to produce it.
+- **Suggestion text is selectable.** Click-drag over any suggested
+  card's preview to select and copy its text — for checking references
+  against the source side by side.
+- The prompt now instructs: cite only what appears word-for-word in
+  the source; if the source names no authority, cite nothing.
+
 ## v0.16.0 — 2026-08-31
 
 - **Pop-out Text Editor.** The ⧉ button next to the view toggle opens

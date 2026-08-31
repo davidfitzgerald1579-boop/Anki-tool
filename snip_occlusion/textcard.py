@@ -450,6 +450,7 @@ class TextCardPanel(QWidget):
                 card["back"],
                 card.get("notes", ""),
                 model=card.get("_model", ""),
+                warn=card.get("_warn", ""),
             )
         if done_count < total:
             self._set_suggest_status(
@@ -577,6 +578,7 @@ class TextCardPanel(QWidget):
                     card["back"],
                     card.get("notes", ""),
                     model=card.get("_model", ""),
+                    warn=card.get("_warn", ""),
                 )
             QTimer.singleShot(0, self._fit_suggestions_if_auto)
 
@@ -619,6 +621,7 @@ class TextCardPanel(QWidget):
             card.get("notes", ""),
             index=index,
             model=card.get("_model", ""),
+            warn=card.get("_warn", ""),
         )
         QTimer.singleShot(0, self._fit_suggestions_if_auto)
 
@@ -629,6 +632,7 @@ class TextCardPanel(QWidget):
         notes: str = "",
         index=None,
         model: str = "",
+        warn: str = "",
     ) -> None:
         row = QFrame(self)
         row.setStyleSheet(
@@ -646,14 +650,26 @@ class TextCardPanel(QWidget):
                 "<br><span style='color:#8a8272;font-size:11px;'>%s</span>"
                 % notes.replace("<", "&lt;")
             )
+        if warn:
+            body += (
+                "<br><span style='color:#b3261e;font-size:11px;'>⚠ %s"
+                "</span>" % warn.replace("<", "&lt;")
+            )
         text = QLabel(body, row)
         text.setWordWrap(True)
+        # the preview text is selectable, so references etc. can be
+        # copied out and checked against the source material
+        text.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
         row_lay.addWidget(text, 1)
         card = {"front": front, "back": back}
         if notes:
             card["notes"] = notes
         if model:
             card["_model"] = model  # bake-off: who wrote this card
+        if warn:
+            card["_warn"] = warn
 
         def row_index() -> int:
             return max(0, self.suggest_lay.indexOf(row))
@@ -684,7 +700,8 @@ class TextCardPanel(QWidget):
                     pass
                 if self._batch_id == batch:
                     self._add_suggestion_row(
-                        front, back, notes, index=index, model=model
+                        front, back, notes, index=index, model=model,
+                        warn=warn,
                     )
                     QTimer.singleShot(0, self._fit_suggestions_if_auto)
                     tooltip(
@@ -727,6 +744,33 @@ class TextCardPanel(QWidget):
             self._push_undo(card, qgen_feedback.BAD, row_index())
             remove_row()
 
+        def fake_ref() -> None:
+            detected = qgen._citations(
+                " ".join([notes or "", back, front])
+            )
+            value, ok = QInputDialog.getText(
+                self,
+                ADDON_NAME,
+                "Which reference did it invent? Paste/edit the exact "
+                "text — it will be stripped from all future cards:",
+                text=detected[0] if detected else "",
+            )
+            if not ok or not value.strip():
+                return
+            try:
+                qgen_feedback.record_phantom(value)
+                qgen_feedback.record(card, qgen_feedback.BAD)
+                qgen_bakeoff.tally(card, "bad")
+            except Exception:
+                pass
+            self._push_undo(card, qgen_feedback.BAD, row_index())
+            remove_row()
+            tooltip(
+                "Noted — that reference is now blocklisted and will be "
+                "stripped from future suggestions.",
+                parent=self,
+            )
+
         # left to right: use / don't use (no signal) / great, not using /
         # bad, not using
         for label, tip, cb, style in [
@@ -756,6 +800,14 @@ class TextCardPanel(QWidget):
                 "Discard — this card is badly written; teach the AI to "
                 "write less like this",
                 bad,
+                "color:#b3261e;",
+            ),
+            (
+                "⚠",
+                "It invented a reference (case, statute, year…) — tell "
+                "me which, and it will be stripped from every future "
+                "card. Also counts as Bad for the learning loop.",
+                fake_ref,
                 "color:#b3261e;",
             ),
         ]:

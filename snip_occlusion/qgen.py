@@ -101,8 +101,10 @@ def build_prompt(
         "consideration?\"\n"
         "- Answers give the legal position precisely: \"Yes, but...\" / "
         "\"No, unless...\" where the law is conditional; numbered steps "
-        "for procedures; include the statute section or case name when "
-        "the source provides it.\n"
+        "for procedures.\n"
+        "- Cite a case, statute, section number or year ONLY if it "
+        "appears word-for-word in the source text. Never add citations "
+        "from memory; if the source names no authority, cite nothing.\n"
         "- Prefer testable, legally significant material: rules, tests, "
         "time limits, procedures, exceptions. Skip headings and "
         "boilerplate. Fix obvious OCR typos silently.\n\n"
@@ -168,10 +170,74 @@ def generate_cards(text: str, config: dict, source: str = "slide") -> list:
             'Unknown "qgen_provider" %r in the add-on config. '
             'Use "ollama" or "openai_compatible".' % provider
         )
-    return _drop_off_topic(parse_cards(reply), text)
+    cards = _drop_off_topic(parse_cards(reply), text)
+    _verify_references(cards, text)
+    return cards
 
 
 _TOPIC_WORD_RE = re.compile(r"[a-z]{5,}")
+
+# citation-shaped strings: case names (with optional [year]), Acts with
+# years, Article/section references, bare bracketed years
+_CITE_RES = [
+    re.compile(r"\b[A-Z][\w'’-]*(?: [A-Z][\w'’-]*)* v\.? [A-Z][\w'’-]*(?: [A-Z][\w'’-]*)*(?: ?\[\d{4}\])?"),
+    re.compile(r"\b[A-Z][a-z]+(?: [A-Z][a-z]+)* Act \d{4}"),
+    re.compile(r"\bArticle \d+(?:\(\d+\))?"),
+    re.compile(r"\bs\.? ?\d+(?:\(\d+\))?\s+[A-Z]{2,}(?: \d{4})?"),
+    re.compile(r"\[\d{4}\]"),
+]
+
+
+def _citations(text: str) -> list:
+    found = []
+    for rx in _CITE_RES:
+        found.extend(rx.findall(text or ""))
+    return found
+
+
+def _normalise_cite(text: str) -> str:
+    return " ".join(text.lower().replace("v.", "v").split())
+
+
+def _verify_references(cards: list, source_text: str) -> None:
+    """Strip/flag citations the source text doesn't actually contain.
+
+    Local models invent authorities (case names, years, sections),
+    especially in notes. A citation is trusted only if it appears in
+    the source text; anything else - including references the user has
+    flagged as previously invented (the phantom blocklist) - gets the
+    notes field dropped, and a warning attached when it sits in the
+    question or answer. Mechanical, so the model can't talk its way
+    past it.
+    """
+    src = _normalise_cite(source_text)
+    try:
+        phantoms = [
+            _normalise_cite(p) for p in qgen_feedback.phantom_refs()
+        ]
+    except Exception:
+        phantoms = []
+
+    def suspicious(text: str) -> list:
+        normalised = _normalise_cite(text)
+        out = [
+            c
+            for c in _citations(text)
+            if _normalise_cite(c) not in src
+        ]
+        out += [p for p in phantoms if p and p in normalised and p not in src]
+        return out
+
+    for card in cards:
+        notes = card.get("notes") or ""
+        if notes and suspicious(notes):
+            del card["notes"]  # optional context isn't worth a fake cite
+        issues = suspicious(
+            "%s %s" % (card.get("front", ""), card.get("back", ""))
+        )
+        if issues:
+            shown = sorted(set(" ".join(i.split()) for i in issues))[:3]
+            card["_warn"] = "not in the source text: %s" % "; ".join(shown)
 
 
 def _drop_off_topic(cards: list, source_text: str) -> list:
