@@ -4,6 +4,23 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.25.0 — 2026-08-31
+
+- **Accent-coloured words are flagged to the AI as key terms.** Slides
+  often print the crucial words in a different colour; the snip is now
+  re-read with word positions, each word's ink colour is sampled, and
+  words that clearly differ from the page's dominant ink — on lines
+  that mix both colours, so all-accent headings don't trigger — are
+  handed to the model as terms the cards must incorporate. Adjacent
+  accent words are joined into phrases. Best-effort: if the OCR
+  backend can't give word boxes, generation continues without the
+  hint. Sensitivity via `ocr_accent_threshold` in the config (0 turns
+  it off).
+- **B / I / U now properly toggle off on a second click** in the
+  Suggested Cards Use→ window and the Write Card tab. The on/off state
+  is read from the selected text itself, so it also works when the
+  selection was dragged right-to-left.
+
 ## v0.24.0 — 2026-08-31
 
 - **Choose how many cards to make from highlighted text.** Right-click

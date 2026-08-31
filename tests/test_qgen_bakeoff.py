@@ -193,6 +193,20 @@ def test_focus_forwarded_only_when_set(alternate, monkeypatch):
     assert calls[-1] == (None, None, None)
 
 
+def test_emphasis_forwarded_only_when_set(alternate, monkeypatch):
+    calls = []
+
+    def fake(text, config, source="slide", emphasis=None):
+        calls.append(emphasis)
+        return [{"front": "Q", "back": "A"}]
+
+    monkeypatch.setattr(qgen_bakeoff.qgen, "generate_cards", fake)
+    qgen_bakeoff.generate("text", CFG, emphasis=["key term"])
+    assert calls[-1] == ["key term"]
+    qgen_bakeoff.generate("text", CFG, emphasis=[])
+    assert calls[-1] is None  # empty list is omitted entirely
+
+
 def test_timings_recorded(fake_generate, alternate):
     qgen_bakeoff.generate("text", CFG)
     s = qgen_bakeoff._load()["models"]["llama3.1:8b"]

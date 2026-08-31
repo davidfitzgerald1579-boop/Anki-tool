@@ -20,13 +20,14 @@ from __future__ import annotations
 
 import threading
 
-from . import ocr, qgen, qgen_bakeoff
+from . import ocr, ocr_accent, qgen, qgen_bakeoff
 
 
 class _Prefetch:
     def __init__(self):
         self.done = threading.Event()
         self.text = ""
+        self.emphasis: list = []  # accent-coloured slide terms
         self.cards: list | None = None
         self.error: Exception | None = None
 
@@ -65,7 +66,13 @@ def start_for_image(img, config: dict, on_text=None) -> None:
                     on_text(state)
                 except Exception:
                     pass  # display is a bonus; generation must go on
-            state.cards = qgen_bakeoff.generate(state.text, config)
+            # words in an accent colour = the slide's own emphasis;
+            # best-effort, and worth a second OCR pass (the LLM run
+            # that follows dwarfs it)
+            state.emphasis = ocr_accent.extract_accents(img, config)
+            state.cards = qgen_bakeoff.generate(
+                state.text, config, emphasis=state.emphasis or None
+            )
         except Exception as exc:
             state.error = exc
         finally:

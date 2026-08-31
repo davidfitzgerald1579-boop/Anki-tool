@@ -141,6 +141,49 @@ def test_on_text_not_called_for_empty_ocr(monkeypatch):
     assert state.error is not None
 
 
+def test_accent_terms_flow_into_generation(monkeypatch):
+    monkeypatch.setattr(
+        qgen_prefetch.ocr, "extract_text", lambda img, cfg: "slide text"
+    )
+    monkeypatch.setattr(
+        qgen_prefetch.ocr_accent,
+        "extract_accents",
+        lambda img, cfg: ["burden of proof"],
+    )
+    seen = {}
+
+    def fake_generate(text, cfg, source="slide", emphasis=None):
+        seen["emphasis"] = emphasis
+        return []
+
+    monkeypatch.setattr(qgen_prefetch.qgen_bakeoff, "generate", fake_generate)
+    qgen_prefetch.start_for_image(object(), {})
+    state = qgen_prefetch.current()
+    assert state.done.wait(5)
+    assert state.emphasis == ["burden of proof"]
+    assert seen["emphasis"] == ["burden of proof"]
+
+
+def test_accent_failure_never_blocks_generation(monkeypatch):
+    monkeypatch.setattr(
+        qgen_prefetch.ocr, "extract_text", lambda img, cfg: "text"
+    )
+    monkeypatch.setattr(
+        qgen_prefetch.ocr_accent, "extract_accents", lambda img, cfg: []
+    )
+    monkeypatch.setattr(
+        qgen_prefetch.qgen,
+        "generate_cards",
+        lambda text, cfg, source="slide": [{"front": "Q", "back": "A"}],
+    )
+    qgen_prefetch.start_for_image(object(), {})
+    state = qgen_prefetch.current()
+    # no accents -> emphasis kwarg omitted, plain stand-ins still work
+    assert qgen_prefetch.wait_for_cards(state, timeout=5) == [
+        {"front": "Q", "back": "A"}
+    ]
+
+
 def test_new_snip_replaces_previous_prefetch(monkeypatch):
     monkeypatch.setattr(
         qgen_prefetch.ocr, "extract_text", lambda img, cfg: "text"

@@ -59,9 +59,12 @@ def build_prompt(
     feedback=None,
     source: str = "slide",
     focus=None,
+    emphasis=None,
 ) -> str:
     """`focus` passages are must-cover; max_cards then means EXACTLY
     that many cards about them (one per passage when the counts match).
+    `emphasis` lists words the slide printed in an accent colour - the
+    model is told to work them into the cards.
     """
     if source == "document":
         intro = "Extract from the student's course materials:"
@@ -121,13 +124,28 @@ def build_prompt(
         "shown small under the answer; omit it when there is nothing "
         "worth adding.\n\n"
         "%s (write cards about THIS and nothing else):\n"
-        "---\n%s\n---%s"
+        "---\n%s\n---%s%s"
     ) % (
         feedback_block,
         max_cards,
         intro.rstrip(":"),
         text.strip(),
+        _emphasis_block(emphasis),
         _focus_block(focus, max_cards),
+    )
+
+
+def _emphasis_block(emphasis) -> str:
+    """Accent-coloured slide terms, placed after the source text."""
+    if not emphasis:
+        return ""
+    listed = "; ".join(" ".join(term.split()) for term in emphasis)
+    return (
+        "\n\nOn the slide, these words are printed in a DIFFERENT "
+        "COLOUR from the rest of their sentence - the course author "
+        "marked them as key terms. Make sure the cards test the "
+        "points these terms belong to, and use the terms themselves "
+        "in the question or answer: %s" % listed
     )
 
 
@@ -197,6 +215,7 @@ def generate_cards(
     source: str = "slide",
     focus=None,
     focus_cards=None,
+    emphasis=None,
 ) -> list:
     """Blocking call: source text -> [{front, back}, ...]. Raises QGenError.
 
@@ -216,6 +235,7 @@ def generate_cards(
         feedback=qgen_feedback.examples(config),
         source=source,
         focus=focus,
+        emphasis=emphasis,
     )
     provider = (
         str(config.get("qgen_provider") or "ollama")

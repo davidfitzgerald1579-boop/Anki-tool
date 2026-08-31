@@ -106,19 +106,22 @@ def generate(
     source: str = "slide",
     focus=None,
     focus_cards=None,
+    emphasis=None,
 ) -> list:
     """qgen.generate_cards, randomising and timing models when enabled.
 
     Cards from a bake-off generation carry a "_model" key so verdicts
     can be credited to the right model.
     """
-    # focus is only forwarded when set, so simple (text, cfg, source)
-    # stand-ins for generate_cards keep working
+    # optional hints are only forwarded when set, so simple
+    # (text, cfg, source) stand-ins for generate_cards keep working
     kwargs = {"source": source}
     if focus:
         kwargs["focus"] = focus
         if focus_cards:
             kwargs["focus_cards"] = focus_cards
+    if emphasis:
+        kwargs["emphasis"] = emphasis
     if not enabled(config):
         return qgen.generate_cards(text, config, **kwargs)
     # random choice, so verdicts can't be biased by a predictable order

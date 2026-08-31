@@ -93,6 +93,10 @@ DEFAULT_CONFIG = {
     # "shortcuts". Text views always show only Load new snip + Added
     # cards, regardless of this.
     "sidebar_hidden": [],
+    # how different (RGB distance, 0-441) a word's ink colour must be
+    # from the page's dominant ink to be flagged to the LLM as a key
+    # term; 0 turns the accent-colour detection off
+    "ocr_accent_threshold": 110,
     "qgen_feedback": True,
     "qgen_feedback_examples": 4,
 }

@@ -43,6 +43,23 @@ def test_prompt_focus_with_chosen_total():
     assert "EXACTLY one card per passage" in p2
 
 
+def test_prompt_emphasis_block():
+    p = qgen.build_prompt(
+        "The prosecution bears the burden of proof.",
+        4,
+        emphasis=["burden of  proof", "beyond reasonable doubt"],
+    )
+    assert "DIFFERENT COLOUR" in p
+    assert "burden of proof; beyond reasonable doubt" in p
+    # after the source, before any focus block
+    assert p.rfind("DIFFERENT COLOUR") > p.rfind("bears the burden")
+    p2 = qgen.build_prompt(
+        "source", 1, focus=["a passage"], emphasis=["key term"]
+    )
+    assert p2.rfind("MUST-COVER") > p2.rfind("DIFFERENT COLOUR")
+    assert "DIFFERENT COLOUR" not in qgen.build_prompt("text", 4)
+
+
 def test_generate_cards_focus_cards_overrides_count(monkeypatch):
     prompts = []
 

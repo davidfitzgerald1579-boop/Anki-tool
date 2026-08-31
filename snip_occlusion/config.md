@@ -33,7 +33,12 @@
   vocabulary (one word per line, e.g. legal terms) to bias Tesseract.
 - `ocr_corrections`: map of recurring OCR misreads to their fixes,
   applied to every future card, e.g. `{"K80": "KBD", "UTlAC": "UTIAC"}`.
-  Use the editor's "Text preview" button to find misreads worth adding.
+  The OCR text under the Suggested Cards view shows what is being read.
+- `ocr_accent_threshold`: slides often print key terms in a different
+  colour; words whose ink colour differs from the page's dominant ink
+  by more than this (RGB distance, 0–441) — on lines that mix both
+  colours — are flagged to the AI as key terms to work into the cards.
+  Lower = more sensitive. `0` turns the feature off. Default: `110`.
 - `qgen_provider`: how the text card dialog's "Suggest cards" button
   reaches an AI model. `"ollama"` (default) talks to a free, open-source
   model running on your own computer via [Ollama](https://ollama.com) —

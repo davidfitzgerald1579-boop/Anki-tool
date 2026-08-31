@@ -293,23 +293,59 @@ class TextCardPanel(QWidget):
             return w
         return self._active_edit or self.front
 
-    def _bold(self) -> None:
+    def _toggle_format(self, is_on, make_fmt) -> None:
+        """Toggle a char format: on if it's off, OFF if it's already on.
+
+        The on/off state is read from the document text itself (the
+        first selected character), not from the cursor's current
+        format - the cursor's format lags after an apply and reads the
+        wrong side on a right-to-left selection, which made the second
+        click fail to undo the first.
+        """
         e = self._target()
-        heavy = e.fontWeight() > QFont.Weight.Normal
-        e.setFontWeight(
-            QFont.Weight.Normal if heavy else QFont.Weight.Bold
-        )
+        cursor = e.textCursor()
+        if cursor.hasSelection():
+            probe = QTextCursor(cursor)
+            probe.setPosition(
+                min(cursor.anchor(), cursor.position()) + 1
+            )
+            active = is_on(probe.charFormat())
+        else:
+            active = is_on(e.currentCharFormat())
+        fmt = make_fmt(not active)
+        if cursor.hasSelection():
+            cursor.mergeCharFormat(fmt)
+        else:
+            e.mergeCurrentCharFormat(fmt)
         e.setFocus()
+
+    def _bold(self) -> None:
+        def make(on: bool) -> QTextCharFormat:
+            fmt = QTextCharFormat()
+            fmt.setFontWeight(
+                QFont.Weight.Bold if on else QFont.Weight.Normal
+            )
+            return fmt
+
+        self._toggle_format(
+            lambda f: f.fontWeight() > QFont.Weight.Normal, make
+        )
 
     def _italic(self) -> None:
-        e = self._target()
-        e.setFontItalic(not e.fontItalic())
-        e.setFocus()
+        def make(on: bool) -> QTextCharFormat:
+            fmt = QTextCharFormat()
+            fmt.setFontItalic(on)
+            return fmt
+
+        self._toggle_format(lambda f: f.fontItalic(), make)
 
     def _underline(self) -> None:
-        e = self._target()
-        e.setFontUnderline(not e.fontUnderline())
-        e.setFocus()
+        def make(on: bool) -> QTextCharFormat:
+            fmt = QTextCharFormat()
+            fmt.setFontUnderline(on)
+            return fmt
+
+        self._toggle_format(lambda f: f.fontUnderline(), make)
 
     def _size(self, value: str) -> None:
         e = self._target()
@@ -1028,13 +1064,14 @@ class SuggestionsPage(QWidget):
         self._set_suggest_status("generating on your machine…")
 
         def work():
+            emphasis = (getattr(state, "emphasis", None) or None) if state else None
             if force:
                 text = (state.text if state else "").strip() or fallback_text
                 if not text:
                     raise qgen.QGenError(
                         "No snip text available yet — snip a slide first."
                     )
-                return qgen_bakeoff.generate(text, config)
+                return qgen_bakeoff.generate(text, config, emphasis=emphasis)
             timeout = int(config.get("qgen_timeout_seconds") or 300) + 30
             try:
                 return qgen_prefetch.wait_for_cards(state, timeout)
@@ -1042,7 +1079,9 @@ class SuggestionsPage(QWidget):
                 # e.g. Ollama wasn't running when the snip landed but is
                 # now - retry live before giving up
                 if state.text.strip():
-                    return qgen_bakeoff.generate(state.text, config)
+                    return qgen_bakeoff.generate(
+                        state.text, config, emphasis=emphasis
+                    )
                 raise
 
         def done(future) -> None:
