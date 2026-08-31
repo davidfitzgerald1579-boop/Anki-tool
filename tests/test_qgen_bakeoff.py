@@ -170,6 +170,26 @@ def test_stats_backfills_older_files(tmp_path):
     assert "needed correcting" not in text
 
 
+def test_focus_forwarded_only_when_set(alternate, monkeypatch):
+    calls = []
+
+    def fake(text, config, source="slide", focus=None):
+        calls.append((config.get("qgen_model"), focus))
+        return [{"front": "Q", "back": "A"}]
+
+    monkeypatch.setattr(qgen_bakeoff.qgen, "generate_cards", fake)
+    # focused generation goes through the bake-off machinery too
+    card = qgen_bakeoff.generate("text", CFG, focus=["a passage"])[0]
+    assert card["_model"] == "llama3.1:8b"
+    assert calls[-1] == ("llama3.1:8b", ["a passage"])
+    # without focus the kwarg is omitted, so (text, cfg, source)
+    # stand-ins keep working
+    qgen_bakeoff.generate(
+        "text", {"qgen_bakeoff": False}, focus=None
+    )
+    assert calls[-1] == (None, None)
+
+
 def test_timings_recorded(fake_generate, alternate):
     qgen_bakeoff.generate("text", CFG)
     s = qgen_bakeoff._load()["models"]["llama3.1:8b"]

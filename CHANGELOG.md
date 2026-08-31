@@ -4,6 +4,25 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.22.0 — 2026-08-31
+
+- **Added cards can be fixed after the fact.** Every text card you add
+  now appears under "Added cards" in the sidebar (newest first). Click
+  one to reopen it: edit and press **Redeploy** — the corrected note is
+  added first, then the old one is deleted, so nothing can be lost —
+  or **🗑 Delete card** to remove it from the deck. The entry keeps
+  tracking the replacement, so a card can be redeployed repeatedly.
+  (The list is per Anki session.)
+- **Right-click a selection in the source text → "✨ Make a card from
+  this selection".** The AI writes a card that specifically teaches the
+  passage you highlighted, using the rest of the slide only as context.
+- **🖍 Pick mode** (button beside the source-text heading): turn it on,
+  drag over each sentence you want a card about — every selection stays
+  marked in blue — then press **✨ Make cards (N)** and the AI writes
+  exactly one card per picked passage. Focused cards append to the
+  current suggestions, carry the usual verdict buttons and 🔎 trace,
+  and count in the model bake-off.
+
 ## v0.21.2 — 2026-08-31
 
 - **The OCR text no longer waits for the AI.** It used to appear only

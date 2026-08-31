@@ -20,7 +20,7 @@ from aqt import mw
 from aqt.utils import showWarning
 
 from .qtshim import *  # noqa: F401,F403
-from . import notes as notes_mod
+from . import added_cards, notes as notes_mod
 from . import qgen, qgen_bakeoff, qgen_doc, qgen_feedback, qgen_prefetch
 from .consts import ADDON_NAME
 from .dialog import _STYLE, get_config, get_previous_snip_text
@@ -72,6 +72,7 @@ class TextCardPanel(QWidget):
         self._active_edit: QTextEdit | None = None
         self.added_any = False  # did add_card() succeed at least once
         self.on_added = None  # callback(front, back, notes) after an add
+        self.replaces_note_id = None  # set for a redeploy of this note
         self._src_user_sized = False
         self._build_ui(standalone_shortcuts)
 
@@ -355,13 +356,34 @@ class TextCardPanel(QWidget):
             self.back.toPlainText().strip(),
             self.notes.toPlainText().strip(),
         )
-        notes_mod.add_text_note(
-            mw.col,
-            self.deck_box.currentData(),
-            front,
-            _body_html(self.back),
-            _body_html(self.notes),
+        back_html = _body_html(self.back)
+        notes_html = _body_html(self.notes)
+        deck_id = self.deck_box.currentData()
+        note = notes_mod.add_text_note(
+            mw.col, deck_id, front, back_html, notes_html
         )
+        replaces = getattr(self, "replaces_note_id", None)
+        try:
+            if replaces is not None:
+                # redeploy: the new note is in; now retire the old one
+                notes_mod.remove_note(mw.col, replaces)
+                added_cards.replace(
+                    replaces,
+                    int(note.id),
+                    deck_id,
+                    front,
+                    back_html,
+                    notes_html,
+                    plain[0],
+                )
+                self.replaces_note_id = int(note.id)
+            else:
+                added_cards.record(
+                    int(note.id), deck_id, front, back_html, notes_html,
+                    plain[0],
+                )
+        except Exception:
+            pass  # the note was added; tracking it is best-effort
         mw.reset()
         self.added_any = True
         if self.on_added is not None:
@@ -369,7 +391,10 @@ class TextCardPanel(QWidget):
                 self.on_added(*plain)
             except Exception:
                 pass
-        tooltip("Card added", parent=self)
+        tooltip(
+            "Card redeployed" if replaces is not None else "Card added",
+            parent=self,
+        )
         self.front.clear()
         self.back.clear()
         self.notes.clear()
@@ -393,6 +418,7 @@ class SuggestionsPage(QWidget):
         self._undo_stack: list = []  # (card, verdict|None, row index)
         self._batch_id = 0  # bumped when the row list is replaced
         self._current_source = ""
+        self._picked: list = []  # (start, end, text) picked passages
         self._build_ui()
 
     def _build_ui(self) -> None:
@@ -473,12 +499,42 @@ class SuggestionsPage(QWidget):
             self,
         )
         self.source_legend.setWordWrap(True)
-        src_lay.addWidget(self.source_legend)
+        legend_row = QHBoxLayout()
+        legend_row.addWidget(self.source_legend, 1)
+        self.pick_btn = QToolButton(self)
+        self.pick_btn.setText("🖍 Pick")
+        self.pick_btn.setCheckable(True)
+        self.pick_btn.setToolTip(
+            "Pick sentences for the AI: turn this on, drag over each "
+            "passage you want a card about (they stay marked), then "
+            "press ✨ Make cards. Right-clicking a single selection "
+            "works too."
+        )
+        qconnect(self.pick_btn.toggled, self._pick_mode_toggled)
+        legend_row.addWidget(self.pick_btn)
+        self.make_btn = QPushButton("✨ Make cards", self)
+        self.make_btn.setToolTip(
+            "Generate one card per picked passage — each card must "
+            "teach exactly what its passage says"
+        )
+        self.make_btn.setVisible(False)
+        self.make_btn.setEnabled(False)
+        qconnect(self.make_btn.clicked, self._make_from_picks)
+        legend_row.addWidget(self.make_btn)
+        src_lay.addLayout(legend_row)
         self.source_browser = QTextBrowser(self)
         self.source_browser.setMinimumHeight(90)
         self.source_browser.setPlaceholderText(
             "Snip a slide or paste a lesson — its text appears here."
         )
+        self.source_browser.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu
+        )
+        qconnect(
+            self.source_browser.customContextMenuRequested,
+            self._source_menu,
+        )
+        self.source_browser.viewport().installEventFilter(self)
         src_lay.addWidget(self.source_browser)
 
         self.vsplit = QSplitter(Qt.Orientation.Vertical, self)
@@ -503,6 +559,7 @@ class SuggestionsPage(QWidget):
     def set_source_text(self, text: str) -> None:
         """Show plain source text (no highlights) and remember it."""
         self._current_source = text or ""
+        self._clear_picks()  # the marks' positions no longer apply
         paragraphs = [
             _escape(" ".join(p.split()))
             for p in re.split(r"\n\s*\n", self._current_source)
@@ -523,6 +580,7 @@ class SuggestionsPage(QWidget):
         if not source.strip():
             tooltip("No source text stored for this card.", parent=self)
             return
+        self.pick_btn.setChecked(False)  # 🔎 rewrites the text below
         from . import qgen_trace
 
         body, matches, notes_matches = qgen_trace.highlight_html(
@@ -601,6 +659,152 @@ class SuggestionsPage(QWidget):
         QTimer.singleShot(0, self._fit_suggestions_if_auto)
 
     # -------------------------------------------- pasted-text generation
+
+    # ------------------------------------------------- focused generation
+
+    def eventFilter(self, obj, event):
+        if (
+            obj is self.source_browser.viewport()
+            and event.type() == QEvent.Type.MouseButtonRelease
+            and self.pick_btn.isChecked()
+        ):
+            # let Qt finalise the selection first, then capture it
+            QTimer.singleShot(0, self._capture_pick)
+        return super().eventFilter(obj, event)
+
+    def _pick_mode_toggled(self, on: bool) -> None:
+        if on and not self._current_source.strip():
+            tooltip(
+                "No source text yet — snip a slide first.", parent=self
+            )
+            self.pick_btn.setChecked(False)
+            return
+        if on:
+            # start from clean text so the pick marks are unambiguous
+            self.set_source_text(self._current_source)
+        else:
+            self._clear_picks()
+        self.make_btn.setVisible(on)
+        self._update_pick_ui()
+
+    def _capture_pick(self) -> None:
+        cursor = self.source_browser.textCursor()
+        text = " ".join(
+            cursor.selectedText().replace(" ", " ").split()
+        )
+        if len(text) < 8:
+            return  # a stray click, or too little to teach from
+        span = (cursor.selectionStart(), cursor.selectionEnd())
+        if any((s, e) == span for s, e, _ in self._picked):
+            return
+        self._picked.append((span[0], span[1], text))
+        cursor.clearSelection()
+        self.source_browser.setTextCursor(cursor)
+        self._paint_picks()
+        self._update_pick_ui()
+
+    def _paint_picks(self) -> None:
+        extras = []
+        for start, end, _ in self._picked:
+            sel = QTextEdit.ExtraSelection()
+            cur = self.source_browser.textCursor()
+            cur.setPosition(start)
+            cur.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+            sel.cursor = cur
+            fmt = QTextCharFormat()
+            fmt.setBackground(QColor("#cfe3ff"))
+            sel.format = fmt
+            extras.append(sel)
+        self.source_browser.setExtraSelections(extras)
+
+    def _clear_picks(self) -> None:
+        self._picked = []
+        try:
+            self.source_browser.setExtraSelections([])
+        except Exception:
+            pass
+        self._update_pick_ui()
+
+    def _update_pick_ui(self) -> None:
+        n = len(self._picked)
+        self.make_btn.setEnabled(n > 0)
+        self.make_btn.setText(
+            "✨ Make cards (%d)" % n if n else "✨ Make cards"
+        )
+
+    def _make_from_picks(self) -> None:
+        passages = [t for _, _, t in self._picked]
+        self.pick_btn.setChecked(False)  # exits pick mode, clears marks
+        self._generate_focused(passages)
+
+    def _source_menu(self, pos) -> None:
+        menu = self.source_browser.createStandardContextMenu()
+        sel = " ".join(
+            self.source_browser.textCursor()
+            .selectedText()
+            .replace(" ", " ")
+            .split()
+        )
+        if sel:
+            menu.addSeparator()
+            act = menu.addAction("✨ Make a card from this selection")
+            qconnect(
+                act.triggered,
+                lambda _=False, s=sel: self._generate_focused([s]),
+            )
+        menu.exec(self.source_browser.viewport().mapToGlobal(pos))
+
+    def _generate_focused(self, passages: list) -> None:
+        """One card per passage, appended to the current suggestions."""
+        passages = [p for p in passages if p.strip()]
+        if not passages:
+            return
+        if self._busy or self._doc_running:
+            tooltip("Still generating — one moment.", parent=self)
+            return
+        source = self._current_source.strip()
+        if not source:
+            tooltip(
+                "No source text yet — snip a slide first.", parent=self
+            )
+            return
+        config = self._config_with_count()
+        self._busy = True
+        n = len(passages)
+        self._set_suggest_status(
+            "writing %d card%s for your highlighted text…"
+            % (n, "" if n == 1 else "s")
+        )
+        batch = self._batch_id
+
+        def work():
+            return qgen_bakeoff.generate(source, config, focus=passages)
+
+        def done(fut) -> None:
+            self._busy = False
+            try:
+                cards = fut.result()
+            except Exception as exc:
+                self._set_suggest_status("focused cards failed — retry")
+                tooltip(
+                    "Focused cards: %s" % exc, parent=self, period=6000
+                )
+                return
+            self._set_suggest_status("")
+            if self._batch_id != batch:
+                return  # the list was replaced while generating
+            if not cards:
+                tooltip(
+                    "The AI returned nothing for that selection — try "
+                    "a slightly longer passage.",
+                    parent=self,
+                )
+                return
+            for card in cards:
+                self._add_card_row(card)
+            QTimer.singleShot(0, self._fit_suggestions_if_auto)
+
+        mw.taskman.run_in_background(work, done)
 
     def _count_changed(self, value: str) -> None:
         """Persist the Cards: selector; the next generation uses it."""
@@ -1342,4 +1546,100 @@ def open_text_card_dialog(
             refs = mw._snip_occlusion_text_dialogs = []
         refs[:] = [d for d in refs if d.isVisible()]
         refs.append(dlg)
+    dlg.show()
+
+
+class AddedCardDialog(QDialog):
+    """Review a card added this session: fix it and redeploy, or delete.
+
+    Redeploy adds the corrected note first, then removes the old one -
+    "delete and release a new one in its place" - so a failure can
+    never lose the card. The registry entry then tracks the new note.
+    """
+
+    def __init__(self, entry: dict, parent=None):
+        super().__init__(parent or mw)
+        self.entry = entry
+        self.setWindowTitle(ADDON_NAME + " — Added card")
+        self.setMinimumSize(560, 600)
+        self.setWindowFlags(
+            self.windowFlags()
+            | Qt.WindowType.WindowMinimizeButtonHint
+            | Qt.WindowType.WindowMaximizeButtonHint
+        )
+        self.setStyleSheet(_STYLE)
+        cream_tooltips(self)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(12, 12, 12, 12)
+        info = QLabel(
+            "This card is already in your deck. Edit it and press "
+            "Redeploy to swap in the corrected version, or delete it.",
+            self,
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet("color:#8a8171;")
+        lay.addWidget(info)
+        self.panel = TextCardPanel(
+            self, show_source=False, standalone_shortcuts=True
+        )
+        lay.addWidget(self.panel)
+        self.panel.front.setHtml(entry.get("front", ""))
+        self.panel.back.setHtml(entry.get("back", ""))
+        self.panel.notes.setHtml(entry.get("notes", ""))
+        i = self.panel.deck_box.findData(entry.get("deck_id"))
+        if i >= 0:
+            self.panel.deck_box.setCurrentIndex(i)
+        self.panel.replaces_note_id = entry["note_id"]
+        self.panel.add_btn.setText("Redeploy")
+        self.panel.add_btn.setToolTip(
+            "Replace the card in your deck with this corrected version "
+            "(the old one is deleted)"
+        )
+        self.panel.on_added = lambda *a: self.accept()
+        delete_btn = QPushButton("🗑 Delete card", self)
+        delete_btn.setStyleSheet("QPushButton{color:#b3261e;}")
+        delete_btn.setToolTip(
+            "Remove this card from your deck entirely"
+        )
+        qconnect(delete_btn.clicked, self._delete_card)
+        lay.addWidget(delete_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        self.panel.focus_front()
+
+    def _delete_card(self) -> None:
+        resp = QMessageBox.question(
+            self,
+            ADDON_NAME,
+            "Delete this card from your deck?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if resp != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            notes_mod.remove_note(mw.col, self.entry["note_id"])
+            mw.reset()
+        except Exception as exc:
+            showWarning(
+                "Could not delete the card: %s" % exc,
+                parent=self,
+                title=ADDON_NAME,
+            )
+            return
+        added_cards.forget(self.entry["note_id"])
+        tooltip("Card deleted.", parent=self.parentWidget() or self)
+        self.accept()
+
+
+def open_added_card_editor(note_id: int, parent=None) -> None:
+    entry = added_cards.get(note_id)
+    if entry is None:
+        return
+    if mw.col is None:
+        showWarning("Open a profile first.", title=ADDON_NAME)
+        return
+    dlg = AddedCardDialog(entry, parent=parent)
+    refs = getattr(mw, "_snip_occlusion_added_dialogs", None)
+    if refs is None:
+        refs = mw._snip_occlusion_added_dialogs = []
+    refs[:] = [d for d in refs if d.isVisible()]
+    refs.append(dlg)
     dlg.show()

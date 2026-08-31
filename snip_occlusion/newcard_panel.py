@@ -10,6 +10,7 @@ first queued card into the editor as a fresh image to occlude.
 from __future__ import annotations
 
 from .qtshim import *  # noqa: F401,F403
+from . import added_cards
 from .newcard import NewCardQueue, QueuedCard
 
 PATCH_MIME = "application/x-snip-occlusion-patch"
@@ -228,6 +229,24 @@ class NewCardQueuePanel(QWidget):
         qconnect(self.start_btn.clicked, self.start_next_requested.emit)
         row.addWidget(self.start_btn)
         lay.addLayout(row)
+
+        # ------- cards added this session: click to fix or delete one
+        self.open_added_handler = None  # set by the dialog
+        self.added_title = QLabel("Added cards", self)
+        self.added_title.setStyleSheet("font-weight:600;")
+        self.added_title.setToolTip(
+            "Text cards added this session — click one to edit and "
+            "redeploy it (replacing the card in your deck) or delete it"
+        )
+        lay.addWidget(self.added_title)
+        self.added_host = QWidget(self)
+        self.added_lay = QVBoxLayout(self.added_host)
+        self.added_lay.setContentsMargins(0, 0, 0, 0)
+        self.added_lay.setSpacing(2)
+        lay.addWidget(self.added_host)
+        added_cards.add_listener(self.refresh_added)
+        self.refresh_added()
+
         self._refresh_buttons()
 
     # --------------------------------------------------------------- queue
@@ -275,6 +294,41 @@ class NewCardQueuePanel(QWidget):
             if w is not None:
                 w.refresh()
         return ok
+
+    # ------------------------------------------------------- added cards
+
+    def refresh_added(self) -> None:
+        """Rebuild the clickable list of cards added this session."""
+        while self.added_lay.count():
+            item = self.added_lay.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        entries = added_cards.entries()
+        self.added_title.setVisible(bool(entries))
+        self.added_host.setVisible(bool(entries))
+        for entry in reversed(entries):  # newest on top
+            label = entry["label"]
+            if len(label) > 42:
+                label = label[:41] + "…"
+            btn = QPushButton("📇 " + label, self.added_host)
+            btn.setStyleSheet(
+                "QPushButton{text-align:left;padding:3px 6px;"
+                "font-size:9pt;}"
+            )
+            btn.setToolTip(
+                "%s\n\nClick to edit & redeploy this card, or delete "
+                "it from your deck." % entry["label"]
+            )
+            note_id = entry["note_id"]
+            qconnect(
+                btn.clicked,
+                lambda _=False, nid=note_id: self._added_clicked(nid),
+            )
+            self.added_lay.addWidget(btn)
+
+    def _added_clicked(self, note_id: int) -> None:
+        if self.open_added_handler is not None:
+            self.open_added_handler(note_id)
 
     # ------------------------------------------------------------- helpers
 

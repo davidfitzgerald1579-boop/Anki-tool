@@ -16,6 +16,37 @@ def test_prompt_contains_text_and_limit():
     assert "JSON array" in p
 
 
+def test_prompt_focus_block_comes_last():
+    p = qgen.build_prompt(
+        "The Court tries all summary offences. Other sentence here.",
+        4,
+        focus=["The Court tries  all summary offences"],
+    )
+    assert "EXACTLY one card per passage" in p
+    assert "1. The Court tries all summary offences" in p  # whitespace fixed
+    # the focus block sits AFTER the source text (recency anchoring)
+    assert p.rfind("MUST-COVER") > p.rfind("Other sentence here")
+    # and without focus there is no block at all
+    assert "MUST-COVER" not in qgen.build_prompt("text", 4)
+
+
+def test_generate_cards_focus_caps_to_passage_count(monkeypatch):
+    prompts = []
+
+    def fake_chat(config, prompt):
+        prompts.append(prompt)
+        return '[{"front": "Q", "back": "A"}]'
+
+    monkeypatch.setattr(qgen, "_chat_ollama", fake_chat)
+    cfg = {"qgen_provider": "ollama", "qgen_feedback": False,
+           "qgen_max_cards": 4}
+    qgen.generate_cards(
+        "source text about offences", cfg, focus=["passage one", "two x"]
+    )
+    assert "up to 2 flashcards" in prompts[0]
+    assert "1. passage one" in prompts[0] and "2. two x" in prompts[0]
+
+
 def test_parse_cards_keeps_optional_notes():
     raw = (
         '[{"front": "Q", "back": "A", "notes": "Lister [2002]"},'

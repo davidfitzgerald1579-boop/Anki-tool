@@ -393,6 +393,7 @@ class SnipOcclusionDialog(QDialog):
         side.addWidget(self._separator())
         self.queue_panel = NewCardQueuePanel(self)
         self.queue_panel.patch_drop_handler = self._on_patch_dropped_to_card
+        self.queue_panel.open_added_handler = self._open_added_card
         qconnect(
             self.queue_panel.start_next_requested, self._start_next_clicked
         )
@@ -907,6 +908,11 @@ class SnipOcclusionDialog(QDialog):
         if popped is not None and popped.isVisible():
             panels.append(popped.panel)
         return panels
+
+    def _open_added_card(self, note_id: int) -> None:
+        from .textcard import open_added_card_editor  # circular import
+
+        open_added_card_editor(note_id, parent=self)
 
     def _current_source_text(self) -> str:
         text = self.suggest_page.current_source()

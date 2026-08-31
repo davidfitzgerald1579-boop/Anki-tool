@@ -100,20 +100,27 @@ def small_large(config: dict) -> tuple:
     return ordered[0], ordered[-1]
 
 
-def generate(text: str, config: dict, source: str = "slide") -> list:
+def generate(
+    text: str, config: dict, source: str = "slide", focus=None
+) -> list:
     """qgen.generate_cards, randomising and timing models when enabled.
 
     Cards from a bake-off generation carry a "_model" key so verdicts
     can be credited to the right model.
     """
+    # focus is only forwarded when set, so simple (text, cfg, source)
+    # stand-ins for generate_cards keep working
+    kwargs = {"source": source}
+    if focus:
+        kwargs["focus"] = focus
     if not enabled(config):
-        return qgen.generate_cards(text, config, source=source)
+        return qgen.generate_cards(text, config, **kwargs)
     # random choice, so verdicts can't be biased by a predictable order
     model = random.choice(contenders(config))
     cfg = dict(config)
     cfg["qgen_model"] = model
     start = time.monotonic()
-    cards = qgen.generate_cards(text, cfg, source=source)
+    cards = qgen.generate_cards(text, cfg, **kwargs)
     elapsed = time.monotonic() - start
     with _lock:
         data = _load()

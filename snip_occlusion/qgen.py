@@ -54,7 +54,11 @@ def _example_lines(cards: list) -> list:
 
 
 def build_prompt(
-    text: str, max_cards: int, feedback=None, source: str = "slide"
+    text: str,
+    max_cards: int,
+    feedback=None,
+    source: str = "slide",
+    focus=None,
 ) -> str:
     if source == "document":
         intro = "Extract from the student's course materials:"
@@ -114,8 +118,30 @@ def build_prompt(
         "shown small under the answer; omit it when there is nothing "
         "worth adding.\n\n"
         "%s (write cards about THIS and nothing else):\n"
-        "---\n%s\n---"
-    ) % (feedback_block, max_cards, intro.rstrip(":"), text.strip())
+        "---\n%s\n---%s"
+    ) % (
+        feedback_block,
+        max_cards,
+        intro.rstrip(":"),
+        text.strip(),
+        _focus_block(focus),
+    )
+
+
+def _focus_block(focus) -> str:
+    """The must-cover passages block, placed LAST for recency anchoring."""
+    if not focus:
+        return ""
+    numbered = "\n".join(
+        "%d. %s" % (i, " ".join(p.split()))
+        for i, p in enumerate(focus, 1)
+    )
+    return (
+        "\n\nThe student highlighted these passages from the source "
+        "text as MUST-COVER. Write EXACTLY one card per passage, in "
+        "the same order, each testing precisely what its passage says. "
+        "Use the rest of the source only as context:\n" + numbered
+    )
 
 
 def parse_cards(raw: str) -> list:
@@ -147,13 +173,26 @@ def parse_cards(raw: str) -> list:
     return cards
 
 
-def generate_cards(text: str, config: dict, source: str = "slide") -> list:
-    """Blocking call: source text -> [{front, back}, ...]. Raises QGenError."""
+def generate_cards(
+    text: str, config: dict, source: str = "slide", focus=None
+) -> list:
+    """Blocking call: source text -> [{front, back}, ...]. Raises QGenError.
+
+    `focus` is an optional list of passages the user highlighted; the
+    model is told to write exactly one card per passage.
+    """
     if not text.strip():
         raise QGenError("There is no snip text to work from.")
-    max_cards = int(config.get("qgen_max_cards", 4) or 4)
+    if focus:
+        max_cards = len(focus)
+    else:
+        max_cards = int(config.get("qgen_max_cards", 4) or 4)
     prompt = build_prompt(
-        text, max_cards, feedback=qgen_feedback.examples(config), source=source
+        text,
+        max_cards,
+        feedback=qgen_feedback.examples(config),
+        source=source,
+        focus=focus,
     )
     provider = (
         str(config.get("qgen_provider") or "ollama")

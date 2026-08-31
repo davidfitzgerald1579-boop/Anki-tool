@@ -156,6 +156,14 @@ def add_text_note(col, deck_id: int, front: str, back: str, notes: str):
     return note
 
 
+def remove_note(col, note_id: int) -> None:
+    """Delete one note (and its cards) by id."""
+    try:
+        col.remove_notes([note_id])
+    except AttributeError:  # pre-2.1.28 API
+        col.remNotes([note_id])
+
+
 # ------------------------------------------------- bulk delete by image
 
 
