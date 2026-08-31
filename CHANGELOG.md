@@ -4,6 +4,17 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.24.0 — 2026-08-31
+
+- **Choose how many cards to make from highlighted text.** Right-click
+  a selection in the source pane: "✨ Make a card from this selection"
+  still writes one, and a new "✨ Make several cards from it…" submenu
+  asks for 2–8 cards about that passage. In 🖍 Pick mode a selector
+  appears next to ✨ Make cards: "1 per pick" (the default, one card
+  per highlighted passage) or a number 1–8 for that many cards in
+  total across the picked passages. The prompt tells the model the
+  EXACT number either way.
+
 ## v0.23.1 — 2026-08-31
 
 - **The Added cards tray now moves with the view**: bottom of the

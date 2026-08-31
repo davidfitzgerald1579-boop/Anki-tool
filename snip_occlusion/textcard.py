@@ -512,6 +512,18 @@ class SuggestionsPage(QWidget):
         )
         qconnect(self.pick_btn.toggled, self._pick_mode_toggled)
         legend_row.addWidget(self.pick_btn)
+        self.pick_count_box = QComboBox(self)
+        self.pick_count_box.addItem("1 per pick")
+        self.pick_count_box.addItems([str(n) for n in range(1, 9)])
+        self.pick_count_box.setToolTip(
+            "How many cards to make from the picked passages: "
+            "'1 per pick' (default) writes one card per highlighted "
+            "passage; a number writes that many cards in total across "
+            "them."
+        )
+        self.pick_count_box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.pick_count_box.setVisible(False)
+        legend_row.addWidget(self.pick_count_box)
         self.make_btn = QPushButton("✨ Make cards", self)
         self.make_btn.setToolTip(
             "Generate one card per picked passage — each card must "
@@ -685,6 +697,9 @@ class SuggestionsPage(QWidget):
         else:
             self._clear_picks()
         self.make_btn.setVisible(on)
+        self.pick_count_box.setVisible(on)
+        if on:
+            self.pick_count_box.setCurrentIndex(0)  # back to 1 per pick
         self._update_pick_ui()
 
     def _capture_pick(self) -> None:
@@ -734,8 +749,10 @@ class SuggestionsPage(QWidget):
 
     def _make_from_picks(self) -> None:
         passages = [t for _, _, t in self._picked]
+        chosen = self.pick_count_box.currentText()
+        count = int(chosen) if chosen.isdigit() else None
         self.pick_btn.setChecked(False)  # exits pick mode, clears marks
-        self._generate_focused(passages)
+        self._generate_focused(passages, count)
 
     def _source_menu(self, pos) -> None:
         menu = self.source_browser.createStandardContextMenu()
@@ -752,10 +769,22 @@ class SuggestionsPage(QWidget):
                 act.triggered,
                 lambda _=False, s=sel: self._generate_focused([s]),
             )
+            sub = menu.addMenu("✨ Make several cards from it…")
+            for n in range(2, 9):
+                sub_act = sub.addAction("%d cards" % n)
+                qconnect(
+                    sub_act.triggered,
+                    lambda _=False, s=sel, n=n: self._generate_focused(
+                        [s], n
+                    ),
+                )
         menu.exec(self.source_browser.viewport().mapToGlobal(pos))
 
-    def _generate_focused(self, passages: list) -> None:
-        """One card per passage, appended to the current suggestions."""
+    def _generate_focused(self, passages: list, count=None) -> None:
+        """Cards about the passages only, appended to the suggestions.
+
+        By default one card per passage; `count` asks for exactly that
+        many cards in total instead."""
         passages = [p for p in passages if p.strip()]
         if not passages:
             return
@@ -770,7 +799,7 @@ class SuggestionsPage(QWidget):
             return
         config = self._config_with_count()
         self._busy = True
-        n = len(passages)
+        n = count or len(passages)
         self._set_suggest_status(
             "writing %d card%s for your highlighted text…"
             % (n, "" if n == 1 else "s")
@@ -778,7 +807,9 @@ class SuggestionsPage(QWidget):
         batch = self._batch_id
 
         def work():
-            return qgen_bakeoff.generate(source, config, focus=passages)
+            return qgen_bakeoff.generate(
+                source, config, focus=passages, focus_cards=count
+            )
 
         def done(fut) -> None:
             self._busy = False

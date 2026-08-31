@@ -173,21 +173,24 @@ def test_stats_backfills_older_files(tmp_path):
 def test_focus_forwarded_only_when_set(alternate, monkeypatch):
     calls = []
 
-    def fake(text, config, source="slide", focus=None):
-        calls.append((config.get("qgen_model"), focus))
+    def fake(text, config, source="slide", focus=None, focus_cards=None):
+        calls.append((config.get("qgen_model"), focus, focus_cards))
         return [{"front": "Q", "back": "A"}]
 
     monkeypatch.setattr(qgen_bakeoff.qgen, "generate_cards", fake)
     # focused generation goes through the bake-off machinery too
     card = qgen_bakeoff.generate("text", CFG, focus=["a passage"])[0]
     assert card["_model"] == "llama3.1:8b"
-    assert calls[-1] == ("llama3.1:8b", ["a passage"])
-    # without focus the kwarg is omitted, so (text, cfg, source)
+    assert calls[-1] == ("llama3.1:8b", ["a passage"], None)
+    # a chosen total rides along with the focus
+    qgen_bakeoff.generate("text", CFG, focus=["a passage"], focus_cards=3)
+    assert calls[-1] == ("llama3.2:3b", ["a passage"], 3)
+    # without focus both kwargs are omitted, so (text, cfg, source)
     # stand-ins keep working
     qgen_bakeoff.generate(
-        "text", {"qgen_bakeoff": False}, focus=None
+        "text", {"qgen_bakeoff": False}, focus=None, focus_cards=5
     )
-    assert calls[-1] == (None, None)
+    assert calls[-1] == (None, None, None)
 
 
 def test_timings_recorded(fake_generate, alternate):

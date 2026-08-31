@@ -19,7 +19,7 @@ def test_prompt_contains_text_and_limit():
 def test_prompt_focus_block_comes_last():
     p = qgen.build_prompt(
         "The Court tries all summary offences. Other sentence here.",
-        4,
+        1,
         focus=["The Court tries  all summary offences"],
     )
     assert "EXACTLY one card per passage" in p
@@ -28,6 +28,34 @@ def test_prompt_focus_block_comes_last():
     assert p.rfind("MUST-COVER") > p.rfind("Other sentence here")
     # and without focus there is no block at all
     assert "MUST-COVER" not in qgen.build_prompt("text", 4)
+
+
+def test_prompt_focus_with_chosen_total():
+    # counts differ from the passage count -> "EXACTLY n in total"
+    p = qgen.build_prompt("source", 3, focus=["one passage"])
+    assert "EXACTLY 3 flashcards in total" in p
+    assert "spread them across the passages" in p
+    assert "one card per passage" not in p
+    p1 = qgen.build_prompt("source", 1, focus=["a", "b"])
+    assert "EXACTLY 1 flashcard in total" in p1
+    # matching counts keep the crisper one-per-passage instruction
+    p2 = qgen.build_prompt("source", 2, focus=["a", "b"])
+    assert "EXACTLY one card per passage" in p2
+
+
+def test_generate_cards_focus_cards_overrides_count(monkeypatch):
+    prompts = []
+
+    def fake_chat(config, prompt):
+        prompts.append(prompt)
+        return '[{"front": "Q", "back": "A"}]'
+
+    monkeypatch.setattr(qgen, "_chat_ollama", fake_chat)
+    cfg = {"qgen_provider": "ollama", "qgen_feedback": False,
+           "qgen_max_cards": 4}
+    qgen.generate_cards("source text", cfg, focus=["passage"], focus_cards=3)
+    assert "up to 3 flashcards" in prompts[0]
+    assert "EXACTLY 3 flashcards in total" in prompts[0]
 
 
 def test_generate_cards_focus_caps_to_passage_count(monkeypatch):

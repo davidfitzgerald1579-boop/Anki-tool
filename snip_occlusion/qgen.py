@@ -60,6 +60,9 @@ def build_prompt(
     source: str = "slide",
     focus=None,
 ) -> str:
+    """`focus` passages are must-cover; max_cards then means EXACTLY
+    that many cards about them (one per passage when the counts match).
+    """
     if source == "document":
         intro = "Extract from the student's course materials:"
     else:
@@ -124,11 +127,11 @@ def build_prompt(
         max_cards,
         intro.rstrip(":"),
         text.strip(),
-        _focus_block(focus),
+        _focus_block(focus, max_cards),
     )
 
 
-def _focus_block(focus) -> str:
+def _focus_block(focus, n: int) -> str:
     """The must-cover passages block, placed LAST for recency anchoring."""
     if not focus:
         return ""
@@ -136,11 +139,26 @@ def _focus_block(focus) -> str:
         "%d. %s" % (i, " ".join(p.split()))
         for i, p in enumerate(focus, 1)
     )
+    if n == len(focus):
+        instruction = (
+            "Write EXACTLY one card per passage, in the same order, "
+            "each testing precisely what its passage says."
+        )
+    else:
+        instruction = (
+            "Write EXACTLY %d flashcard%s in total, testing ONLY what "
+            "these passages say%s."
+            % (
+                n,
+                "" if n == 1 else "s",
+                " - spread them across the passages" if n > 1 else "",
+            )
+        )
     return (
         "\n\nThe student highlighted these passages from the source "
-        "text as MUST-COVER. Write EXACTLY one card per passage, in "
-        "the same order, each testing precisely what its passage says. "
-        "Use the rest of the source only as context:\n" + numbered
+        "text as MUST-COVER. %s "
+        "Use the rest of the source only as context:\n%s"
+        % (instruction, numbered)
     )
 
 
@@ -174,17 +192,22 @@ def parse_cards(raw: str) -> list:
 
 
 def generate_cards(
-    text: str, config: dict, source: str = "slide", focus=None
+    text: str,
+    config: dict,
+    source: str = "slide",
+    focus=None,
+    focus_cards=None,
 ) -> list:
     """Blocking call: source text -> [{front, back}, ...]. Raises QGenError.
 
     `focus` is an optional list of passages the user highlighted; the
-    model is told to write exactly one card per passage.
+    model is told to write exactly one card per passage - or exactly
+    `focus_cards` cards in total about them, when that is given.
     """
     if not text.strip():
         raise QGenError("There is no snip text to work from.")
     if focus:
-        max_cards = len(focus)
+        max_cards = int(focus_cards) if focus_cards else len(focus)
     else:
         max_cards = int(config.get("qgen_max_cards", 4) or 4)
     prompt = build_prompt(
