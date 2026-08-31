@@ -468,6 +468,15 @@ class SnipOcclusionDialog(QDialog):
         qconnect(
             self.text_view_btn.clicked, lambda _=False: self._set_view(True)
         )
+        pop_btn = QToolButton(self)
+        pop_btn.setText("⧉")
+        pop_btn.setToolTip(
+            "Pop the Text Editor out into its own window — snap it to one "
+            "side of the screen and your source material to the other, to "
+            "check the suggested cards' references while you review"
+        )
+        qconnect(pop_btn.clicked, self._pop_out_text_editor)
+        toggle_row.addWidget(pop_btn)
         toggle_row.addStretch(1)
         settings_btn = QToolButton(self)
         settings_btn.setText("⚙")
@@ -745,6 +754,9 @@ class SnipOcclusionDialog(QDialog):
             qgen_prefetch.start_for_image(img.copy(), self.config)
             # begin displaying (or queueing up) the new snip's suggestions
             self.text_panel.refresh_suggestions()
+            popped = getattr(self, "_popped_text_editor", None)
+            if popped is not None and popped.isVisible():
+                popped.panel.refresh_suggestions()
         except Exception:
             pass  # prefetching is best-effort, never in the user's way
         # new queue cards default to this slide's background colour
@@ -867,6 +879,21 @@ class SnipOcclusionDialog(QDialog):
                 self._toggle_sidebar()
             self._sidebar_hidden_for_text = False
             self.canvas.setFocus()
+
+    def _pop_out_text_editor(self) -> None:
+        from .textcard import PoppedTextEditor
+
+        win = getattr(self, "_popped_text_editor", None)
+        if win is None or not win.isVisible():
+            win = PoppedTextEditor(self)
+            self._popped_text_editor = win
+        win.show()
+        win.raise_()
+        win.activateWindow()
+        win.panel.refresh_suggestions()
+        # the main window returns to the image editor, so snipping and
+        # card review can happen side by side
+        self._set_view(False)
 
     def _open_settings(self) -> None:
         dlg = QDialog(self)

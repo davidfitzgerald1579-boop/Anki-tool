@@ -4,6 +4,16 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.16.0 — 2026-08-31
+
+- **Pop-out Text Editor.** The ⧉ button next to the view toggle opens
+  the full Text Editor — suggestions, verdicts, paste-text, undo, card
+  fields — in its own resizable window, and the main window returns to
+  the Image Editor. Snap the popped-out editor to one half of the
+  screen and your source material to the other to check references
+  while reviewing. New snips feed its suggestions too; closing it warns
+  about unsaved card text.
+
 ## v0.15.2 — 2026-08-31
 
 - **Fixed: the smaller model writing cards about topics you never

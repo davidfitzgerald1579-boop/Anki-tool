@@ -771,6 +771,46 @@ class TextCardPanel(QWidget):
         self.suggest_lay.insertWidget(index, row)
 
 
+class PoppedTextEditor(QDialog):
+    """The full Text Editor (suggestions included) in its own window.
+
+    For side-by-side work: snap this to one half of the screen and the
+    source material to the other, and check the suggested cards'
+    references against it while reviewing.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent or mw)
+        self.setWindowTitle(ADDON_NAME + " — Text Editor")
+        self.setMinimumSize(520, 560)
+        self.resize(680, 880)
+        self.setWindowFlags(
+            self.windowFlags()
+            | Qt.WindowType.WindowMinimizeButtonHint
+            | Qt.WindowType.WindowMaximizeButtonHint
+        )
+        self.setStyleSheet(_STYLE)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(12, 12, 12, 12)
+        self.panel = TextCardPanel(
+            self, with_suggestions=True, standalone_shortcuts=True
+        )
+        lay.addWidget(self.panel)
+
+    def closeEvent(self, event) -> None:
+        if self.panel.has_unsaved_text():
+            resp = QMessageBox.question(
+                self,
+                ADDON_NAME,
+                "Close and discard the unsaved card?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if resp != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+        event.accept()
+
+
 class TextCardDialog(QDialog):
     """Standalone window with just the card fields (no suggestions)."""
 
