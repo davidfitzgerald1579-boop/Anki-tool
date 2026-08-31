@@ -89,6 +89,8 @@ def test_generate_cards_via_ollama(monkeypatch):
     assert captured["body"]["keep_alive"] == "30m"
     assert "individual MPs" in captured["body"]["messages"][0]["content"]
     assert captured["timeout"] == qgen.DEFAULT_TIMEOUT_S
+    # cards remember their source text for the 🔎 trace view
+    assert cards[0]["_source"].startswith("Private members bills")
 
 
 def test_generate_cards_via_openai_compatible(monkeypatch):

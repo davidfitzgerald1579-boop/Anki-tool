@@ -172,6 +172,10 @@ def generate_cards(text: str, config: dict, source: str = "slide") -> list:
         )
     cards = _drop_off_topic(parse_cards(reply), text)
     _verify_references(cards, text)
+    for card in cards:
+        # kept locally so the 🔎 button can show where a card came from;
+        # never sent anywhere and stripped before feedback storage
+        card["_source"] = text
     return cards
 
 

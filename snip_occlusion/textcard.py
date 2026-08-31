@@ -55,6 +55,7 @@ class TextCardPanel(QWidget):
         self._undo_stack: list = []  # (card, verdict|None, row index)
         self._batch_id = 0  # bumped when the row list is replaced
         self.added_any = False  # did add_card() succeed at least once
+        self._source_windows: list = []  # open 🔎 viewers (GC guard)
         self._build_ui(standalone_shortcuts)
 
     def _build_ui(self, standalone_shortcuts: bool) -> None:
@@ -445,13 +446,7 @@ class TextCardPanel(QWidget):
         if job != self._doc_job:
             return
         for card in cards:
-            self._add_suggestion_row(
-                card["front"],
-                card["back"],
-                card.get("notes", ""),
-                model=card.get("_model", ""),
-                warn=card.get("_warn", ""),
-            )
+            self._add_card_row(card)
         if done_count < total:
             self._set_suggest_status(
                 "section %d/%d…" % (done_count + 1, total)
@@ -508,6 +503,69 @@ class TextCardPanel(QWidget):
         super().showEvent(event)
         if self.with_suggestions:
             QTimer.singleShot(0, self._fit_suggestions_if_auto)
+
+    def _show_card_source(self, card: dict) -> None:
+        """The 🔎 view: full source text, matching sentences highlighted.
+
+        Computed locally by word overlap - the model is never involved,
+        so this costs nothing in generation speed.
+        """
+        source = card.get("_source") or ""
+        if not source.strip():
+            tooltip("No source text stored for this card.", parent=self)
+            return
+        from . import qgen_trace
+
+        body, matches = qgen_trace.highlight_html(card, source)
+        dlg = QDialog(self)
+        dlg.setWindowTitle(ADDON_NAME + " — Where this card came from")
+        dlg.setMinimumSize(480, 420)
+        dlg.resize(640, 720)
+        dlg.setStyleSheet(_STYLE)
+        lay = QVBoxLayout(dlg)
+        head = QLabel(
+            "<b>Q:</b> %s<br><b>A:</b> %s"
+            % (
+                card.get("front", "").replace("<", "&lt;"),
+                card.get("back", "").replace("<", "&lt;"),
+            ),
+            dlg,
+        )
+        head.setWordWrap(True)
+        head.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        lay.addWidget(head)
+        if matches:
+            note = "Highlighted: the sentences this card most likely came from."
+        else:
+            note = (
+                "⚠ No closely matching sentence found — this card may not "
+                "come from this text. Read with suspicion."
+            )
+        note_label = QLabel(
+            "<span style='color:#8a8171'>%s</span>" % note, dlg
+        )
+        note_label.setWordWrap(True)
+        lay.addWidget(note_label)
+        browser = QTextBrowser(dlg)
+        browser.setOpenExternalLinks(False)
+        browser.setHtml(
+            "<div style='color:#3d3929;font-size:13px;'>%s</div>" % body
+        )
+        lay.addWidget(browser, 1)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Close, dlg
+        )
+        qconnect(buttons.rejected, dlg.close)
+        qconnect(buttons.clicked, lambda _=None: dlg.close())
+        lay.addWidget(buttons)
+        # non-modal: keep it open beside the suggestions while reviewing
+        self._source_windows[:] = [
+            w for w in self._source_windows if w.isVisible()
+        ]
+        self._source_windows.append(dlg)
+        dlg.show()
 
     def refresh_suggestions(self, force: bool = False) -> None:
         """Show the pre-generated suggestions for the current snip.
@@ -573,13 +631,7 @@ class TextCardPanel(QWidget):
                 return
             self._set_suggest_status("")
             for card in cards:
-                self._add_suggestion_row(
-                    card["front"],
-                    card["back"],
-                    card.get("notes", ""),
-                    model=card.get("_model", ""),
-                    warn=card.get("_warn", ""),
-                )
+                self._add_card_row(card)
             QTimer.singleShot(0, self._fit_suggestions_if_auto)
 
         mw.taskman.run_in_background(work, done)
@@ -615,14 +667,7 @@ class TextCardPanel(QWidget):
                 qgen_bakeoff.tally(card, tally_verdict, undo=True)
         except Exception:
             pass
-        self._add_suggestion_row(
-            card["front"],
-            card["back"],
-            card.get("notes", ""),
-            index=index,
-            model=card.get("_model", ""),
-            warn=card.get("_warn", ""),
-        )
+        self._add_card_row(card, index=index)
         QTimer.singleShot(0, self._fit_suggestions_if_auto)
 
     def _add_suggestion_row(
@@ -634,6 +679,22 @@ class TextCardPanel(QWidget):
         model: str = "",
         warn: str = "",
     ) -> None:
+        """Compatibility wrapper: build the card dict and add its row."""
+        card = {"front": front, "back": back}
+        if notes:
+            card["notes"] = notes
+        if model:
+            card["_model"] = model
+        if warn:
+            card["_warn"] = warn
+        self._add_card_row(card, index=index)
+
+    def _add_card_row(self, source_card: dict, index=None) -> None:
+        card = dict(source_card)
+        front = card.get("front", "")
+        back = card.get("back", "")
+        notes = card.get("notes", "")
+        warn = card.get("_warn", "")
         row = QFrame(self)
         row.setStyleSheet(
             "QFrame{background:#ffffff;border:1px solid #e3dcd0;"
@@ -641,6 +702,18 @@ class TextCardPanel(QWidget):
         )
         row_lay = QHBoxLayout(row)
         row_lay.setContentsMargins(8, 6, 8, 6)
+        if card.get("_source"):
+            src_btn = QToolButton(row)
+            src_btn.setText("🔎")
+            src_btn.setToolTip(
+                "Show where this card came from — the full source text "
+                "with the matching sentences highlighted"
+            )
+            qconnect(
+                src_btn.clicked,
+                lambda _=False: self._show_card_source(card),
+            )
+            row_lay.addWidget(src_btn)
         body = "<b>Q:</b> %s<br><b>A:</b> %s" % (
             front.replace("<", "&lt;"),
             back.replace("<", "&lt;"),
@@ -663,13 +736,6 @@ class TextCardPanel(QWidget):
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         row_lay.addWidget(text, 1)
-        card = {"front": front, "back": back}
-        if notes:
-            card["notes"] = notes
-        if model:
-            card["_model"] = model  # bake-off: who wrote this card
-        if warn:
-            card["_warn"] = warn
 
         def row_index() -> int:
             return max(0, self.suggest_lay.indexOf(row))
@@ -699,10 +765,7 @@ class TextCardPanel(QWidget):
                 except Exception:
                     pass
                 if self._batch_id == batch:
-                    self._add_suggestion_row(
-                        front, back, notes, index=index, model=model,
-                        warn=warn,
-                    )
+                    self._add_card_row(card, index=index)
                     QTimer.singleShot(0, self._fit_suggestions_if_auto)
                     tooltip(
                         "Card returned to the suggestions — no longer "

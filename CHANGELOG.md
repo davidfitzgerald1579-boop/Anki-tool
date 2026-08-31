@@ -4,6 +4,16 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.18.0 — 2026-08-31
+
+- **🔎 Where did this card come from?** Every suggested card now has a
+  🔎 button that opens the full source text with the sentences the
+  card most likely came from highlighted — so references and facts can
+  be checked in one click. Matching is computed locally by word
+  overlap: the model is never asked, so generation speed is completely
+  unaffected. When no sentence matches closely, the viewer says so —
+  a strong hint the card deserves suspicion (or a ✗/⚠).
+
 ## v0.17.0 — 2026-08-31
 
 - **Invented references get caught.** Every citation-shaped string in a
