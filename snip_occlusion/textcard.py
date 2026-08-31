@@ -516,35 +516,63 @@ class TextCardPanel(QWidget):
             return
         from . import qgen_trace
 
-        body, matches = qgen_trace.highlight_html(card, source)
+        body, matches, notes_matches = qgen_trace.highlight_html(
+            card, source
+        )
         dlg = QDialog(self)
         dlg.setWindowTitle(ADDON_NAME + " — Where this card came from")
         dlg.setMinimumSize(480, 420)
         dlg.resize(640, 720)
         dlg.setStyleSheet(_STYLE)
         lay = QVBoxLayout(dlg)
-        head = QLabel(
-            "<b>Q:</b> %s<br><b>A:</b> %s"
-            % (
-                card.get("front", "").replace("<", "&lt;"),
-                card.get("back", "").replace("<", "&lt;"),
-            ),
-            dlg,
+        head_html = "<b>Q:</b> %s<br><b>A:</b> %s" % (
+            card.get("front", "").replace("<", "&lt;"),
+            card.get("back", "").replace("<", "&lt;"),
         )
+        notes = card.get("notes", "")
+        if notes:
+            head_html += (
+                "<br><b>Notes:</b> <span style='%s'>%s</span>"
+                % (
+                    qgen_trace.NOTE_HIGHLIGHT_STYLE,
+                    notes.replace("<", "&lt;"),
+                )
+            )
+        head = QLabel(head_html, dlg)
         head.setWordWrap(True)
         head.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         lay.addWidget(head)
+        lines = []
         if matches:
-            note = "Highlighted: the sentences this card most likely came from."
-        else:
-            note = (
-                "⚠ No closely matching sentence found — this card may not "
-                "come from this text. Read with suspicion."
+            lines.append(
+                "<span style='%s'>&nbsp;yellow&nbsp;</span> = where the "
+                "question/answer most likely came from."
+                % qgen_trace.HIGHLIGHT_STYLE
             )
+        else:
+            lines.append(
+                "⚠ No closely matching sentence found for the "
+                "question/answer — this card may not come from this "
+                "text. Read with suspicion."
+            )
+        if notes:
+            if notes_matches:
+                lines.append(
+                    "<span style='%s'>&nbsp;orange&nbsp;</span> = where "
+                    "the Notes line came from."
+                    % qgen_trace.NOTE_HIGHLIGHT_STYLE
+                )
+            else:
+                lines.append(
+                    "<span style='color:#b3261e'>⚠ NOTHING in the source "
+                    "matches the Notes line — it is likely invented. "
+                    "Verify it, or flag it with ⚠ Ref.</span>"
+                )
         note_label = QLabel(
-            "<span style='color:#8a8171'>%s</span>" % note, dlg
+            "<span style='color:#8a8171'>%s</span>" % "<br>".join(lines),
+            dlg,
         )
         note_label.setWordWrap(True)
         lay.addWidget(note_label)

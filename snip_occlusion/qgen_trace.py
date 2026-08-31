@@ -17,8 +17,11 @@ _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
 _PARA_SPLIT = re.compile(r"\n\s*\n")
 MAX_HIGHLIGHTS = 8
 _MIN_OVERLAP = 3  # shared substantial words for a confident match
+_MAX_NOTE_HIGHLIGHTS = 4
+_NOTE_MIN_OVERLAP = 2  # notes are short (often just a citation)
 
 HIGHLIGHT_STYLE = "background:#ffe58a;border-radius:3px;"
+NOTE_HIGHLIGHT_STYLE = "background:#ffc9a0;border-radius:3px;"
 
 
 def _words(text: str) -> set:
@@ -36,45 +39,61 @@ def _sentence_grid(source: str) -> list:
     return grid
 
 
-def highlight_html(card: dict, source: str) -> tuple:
-    """(HTML of the full source with matches highlighted, match count).
-
-    Sentences sharing >= 3 substantial words with the card are
-    highlighted; if none reach that, the single best-overlapping
-    sentence is (when it shares anything at all). Zero matches means
-    the card may not come from this text - worth suspicion.
-    """
-    card_words = _words(
-        " ".join(
-            [
-                card.get("front", ""),
-                card.get("back", ""),
-                card.get("notes", ""),
-            ]
-        )
-    )
-    grid = _sentence_grid(source)
-    scored = []
-    for pi, sentences in enumerate(grid):
-        for si, sentence in enumerate(sentences):
-            scored.append((len(_words(sentence) & card_words), pi, si))
+def _choose(scored, min_overlap, cap):
     best = max((s[0] for s in scored), default=0)
-    chosen = {(pi, si) for ov, pi, si in scored if ov >= _MIN_OVERLAP}
+    chosen = {(pi, si) for ov, pi, si in scored if ov >= min_overlap}
     if not chosen and best >= 1:
         chosen = {(pi, si) for ov, pi, si in scored if ov == best}
-    if len(chosen) > MAX_HIGHLIGHTS:
-        top = sorted(scored, reverse=True)[:MAX_HIGHLIGHTS]
+    if len(chosen) > cap:
+        top = sorted(scored, reverse=True)[:cap]
         chosen = {(pi, si) for _, pi, si in top}
+    return chosen
+
+
+def highlight_html(card: dict, source: str) -> tuple:
+    """(HTML with matches highlighted, Q/A match count, notes matches).
+
+    The question/answer and the Notes line are traced SEPARATELY -
+    notes (usually a citation or caveat) are where hallucinations
+    concentrate, so they get their own colour and their own verdict.
+    The third element is None when the card has no notes; 0 means the
+    notes match nothing in the source - likely invented.
+    """
+    main_words = _words(
+        "%s %s" % (card.get("front", ""), card.get("back", ""))
+    )
+    notes = card.get("notes", "")
+    note_words = _words(notes)
+    grid = _sentence_grid(source)
+    scored_main, scored_notes = [], []
+    for pi, sentences in enumerate(grid):
+        for si, sentence in enumerate(sentences):
+            words = _words(sentence)
+            scored_main.append((len(words & main_words), pi, si))
+            if note_words:
+                scored_notes.append((len(words & note_words), pi, si))
+    chosen_main = _choose(scored_main, _MIN_OVERLAP, MAX_HIGHLIGHTS)
+    chosen_notes = (
+        _choose(scored_notes, _NOTE_MIN_OVERLAP, _MAX_NOTE_HIGHLIGHTS)
+        if note_words
+        else set()
+    )
     rendered = []
     for pi, sentences in enumerate(grid):
         parts = []
         for si, sentence in enumerate(sentences):
             escaped = html.escape(sentence)
-            if (pi, si) in chosen:
+            if (pi, si) in chosen_notes:  # notes colour wins overlaps
+                escaped = "<span style='%s'>%s</span>" % (
+                    NOTE_HIGHLIGHT_STYLE,
+                    escaped,
+                )
+            elif (pi, si) in chosen_main:
                 escaped = "<span style='%s'>%s</span>" % (
                     HIGHLIGHT_STYLE,
                     escaped,
                 )
             parts.append(escaped)
         rendered.append(" ".join(parts))
-    return "<br><br>".join(rendered), len(chosen)
+    notes_result = len(chosen_notes) if note_words else None
+    return "<br><br>".join(rendered), len(chosen_main), notes_result

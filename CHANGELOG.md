@@ -4,6 +4,15 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.18.2 — 2026-08-31
+
+- **The 🔎 viewer now traces the Notes line separately** — notes are
+  where hallucinations concentrate. The card's Notes are shown in the
+  viewer header, the sentences they came from are highlighted in
+  ORANGE (question/answer matches stay yellow), and when nothing in
+  the source matches the Notes a red warning says so outright: likely
+  invented — verify or flag with ⚠ Ref.
+
 ## v0.18.1 — 2026-08-31
 
 - **Half-screen friendly suggestion rows.** The six row buttons now sit
