@@ -150,8 +150,14 @@ def examples(config: dict) -> tuple[list, list]:
         return [], []
     with _lock:
         data = _load()
+    # cap positives at n TOTAL: small models start writing cards about
+    # the example topics when shown too many, and every example costs
+    # prompt-processing time. Live "Use →"/★ cards take priority; a
+    # rotating seed sample fills whatever room is left.
     kept = data[KEPT][-n:]
-    seed = _load_seed()
-    if seed:
-        kept = random.sample(seed, min(n, len(seed))) + kept
+    room = n - len(kept)
+    if room > 0:
+        seed = _load_seed()
+        if seed:
+            kept = random.sample(seed, min(room, len(seed))) + kept
     return kept, data[BAD][-n:]

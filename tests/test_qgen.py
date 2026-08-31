@@ -192,3 +192,39 @@ def test_ollama_leaves_cores_free(monkeypatch):
     monkeypatch.setattr(qgen.os, "cpu_count", lambda: 1)
     qgen.generate_cards("text", {})
     assert "options" not in captured["body"]
+
+
+def test_prompt_puts_source_last_and_examples_first():
+    feedback = (
+        [{"front": "StyleQ", "back": "StyleA"}],
+        [{"front": "WeakQ", "back": "WeakA"}],
+    )
+    p = qgen.build_prompt("The defendant bears no burden.", 4, feedback)
+    # examples come before the rules; the source text is the very end,
+    # right where the model's attention is when it starts writing
+    assert p.index("StyleQ") < p.index("Rules:")
+    assert p.index("Rules:") < p.index("The defendant bears no burden.")
+    assert p.rstrip().endswith("---")
+    assert "off-limits" in p  # example topics are explicitly fenced off
+    assert "must test a fact stated in the source text" in p
+
+
+def test_off_topic_cards_are_dropped():
+    source = (
+        "The prosecution bears the burden of proof in criminal "
+        "proceedings and must prove its case beyond reasonable doubt."
+    )
+    on_topic = {
+        "front": "Who bears the burden of proof in criminal proceedings?",
+        "back": "The prosecution, beyond reasonable doubt.",
+    }
+    bleed = {
+        "front": "What is the priority of an additional mortgage loan?",
+        "back": "If the lender had notice and agreed, it takes priority.",
+    }
+    kept = qgen._drop_off_topic([on_topic, bleed], source)
+    assert kept == [on_topic]
+    # fails open: if everything would be dropped, keep the originals
+    assert qgen._drop_off_topic([bleed], source) == [bleed]
+    # no usable source words -> untouched
+    assert qgen._drop_off_topic([bleed], "a b c") == [bleed]

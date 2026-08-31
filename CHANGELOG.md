@@ -4,6 +4,20 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.15.2 — 2026-08-31
+
+- **Fixed: the smaller model writing cards about topics you never
+  pasted.** Small models were treating the style examples in the prompt
+  (drawn from the author's own deck) as content to write about. Three
+  defences: the prompt is restructured so the source text comes last —
+  right where the model anchors — with the examples clearly fenced off
+  as "other, unrelated topics"; positives are capped at 4 total (live
+  verdicts take priority over seed examples, which also trims the
+  prompt for speed); and an on-topic filter drops any card sharing no
+  substance with the source text (failing open so a batch is never
+  emptied by mistake). Also makes the bake-off comparison fairer to the
+  smaller model.
+
 ## v0.15.1 — 2026-08-31
 
 - **Simpler model choice in ⚙ Settings.** Three plain options: use the
