@@ -14,7 +14,7 @@ from aqt.utils import showWarning, tooltip
 
 from .qtshim import *  # noqa: F401,F403
 from . import notes as notes_mod
-from . import qgen
+from . import qgen, qgen_prefetch
 from .consts import ADDON_NAME
 from .dialog import _STYLE, get_config, get_previous_snip_text
 
@@ -247,22 +247,38 @@ class TextCardDialog(QDialog):
 
     def _suggest_cards(self) -> None:
         config = get_config()
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            text = get_previous_snip_text()
-        finally:
-            QApplication.restoreOverrideCursor()
-        if not text:
-            tooltip(
-                "No snip text available yet — snip a slide (or add its "
-                "cards) first.",
-                parent=self,
-            )
-            return
+        # generation usually started the moment the snip was loaded (see
+        # qgen_prefetch) - clicking the button mostly just reveals it
+        prefetched = qgen_prefetch.current()
+        text = ""
+        if prefetched is None:
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                text = get_previous_snip_text()
+            finally:
+                QApplication.restoreOverrideCursor()
+            if not text:
+                tooltip(
+                    "No snip text available yet — snip a slide (or add its "
+                    "cards) first.",
+                    parent=self,
+                )
+                return
         self.suggest_btn.setEnabled(False)
         self.suggest_btn.setText("✨ Generating…")
 
         def work():
+            if prefetched is not None:
+                timeout = int(config.get("qgen_timeout_seconds") or 300) + 30
+                try:
+                    return qgen_prefetch.wait_for_cards(prefetched, timeout)
+                except qgen.QGenError:
+                    # e.g. Ollama wasn't running when the snip landed but
+                    # is now, or the snip had no readable text - retry
+                    # live with the current (baked) snip text
+                    if prefetched.text.strip():
+                        return qgen.generate_cards(prefetched.text, config)
+                    raise
             return qgen.generate_cards(text, config)
 
         def done(future) -> None:
@@ -315,16 +331,24 @@ class TextCardDialog(QDialog):
             "stays here for the rest"
         )
 
-        def use() -> None:
-            open_text_card_dialog(front_text=front, back_text=back)
+        def remove_row() -> None:
             row.setParent(None)
             row.deleteLater()
-            # hide the panel once every suggestion has been used
+            # hide the panel once every suggestion has been used/deleted
             if self.suggest_lay.count() <= 1:
                 self.suggest_panel.hide()
 
+        def use() -> None:
+            open_text_card_dialog(front_text=front, back_text=back)
+            remove_row()
+
         qconnect(use_btn.clicked, use)
         row_lay.addWidget(use_btn)
+        del_btn = QPushButton("✕", row)
+        del_btn.setFixedWidth(28)
+        del_btn.setToolTip("Delete this suggestion")
+        qconnect(del_btn.clicked, remove_row)
+        row_lay.addWidget(del_btn)
         self.suggest_lay.insertWidget(self.suggest_lay.count() - 1, row)
 
     def add_card(self) -> None:

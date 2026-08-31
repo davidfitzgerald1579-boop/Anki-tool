@@ -81,6 +81,8 @@ DEFAULT_CONFIG = {
     "qgen_api_key": "",
     "qgen_max_cards": 8,
     "qgen_timeout_seconds": 300,
+    "qgen_prefetch": True,
+    "qgen_keep_alive": "30m",
 }
 
 # Distinct colors used for group badges in the editor

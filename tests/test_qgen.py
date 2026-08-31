@@ -76,6 +76,7 @@ def test_generate_cards_via_ollama(monkeypatch):
     assert captured["url"] == "http://localhost:11434/api/chat"
     assert captured["body"]["model"] == qgen.DEFAULT_MODEL
     assert captured["body"]["stream"] is False
+    assert captured["body"]["keep_alive"] == "30m"
     assert "individual MPs" in captured["body"]["messages"][0]["content"]
     assert captured["timeout"] == qgen.DEFAULT_TIMEOUT_S
 

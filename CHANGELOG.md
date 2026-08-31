@@ -4,6 +4,18 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.11.0 — 2026-08-31
+
+- **Suggestions are pre-generated.** The moment a snip lands in the
+  editor, OCR and the AI model start working in the background — by the
+  time you open the text card dialog and click "✨ Suggest cards", the
+  drafts usually appear instantly. Configurable via `qgen_prefetch`.
+- **Delete suggestions.** Each suggestion row now has a ✕ button next
+  to "Use →", so you can discard the duds as you work down the list.
+- **Fewer model-load waits.** Ollama is now asked to keep the model in
+  RAM between requests (`qgen_keep_alive`, default 30 minutes), so only
+  the first generation of a study session pays the load time.
+
 ## v0.10.0 — 2026-08-30
 
 - **AI card suggestions are now free, private, and fully open source.**

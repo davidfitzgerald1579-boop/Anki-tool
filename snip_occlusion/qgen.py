@@ -113,6 +113,9 @@ def _chat_ollama(config: dict, prompt: str) -> str:
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
+            # keep the model in RAM between requests so only the first
+            # generation of a study session pays the model-load wait
+            "keep_alive": config.get("qgen_keep_alive") or "30m",
         },
         headers={},
         timeout=_timeout(config),

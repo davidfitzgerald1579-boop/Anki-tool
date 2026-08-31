@@ -56,6 +56,17 @@
 - `qgen_max_cards`: maximum suggested cards per slide. Default: `8`.
 - `qgen_timeout_seconds`: how long to wait for the model. Default:
   `300` — the first request after Ollama loads a model can be slow.
+- `qgen_prefetch`: start generating suggestions in the background the
+  moment a snip lands in the editor, so "Suggest cards" is (usually)
+  instant. Default: `true`. Set to `false` if the background generation
+  makes drawing feel sluggish on a slow machine — the button then
+  generates on demand. Note the suggestions come from the snip as
+  loaded; cover-ups drawn afterwards don't re-run generation (delete
+  unwanted suggestions with their ✕ button instead).
+- `qgen_keep_alive`: how long Ollama keeps the model loaded in RAM
+  after a request (e.g. `"30m"`, `"2h"`; `-1` for as long as Ollama
+  runs). Default: `"30m"`. Longer means fewer model-load waits during a
+  study session, at the cost of the RAM staying used.
 
 Note: `mask_fill` and `target_fill` are written into the note type's CSS
 when the note type is first created. To restyle existing cards, edit the

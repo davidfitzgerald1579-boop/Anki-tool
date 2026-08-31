@@ -11,7 +11,7 @@ from aqt.utils import showWarning, tooltip
 
 from .qtshim import *  # noqa: F401,F403
 from . import notes as notes_mod
-from . import ocr
+from . import ocr, qgen_prefetch
 from .newcard_panel import NewCardQueuePanel
 from .consts import (
     ADDON_NAME,
@@ -689,6 +689,12 @@ class SnipOcclusionDialog(QDialog):
         self._update_swatch()
         self._refresh_counts()
         self.clip_btn.setStyleSheet("")
+        # start OCR + AI card suggestions now, so they're ready the moment
+        # the user asks for them in the text card dialog
+        try:
+            qgen_prefetch.start_for_image(img.copy(), self.config)
+        except Exception:
+            pass  # prefetching is best-effort, never in the user's way
         # new queue cards default to this slide's background colour
         self.queue_panel.default_bg = self.canvas.majority
         return True
