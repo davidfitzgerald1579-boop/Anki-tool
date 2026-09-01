@@ -10,7 +10,13 @@ BASIC_FIELDS = [
     "Back",
     "Notes",
     "Source",  # the full snip the card came from; behind "Reveal source"
+    # the source text with the card's origin sentences highlighted,
+    # baked at add time; the other half of the "Reveal source" view
+    "Source Text",
 ]
+
+# The reveal-source fields, upgraded (and switched off) together
+SOURCE_FIELDS = ("Source", "Source Text")
 FIELDS = [
     "Occlusion ID",
     "Image",

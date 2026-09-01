@@ -4,6 +4,32 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.27.0 — 2026-09-01
+
+- **Reveal source is now a split view: the slide AND the highlighted
+  source text.** Opening 🔍 Reveal source on a card back now shows
+  two panes below the card — the full snip on the left, and on the
+  right the source text with the sentences the card most likely came
+  from highlighted (the same 🔎 trace as the Suggested Cards page:
+  yellow for question/answer, orange for the Notes line). Image /
+  Text / Both buttons switch the view; Both (split screen) is the
+  default, and the panes stack on narrow screens. The highlights are
+  computed against the card as you actually added it — corrections
+  made in the Use → window are traced, not the AI's original — and
+  baked into a new `Source Text` field at add time, so they render on
+  AnkiDroid and AnkiMobile with nothing installed on the device.
+- **Cards from pasted text get Reveal source too.** A card generated
+  from a pasted lesson (which has no snip) now stores the passage it
+  was written from: Reveal source shows "No image to display" in the
+  image pane and the highlighted text in the text pane.
+- Redeploying a card from the Added cards tray re-highlights the
+  source text against the corrected card. Existing note types are
+  upgraded the same way as v0.26 (one consent prompt on a synced
+  collection; the stock v0.26 reveal block is swapped for the new
+  one, custom template edits stay untouched, and a deleted block
+  stays deleted). `text_card_attach_source: false` switches all of
+  it off.
+
 ## v0.26.0 — 2026-09-01
 
 - **"Reveal source" on AI text cards.** A card made from a suggested

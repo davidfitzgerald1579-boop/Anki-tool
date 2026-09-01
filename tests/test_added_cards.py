@@ -60,14 +60,22 @@ def test_empty_label_gets_placeholder():
 
 def test_source_kept_through_record_and_replace():
     src = '<img src="snip-occlusion-src-ab12.png">'
-    added_cards.record(1, 5, "F", "B", "", "label", source=src)
+    txt = "The raw OCR text the card came from."
+    added_cards.record(1, 5, "F", "B", "", "label", source=src,
+                       source_text=txt)
     assert added_cards.get(1)["source"] == src
-    # a redeploy carries the source over to the replacement entry
-    added_cards.replace(1, 2, 5, "F2", "B2", "", "label", source=src)
+    assert added_cards.get(1)["source_text"] == txt
+    # a redeploy carries both over to the replacement entry
+    added_cards.replace(1, 2, 5, "F2", "B2", "", "label", source=src,
+                        source_text=txt)
     assert added_cards.get(2)["source"] == src
-    # replacing an unknown id records the source too
-    added_cards.replace(99, 3, 7, "F3", "B3", "", "x", source=src)
+    assert added_cards.get(2)["source_text"] == txt
+    # replacing an unknown id records them too
+    added_cards.replace(99, 3, 7, "F3", "B3", "", "x", source=src,
+                        source_text=txt)
     assert added_cards.get(3)["source"] == src
-    # and by default the field is present but empty
+    assert added_cards.get(3)["source_text"] == txt
+    # and by default the fields are present but empty
     added_cards.record(4, 5, "F", "B", "", "label")
     assert added_cards.get(4)["source"] == ""
+    assert added_cards.get(4)["source_text"] == ""
