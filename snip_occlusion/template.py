@@ -163,13 +163,51 @@ def build_css(mask_fill: str, target_fill: str) -> str:
 
 BASIC_FRONT = "{{Front}}"
 
-BASIC_BACK = """{{FrontSide}}
+# The full snip the card was generated from, tucked behind a "Reveal
+# source" button on the back. <details>/<summary> needs no JavaScript,
+# so it works on AnkiDroid and AnkiMobile exactly like on desktop.
+# Appended to the back template of pre-existing note types by
+# notes.ensure_basic_note_type, so keep it self-contained.
+BASIC_SOURCE_BLOCK = """{{#Source}}<details class="sn-source">
+<summary>&#128269; Reveal source</summary>
+<div class="sn-source-wrap">{{Source}}</div>
+</details>{{/Source}}
+"""
+
+BASIC_BACK = (
+    """{{FrontSide}}
 <hr id=answer>
 {{Back}}
 {{#Notes}}<div class="sn-notes">{{Notes}}</div>{{/Notes}}
 """
+    + BASIC_SOURCE_BLOCK
+)
 
-BASIC_CSS = """.card {
+BASIC_SOURCE_CSS = """.sn-source {
+  margin-top: 16px;
+}
+.sn-source summary {
+  display: inline-block;
+  list-style: none;
+  cursor: pointer;
+  font-size: 0.7em;
+  color: #666;
+  border: 1px solid #bbb;
+  border-radius: 6px;
+  padding: 4px 12px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.sn-source summary::-webkit-details-marker { display: none; }
+.sn-source[open] summary { color: #333; border-color: #888; }
+.sn-source .sn-source-wrap { margin-top: 10px; line-height: 0; }
+.sn-source img { max-width: 100%; height: auto; }
+.night_mode .sn-source summary { color: #aaa; border-color: #555; }
+.night_mode .sn-source[open] summary { color: #ddd; border-color: #888; }
+"""
+
+BASIC_CSS = (
+    """.card {
   font-family: arial, sans-serif;
   font-size: 20px;
   text-align: center;
@@ -185,3 +223,5 @@ BASIC_CSS = """.card {
 }
 .night_mode .sn-notes { color: #aaa; border-top-color: #555; }
 """
+    + BASIC_SOURCE_CSS
+)

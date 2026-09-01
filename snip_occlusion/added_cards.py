@@ -35,9 +35,18 @@ def _fire() -> None:
 
 
 def record(
-    note_id: int, deck_id, front: str, back: str, notes: str, label: str
+    note_id: int,
+    deck_id,
+    front: str,
+    back: str,
+    notes: str,
+    label: str,
+    source: str = "",
 ) -> None:
-    """Remember a just-added note. Fields are HTML; label is plain."""
+    """Remember a just-added note. Fields are HTML; label is plain.
+
+    `source` is the note's Source field (the snip it came from), kept
+    so a redeploy carries it over to the replacement note."""
     _entries.append(
         {
             "note_id": int(note_id),
@@ -46,6 +55,7 @@ def record(
             "back": back,
             "notes": notes,
             "label": " ".join((label or "").split()) or "(untitled card)",
+            "source": source,
         }
     )
     _fire()
@@ -74,6 +84,7 @@ def replace(
     back: str,
     notes: str,
     label: str,
+    source: str = "",
 ) -> None:
     """A redeploy: the entry now tracks the replacement note."""
     for entry in _entries:
@@ -85,11 +96,12 @@ def replace(
                 back=back,
                 notes=notes,
                 label=" ".join((label or "").split()) or "(untitled card)",
+                source=source,
             )
             _fire()
             return
     # unknown original (e.g. registry cleared) - track the new note
-    record(new_note_id, deck_id, front, back, notes, label)
+    record(new_note_id, deck_id, front, back, notes, label, source=source)
 
 
 def entries() -> list:

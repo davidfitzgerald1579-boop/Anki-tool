@@ -30,6 +30,7 @@ class _Prefetch:
         self.emphasis: list = []  # accent-coloured slide terms
         self.cards: list | None = None
         self.error: Exception | None = None
+        self.image = None  # the snip itself (QImage), for card provenance
 
 
 _lock = threading.Lock()
@@ -50,6 +51,7 @@ def start_for_image(img, config: dict, on_text=None) -> None:
     if not config.get("qgen_prefetch", True):
         return
     state = _Prefetch()
+    state.image = img  # our own copy; kept so cards can cite the snip
     global _latest
     with _lock:
         _latest = state

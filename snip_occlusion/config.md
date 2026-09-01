@@ -111,6 +111,13 @@
   after a request (e.g. `"30m"`, `"2h"`; `-1` for as long as Ollama
   runs). Default: `"30m"`. Longer means fewer model-load waits during a
   study session, at the cost of the RAM staying used.
+- `text_card_attach_source`: save the full snip into each text card
+  made from an AI suggestion (Use →). While reviewing, the card back
+  then has a "🔍 Reveal source" button that opens the whole slide the
+  card was generated from. The snip is stored once per slide in Anki's
+  media collection, however many cards cite it; cards from pasted text
+  have no snip and get no button. Set to `false` if you don't want
+  slide images in your collection. Default: `true`.
 
 Note: `mask_fill` and `target_fill` are written into the note type's CSS
 when the note type is first created. To restyle existing cards, edit the

@@ -288,6 +288,80 @@ def test_basic_text_note_type_and_card(col):
     assert 'class="sn-notes"' not in a2  # empty notes stay hidden
 
 
+def test_text_note_with_source_gets_reveal_button(col):
+    deck_id = col.decks.id("Default")
+    note = notes_mod.add_text_note(
+        col,
+        deck_id,
+        "What is judicial review?",
+        "A challenge to the lawfulness of a public body's decision.",
+        "",
+        source='<img src="snip-occlusion-src-ab12cd34ef.png">',
+    )
+    assert note["Source"] == '<img src="snip-occlusion-src-ab12cd34ef.png">'
+    q = note.cards()[0].question()
+    a = note.cards()[0].answer()
+    # the snip is behind a click on the BACK only, never on the front
+    assert "<details" not in q
+    assert "snip-occlusion-src" not in q
+    assert '<details class="sn-source">' in a
+    assert "Reveal source" in a
+    assert 'src="snip-occlusion-src-ab12cd34ef.png"' in a
+    # and the styling for it is in the note type's CSS
+    assert ".sn-source" in note.note_type()["css"]
+
+    # a card without a source shows no reveal button at all
+    note2 = notes_mod.add_text_note(col, deck_id, "F", "B", "")
+    assert note2["Source"] == ""
+    assert "<details" not in note2.cards()[0].answer()
+
+
+def test_old_basic_note_type_upgraded_with_source(col):
+    # simulate the note type as created before v0.26: no Source field,
+    # back template without the reveal block, user-customised CSS
+    from snip_occlusion import template
+
+    mm = col.models
+    old = mm.new("Snip Occlusion Basic")
+    for fname in ("Front", "Back", "Notes"):
+        mm.add_field(old, mm.new_field(fname))
+    t = mm.new_template("Card 1")
+    t["qfmt"] = "{{Front}}"
+    t["afmt"] = (
+        "{{FrontSide}}\n<hr id=answer>\n{{Back}}\n"
+        '{{#Notes}}<div class="sn-notes">{{Notes}}</div>{{/Notes}}\n'
+        "<!-- my custom footer -->"
+    )
+    mm.add_template(old, t)
+    old["css"] = ".card { color: purple; }"
+    mm.add(old)
+    old = mm.by_name("Snip Occlusion Basic")
+    note = col.new_note(old)
+    note["Front"] = "legacy front"
+    col.add_note(note, col.decks.id("Default"))
+
+    nt = notes_mod.ensure_basic_note_type(col)
+    # upgraded in place: same id, no "Snip Occlusion Basic 2"
+    assert nt["id"] == old["id"]
+    assert mm.by_name("Snip Occlusion Basic 2") is None
+    assert "Source" in {f["name"] for f in nt["flds"]}
+    # the reveal block was appended; the customisation survived
+    afmt = nt["tmpls"][0]["afmt"]
+    assert "<!-- my custom footer -->" in afmt
+    assert "{{Source}}" in afmt and "Reveal source" in afmt
+    assert ".card { color: purple; }" in nt["css"]
+    assert template.BASIC_SOURCE_CSS.strip() in nt["css"]
+    # legacy note keeps working, with an empty Source
+    legacy = col.get_note(col.find_notes("legacy front")[0])
+    assert legacy["Source"] == ""
+    assert "<details" not in legacy.cards()[0].answer()
+
+    # a second ensure() must not append the block again
+    again = notes_mod.ensure_basic_note_type(col)
+    assert again["tmpls"][0]["afmt"].count("{{Source}}") == 1
+    assert again["css"].count(template.BASIC_SOURCE_CSS.strip()) == 1
+
+
 def test_incompatible_existing_model_gets_suffixed_name(col):
     mm = col.models
     bogus = mm.new(MODEL_NAME)

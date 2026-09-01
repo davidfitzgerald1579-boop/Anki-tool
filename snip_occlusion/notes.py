@@ -115,8 +115,30 @@ def add_occlusion_notes(
 # ------------------------------------------------------ simple text cards
 
 
+def _upgrade_basic_templates(mm, nt) -> bool:
+    """Teach an existing basic note type to render the Source field.
+
+    The "Reveal source" block (v0.26) is appended to the back template
+    and its CSS added, so note types created before it gain the feature
+    without clobbering any customisation the user made to the rest of
+    the template. Returns True when something was changed (caller must
+    re-fetch the note type dict after saving).
+    """
+    changed = False
+    for tmpl in nt["tmpls"]:
+        if "{{Source}}" not in tmpl["afmt"]:
+            tmpl["afmt"] = (
+                tmpl["afmt"].rstrip() + "\n" + template.BASIC_SOURCE_BLOCK
+            )
+            changed = True
+    if ".sn-source" not in nt.get("css", ""):
+        nt["css"] = nt.get("css", "") + "\n" + template.BASIC_SOURCE_CSS
+        changed = True
+    return changed
+
+
 def ensure_basic_note_type(col):
-    """Find or create the simple Front/Back/Notes note type."""
+    """Find or create the simple Front/Back/Notes/Source note type."""
     mm = col.models
     name = BASIC_MODEL_NAME
     for attempt in range(10):
@@ -125,11 +147,15 @@ def ensure_basic_note_type(col):
             break
         existing = {f["name"] for f in nt["flds"]}
         if all(f in existing for f in BASIC_FIELDS):
+            if _upgrade_basic_templates(mm, nt):
+                _save(mm, nt)
+                return _by_name(mm, name)
             return nt
         if {"Front", "Back"} <= existing:
             for fname in BASIC_FIELDS:
                 if fname not in existing:
                     mm.add_field(nt, mm.new_field(fname))
+            _upgrade_basic_templates(mm, nt)
             _save(mm, nt)
             return _by_name(mm, name)
         name = "%s %d" % (BASIC_MODEL_NAME, attempt + 2)
@@ -146,12 +172,17 @@ def ensure_basic_note_type(col):
     return _by_name(mm, name)
 
 
-def add_text_note(col, deck_id: int, front: str, back: str, notes: str):
+def add_text_note(
+    col, deck_id: int, front: str, back: str, notes: str, source: str = ""
+):
+    """`source` is ready field HTML (e.g. '<img src="...">') showing the
+    material the card came from; revealed on demand on the card back."""
     nt = ensure_basic_note_type(col)
     note = col.new_note(nt)
     note["Front"] = front
     note["Back"] = back
     note["Notes"] = notes
+    note["Source"] = source
     col.add_note(note, deck_id)
     return note
 

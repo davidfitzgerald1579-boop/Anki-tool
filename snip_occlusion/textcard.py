@@ -22,6 +22,7 @@ from aqt.utils import showWarning
 from .qtshim import *  # noqa: F401,F403
 from . import added_cards, notes as notes_mod
 from . import qgen, qgen_bakeoff, qgen_doc, qgen_feedback, qgen_prefetch
+from . import source_image
 from .consts import ADDON_NAME
 from .dialog import _STYLE, get_config, get_previous_snip_text
 from .uitools import cream_tooltips, notify as tooltip
@@ -39,6 +40,20 @@ def _body_html(edit: QTextEdit) -> str:
 
 def _escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;")
+
+
+def _state_source_image(state):
+    """The one SourceImage shared by everything shown from `state`.
+
+    Cached on the prefetch state itself so the embedded panel and the
+    ⧉ pop-out hand out the same object - the snip is then written to
+    the media collection once, however many cards cite it."""
+    if state is None or getattr(state, "image", None) is None:
+        return None
+    src = getattr(state, "_source_image", None)
+    if src is None:
+        src = state._source_image = source_image.SourceImage(state.image)
+    return src
 
 
 class _CardEdit(QTextEdit):
@@ -73,6 +88,10 @@ class TextCardPanel(QWidget):
         self.added_any = False  # did add_card() succeed at least once
         self.on_added = None  # callback(front, back, notes) after an add
         self.replaces_note_id = None  # set for a redeploy of this note
+        # where the card came from, saved into the note's Source field:
+        # a SourceImage (the snip; media-written on first add), ready
+        # HTML (a redeploy keeping the original), or None
+        self.source = None
         self._src_user_sized = False
         self._build_ui(standalone_shortcuts)
 
@@ -395,8 +414,12 @@ class TextCardPanel(QWidget):
         back_html = _body_html(self.back)
         notes_html = _body_html(self.notes)
         deck_id = self.deck_box.currentData()
+        try:
+            source_html = source_image.as_field_html(self.source, mw.col)
+        except Exception:
+            source_html = ""  # the source is a bonus; the card must go in
         note = notes_mod.add_text_note(
-            mw.col, deck_id, front, back_html, notes_html
+            mw.col, deck_id, front, back_html, notes_html, source_html
         )
         replaces = getattr(self, "replaces_note_id", None)
         try:
@@ -411,12 +434,13 @@ class TextCardPanel(QWidget):
                     back_html,
                     notes_html,
                     plain[0],
+                    source=source_html,
                 )
                 self.replaces_note_id = int(note.id)
             else:
                 added_cards.record(
                     int(note.id), deck_id, front, back_html, notes_html,
-                    plain[0],
+                    plain[0], source=source_html,
                 )
         except Exception:
             pass  # the note was added; tracking it is best-effort
@@ -448,6 +472,7 @@ class SuggestionsPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._shown_state = None  # the prefetch whose cards are displayed
+        self._shown_image = None  # SourceImage of the displayed snip
         self._busy = False
         self._doc_job = 0  # incremented to cancel a pasted-text run
         self._doc_running = False
@@ -957,6 +982,7 @@ class SuggestionsPage(QWidget):
         self._doc_running = True
         self._busy = True  # blocks snip refreshes while this runs
         self._user_sized = False
+        self._shown_image = None  # pasted text has no snip to cite
         self._clear_rows()
         self.set_source_text(text)
         self.regen_btn.setText("■")
@@ -1095,6 +1121,14 @@ class SuggestionsPage(QWidget):
             self._set_suggest_status("")
             self.set_source_text(
                 (state.text if state else "").strip() or fallback_text
+            )
+            # cards on display came from `state`, so its snip is their
+            # provenance - remembered for rows added later too (e.g.
+            # ✨ focused cards about a highlighted passage)
+            self._shown_image = (
+                _state_source_image(state)
+                if config.get("text_card_attach_source", True)
+                else None
             )
             for card in cards:
                 self._add_card_row(card)
@@ -1248,6 +1282,10 @@ class SuggestionsPage(QWidget):
 
     def _add_card_row(self, source_card: dict, index=None) -> None:
         card = dict(source_card)
+        # tie the card to the snip it was generated from; rows returned
+        # to the list (undo, Use-window discard) keep the tie they have
+        if "_image" not in card and self._shown_image is not None:
+            card["_image"] = self._shown_image
         front = card.get("front", "")
         back = card.get("back", "")
         notes = card.get("notes", "")
@@ -1534,6 +1572,9 @@ class TextCardDialog(QDialog):
         else:
             self.panel.focus_front()
         if original_card:
+            # the suggested card remembers the snip it came from; the
+            # note's Source field then carries the full slide
+            self.panel.source = original_card.get("_image")
             # the learning loop should remember the card AS ADDED, not
             # as suggested: if the user corrects wrong content before
             # adding, the corrected version replaces the original in
@@ -1656,6 +1697,9 @@ class AddedCardDialog(QDialog):
         self.panel.front.setHtml(entry.get("front", ""))
         self.panel.back.setHtml(entry.get("back", ""))
         self.panel.notes.setHtml(entry.get("notes", ""))
+        # a redeploy keeps the original note's source snip (the media
+        # file already exists; its HTML is reused verbatim)
+        self.panel.source = entry.get("source") or None
         i = self.panel.deck_box.findData(entry.get("deck_id"))
         if i >= 0:
             self.panel.deck_box.setCurrentIndex(i)

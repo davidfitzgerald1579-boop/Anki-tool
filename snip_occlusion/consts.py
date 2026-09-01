@@ -5,7 +5,12 @@ ADDON_NAME = "Snip Occlusion"
 # Note type
 MODEL_NAME = "Snip Occlusion"
 BASIC_MODEL_NAME = "Snip Occlusion Basic"
-BASIC_FIELDS = ["Front", "Back", "Notes"]
+BASIC_FIELDS = [
+    "Front",
+    "Back",
+    "Notes",
+    "Source",  # the full snip the card came from; behind "Reveal source"
+]
 FIELDS = [
     "Occlusion ID",
     "Image",
@@ -99,6 +104,9 @@ DEFAULT_CONFIG = {
     "ocr_accent_threshold": 110,
     "qgen_feedback": True,
     "qgen_feedback_examples": 4,
+    # attach the full snip to text cards made from AI suggestions, shown
+    # on the back behind a "Reveal source" button
+    "text_card_attach_source": True,
 }
 
 # Distinct colors used for group badges in the editor
