@@ -47,6 +47,25 @@ def test_null_or_missing_image_yields_nothing(qapp, col):
     assert list(Path(col.media.dir()).glob("*.png")) == []
 
 
+def test_rewritten_for_a_different_collection(qapp, col):
+    # a profile switch hands the same cached SourceImage a different
+    # collection: the PNG must be written there too, never cited broken
+    src = SourceImage(make_image())
+    fname1 = src.media_fname(col)
+    assert (Path(col.media.dir()) / fname1).exists()
+
+    tmp2 = tempfile.mkdtemp()
+    col2 = Collection(str(Path(tmp2) / "collection.anki2"))
+    try:
+        fname2 = src.media_fname(col2)
+        assert fname2 and (Path(col2.media.dir()) / fname2).exists()
+        # whichever collection asks, the name handed out exists THERE
+        again = src.media_fname(col)
+        assert again and (Path(col.media.dir()) / again).exists()
+    finally:
+        col2.close()
+
+
 def test_as_field_html_for_each_provenance_kind(qapp, col):
     # no provenance (e.g. a pasted-lesson card)
     assert as_field_html(None, col) == ""

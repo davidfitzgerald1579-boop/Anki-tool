@@ -115,30 +115,45 @@ def add_occlusion_notes(
 # ------------------------------------------------------ simple text cards
 
 
-def _upgrade_basic_templates(mm, nt) -> bool:
-    """Teach an existing basic note type to render the Source field.
+def _mod_schema(col) -> None:
+    """Get the user's consent to a schema change (it forces a full sync).
 
-    The "Reveal source" block (v0.26) is appended to the back template
-    and its CSS added, so note types created before it gain the feature
-    without clobbering any customisation the user made to the rest of
-    the template. Returns True when something was changed (caller must
-    re-fetch the note type dict after saving).
+    Inside Anki this shows the standard "requires a full upload"
+    prompt and raises if the user declines; in a collection that has
+    never synced (and in tests) it proceeds silently.
     """
-    changed = False
+    mod = getattr(col, "mod_schema", None) or getattr(col, "modSchema")
+    mod(True)
+
+
+def _upgrade_basic_templates(mm, nt) -> None:
+    """Append the "Reveal source" block (v0.26) to the back template
+    and its CSS, leaving everything the user customised untouched.
+
+    Called only in the same pass that adds the missing Source field:
+    a note type that already has the field but not the block had the
+    block deleted on purpose, and the deletion must stick.
+    """
     for tmpl in nt["tmpls"]:
         if "{{Source}}" not in tmpl["afmt"]:
             tmpl["afmt"] = (
                 tmpl["afmt"].rstrip() + "\n" + template.BASIC_SOURCE_BLOCK
             )
-            changed = True
     if ".sn-source" not in nt.get("css", ""):
         nt["css"] = nt.get("css", "") + "\n" + template.BASIC_SOURCE_CSS
-        changed = True
-    return changed
 
 
-def ensure_basic_note_type(col):
-    """Find or create the simple Front/Back/Notes/Source note type."""
+def ensure_basic_note_type(col, attach_source: bool = True):
+    """Find or create the simple Front/Back/Notes/Source note type.
+
+    An existing note type of ours is upgraded in place with any
+    missing fields - after the user consents to the full sync a field
+    addition forces. On decline the note type is used as-is (cards
+    still get added, just without the new fields) and the upgrade is
+    offered again another time. attach_source False skips the Source
+    upgrade entirely: the feature is off, so an untouched note type
+    must stay untouched.
+    """
     mm = col.models
     name = BASIC_MODEL_NAME
     for attempt in range(10):
@@ -146,16 +161,20 @@ def ensure_basic_note_type(col):
         if nt is None:
             break
         existing = {f["name"] for f in nt["flds"]}
-        if all(f in existing for f in BASIC_FIELDS):
-            if _upgrade_basic_templates(mm, nt):
-                _save(mm, nt)
-                return _by_name(mm, name)
-            return nt
         if {"Front", "Back"} <= existing:
-            for fname in BASIC_FIELDS:
-                if fname not in existing:
-                    mm.add_field(nt, mm.new_field(fname))
-            _upgrade_basic_templates(mm, nt)
+            missing = [f for f in BASIC_FIELDS if f not in existing]
+            if not attach_source:
+                missing = [f for f in missing if f != "Source"]
+            if not missing:
+                return nt
+            try:
+                _mod_schema(col)
+            except Exception:
+                return nt  # declined the full sync; upgrade another day
+            for fname in missing:
+                mm.add_field(nt, mm.new_field(fname))
+            if "Source" in missing:
+                _upgrade_basic_templates(mm, nt)
             _save(mm, nt)
             return _by_name(mm, name)
         name = "%s %d" % (BASIC_MODEL_NAME, attempt + 2)
@@ -173,16 +192,28 @@ def ensure_basic_note_type(col):
 
 
 def add_text_note(
-    col, deck_id: int, front: str, back: str, notes: str, source: str = ""
+    col,
+    deck_id: int,
+    front: str,
+    back: str,
+    notes: str,
+    source: str = "",
+    attach_source: bool = True,
 ):
     """`source` is ready field HTML (e.g. '<img src="...">') showing the
-    material the card came from; revealed on demand on the card back."""
-    nt = ensure_basic_note_type(col)
+    material the card came from; revealed on demand on the card back.
+    On a note type without the Source field (upgrade declined, or the
+    feature switched off) the card is added without it."""
+    nt = ensure_basic_note_type(
+        col, attach_source=attach_source or bool(source)
+    )
     note = col.new_note(nt)
     note["Front"] = front
     note["Back"] = back
-    note["Notes"] = notes
-    note["Source"] = source
+    if "Notes" in note.keys():
+        note["Notes"] = notes
+    if "Source" in note.keys():
+        note["Source"] = source
     col.add_note(note, deck_id)
     return note
 

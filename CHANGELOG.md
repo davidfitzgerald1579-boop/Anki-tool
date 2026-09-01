@@ -16,13 +16,20 @@ installed version is shown as `human_version` in
   first card citing it is added — skipped suggestions cost nothing —
   and every sibling card shares the file (so Shift+Delete during
   review can still remove the whole family). Focused cards (✨ from
-  highlighted text) carry the snip too; cards from a pasted lesson
-  have no snip and show no button. Redeploying a card from the Added
-  cards tray keeps its source. The "Snip Occlusion Basic" note type
-  gains a `Source` field; existing note types are upgraded in place —
-  the reveal block is appended to the back template without touching
-  any customisation. Switch off with `text_card_attach_source` in the
-  config.
+  highlighted text) carry the snip too — always the slide whose text
+  is on display, even across failed generations, snips landing
+  mid-run, and the ↻ fallback to a previous snip's remembered text;
+  cards from a pasted lesson have no snip and show no button.
+  Redeploying a card from the Added cards tray keeps its source. The
+  "Snip Occlusion Basic" note type gains a `Source` field; existing
+  note types are upgraded in place — the reveal block is appended to
+  the back template without touching any customisation, and only in
+  the same pass that adds the field, so deleting the block from your
+  template later sticks. Because adding a field is a schema change,
+  a synced collection shows Anki's standard full-sync confirmation
+  once before the upgrade; declining adds the card without a source.
+  Switch off with `text_card_attach_source` in the config — the note
+  type is then left untouched as well.
 
 ## v0.25.0 — 2026-08-31
 

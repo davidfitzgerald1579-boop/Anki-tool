@@ -14,6 +14,7 @@ testable outside Anki like notes.py.
 
 from __future__ import annotations
 
+import os
 import uuid
 
 from .qtshim import *  # noqa: F401,F403
@@ -28,7 +29,18 @@ class SourceImage:
         """The image's filename in the media collection, writing it on
         first use. None when there is no usable image."""
         if self._fname is not None:
-            return self._fname
+            # the cached name is only good for the collection it was
+            # written to - after a profile switch the file isn't there
+            # and must be written again, not cited broken
+            try:
+                cached_ok = os.path.exists(
+                    os.path.join(col.media.dir(), self._fname)
+                )
+            except Exception:
+                cached_ok = True  # can't check; assume it's still there
+            if cached_ok:
+                return self._fname
+            self._fname = None
         img = self._image
         if img is None or img.isNull():
             return None

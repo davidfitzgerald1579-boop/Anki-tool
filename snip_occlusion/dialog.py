@@ -213,19 +213,30 @@ def _remember_ocr(text: str) -> None:
         _LAST_OCR_TEXT = text
 
 
-def get_previous_snip_text() -> str:
-    """OCR text of the current/most recent snip: reads the live occlusion
-    editor's image if one is open, else the last OCR result remembered."""
+def get_previous_snip() -> tuple:
+    """(text, image) of the current/most recent snip.
+
+    Reads the live occlusion editor's image if one is open - the OCR
+    text and the QImage it was read from, a matched pair. Otherwise
+    the last OCR result remembered, whose image is gone: (text, None).
+    """
     dlg = getattr(mw, "_snip_occlusion_dialog", None)
     if dlg is not None and dlg.isVisible() and dlg.canvas.has_image():
         try:
-            text = ocr.extract_text(dlg.canvas.bake_image(), dlg.config)
+            baked = dlg.canvas.bake_image()
+            text = ocr.extract_text(baked, dlg.config)
         except Exception:
             text = ""
         if text:
             _remember_ocr(text)
-            return text
-    return _LAST_OCR_TEXT
+            return text, baked
+    return _LAST_OCR_TEXT, None
+
+
+def get_previous_snip_text() -> str:
+    """OCR text of the current/most recent snip: reads the live occlusion
+    editor's image if one is open, else the last OCR result remembered."""
+    return get_previous_snip()[0]
 
 
 class SnipOcclusionDialog(QDialog):
@@ -902,9 +913,11 @@ class SnipOcclusionDialog(QDialog):
             if qgen_prefetch.current() is not state:
                 return  # a newer snip took over in the meantime
             for panel in self._suggestion_panels():
-                # never clobber a pasted-lesson run's source text
+                # never clobber a pasted-lesson run's source text; the
+                # snip image travels with its text so cards written
+                # from this text cite the right slide
                 if not panel._doc_running:
-                    panel.set_source_text(state.text)
+                    panel.set_snip_source(state.text, state=state)
             self.write_page.set_source_text(state.text)
 
         try:

@@ -362,6 +362,74 @@ def test_old_basic_note_type_upgraded_with_source(col):
     assert again["css"].count(template.BASIC_SOURCE_CSS.strip()) == 1
 
 
+def _make_pre_v026_basic_model(col):
+    """The 'Snip Occlusion Basic' note type as older versions made it."""
+    mm = col.models
+    old = mm.new("Snip Occlusion Basic")
+    for fname in ("Front", "Back", "Notes"):
+        mm.add_field(old, mm.new_field(fname))
+    t = mm.new_template("Card 1")
+    t["qfmt"] = "{{Front}}"
+    t["afmt"] = "{{FrontSide}}\n<hr id=answer>\n{{Back}}"
+    mm.add_template(old, t)
+    mm.add(old)
+    return mm.by_name("Snip Occlusion Basic")
+
+
+def test_declined_schema_change_still_adds_the_card(col, monkeypatch):
+    old = _make_pre_v026_basic_model(col)
+
+    def refuse(check):
+        raise Exception("user declined the full sync")
+
+    monkeypatch.setattr(col, "mod_schema", refuse)
+    note = notes_mod.add_text_note(
+        col, col.decks.id("Default"), "F", "B", "N",
+        source='<img src="x.png">',
+    )
+    # the card went in; the note type was left completely alone
+    assert note.id
+    nt = col.models.by_name("Snip Occlusion Basic")
+    assert nt["id"] == old["id"]
+    assert "Source" not in {f["name"] for f in nt["flds"]}
+    assert "{{Source}}" not in nt["tmpls"][0]["afmt"]
+    # once consent is possible again, the upgrade happens after all
+    monkeypatch.undo()
+    note2 = notes_mod.add_text_note(
+        col, col.decks.id("Default"), "F2", "B2", "",
+        source='<img src="y.png">',
+    )
+    assert note2["Source"] == '<img src="y.png">'
+
+
+def test_attach_source_off_leaves_note_type_untouched(col):
+    old = _make_pre_v026_basic_model(col)
+    note = notes_mod.add_text_note(
+        col, col.decks.id("Default"), "F", "B", "N", attach_source=False
+    )
+    assert note.id and note["Notes"] == "N"
+    nt = col.models.by_name("Snip Occlusion Basic")
+    assert nt["id"] == old["id"]
+    assert "Source" not in {f["name"] for f in nt["flds"]}
+    assert "{{Source}}" not in nt["tmpls"][0]["afmt"]
+    assert ".sn-source" not in nt["css"]
+
+
+def test_user_removed_reveal_block_stays_removed(col):
+    # the user upgraded, then deliberately deleted the block from the
+    # back template: it must not come back on the next card add
+    nt = notes_mod.ensure_basic_note_type(col)
+    mm = col.models
+    nt["tmpls"][0]["afmt"] = "{{FrontSide}}\n<hr id=answer>\n{{Back}}"
+    mm.update_dict(nt)
+    notes_mod.add_text_note(
+        col, col.decks.id("Default"), "F", "B", "",
+        source='<img src="x.png">',
+    )
+    nt = mm.by_name(nt["name"])
+    assert "{{Source}}" not in nt["tmpls"][0]["afmt"]
+
+
 def test_incompatible_existing_model_gets_suffixed_name(col):
     mm = col.models
     bogus = mm.new(MODEL_NAME)

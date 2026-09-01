@@ -117,7 +117,15 @@
   card was generated from. The snip is stored once per slide in Anki's
   media collection, however many cards cite it; cards from pasted text
   have no snip and get no button. Set to `false` if you don't want
-  slide images in your collection. Default: `true`.
+  slide images in your collection — the note type is then left
+  entirely untouched too. Adding the Source field to a note type
+  created by an older version is a schema change, so on a synced
+  collection the first card added after updating shows Anki's
+  standard "requires a full upload" confirmation once; declining
+  simply adds the card without a source, and you'll be asked again
+  another time. Deleted the "Reveal source" block from your card
+  template? It stays deleted — the add-on only installs it when it
+  first adds the Source field. Default: `true`.
 
 Note: `mask_fill` and `target_fill` are written into the note type's CSS
 when the note type is first created. To restyle existing cards, edit the
