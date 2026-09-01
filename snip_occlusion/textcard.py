@@ -3,9 +3,10 @@
 Two widgets, matching the main window's three-view layout:
 
 - SuggestionsPage ("Suggested Cards" view, also the ⧉ pop-out window):
-  the AI suggestions at the top, and the source (OCR/pasted) text
-  underneath. Clicking 🔎 on a card highlights, inline in that text,
-  the sentences the card most likely came from - no popups.
+  the source (OCR/pasted) text at the top - sized to its content,
+  divider draggable, like the Write Card view - and the AI
+  suggestions underneath. Clicking 🔎 on a card highlights, inline in
+  that text, the sentences the card most likely came from - no popups.
 - TextCardPanel ("Write Card" view, and the Use →/Ctrl+Shift+T window):
   Front/Back/Notes with simple formatting. In the main window it shows
   the source text at the top for reference; the standalone window is
@@ -490,11 +491,13 @@ class TextCardPanel(QWidget):
 
 
 class SuggestionsPage(QWidget):
-    """AI suggestions on top; the source text underneath.
+    """The source text on top; AI suggestions underneath.
 
-    🔎 on a card highlights, inline in the source text below, the
-    sentences the card (and separately its Notes line) most likely came
-    from - yellow for question/answer, orange for notes.
+    The source pane defaults to exactly the height its text needs
+    (like the Write Card view) and the divider is draggable. 🔎 on a
+    card highlights, inline in the source text above, the sentences
+    the card (and separately its Notes line) most likely came from -
+    yellow for question/answer, orange for notes.
     """
 
     def __init__(self, parent=None):
@@ -552,7 +555,7 @@ class SuggestionsPage(QWidget):
         paste_btn = QPushButton("📄 Paste text…", self)
         paste_btn.setToolTip(
             "Paste a whole lesson or element text; cards are "
-            "generated section by section and stream in above"
+            "generated section by section and stream in below"
         )
         qconnect(paste_btn.clicked, self._open_paste_dialog)
         title_row.addWidget(paste_btn)
@@ -638,11 +641,13 @@ class SuggestionsPage(QWidget):
         self.source_browser.viewport().installEventFilter(self)
         src_lay.addWidget(self.source_browser)
 
+        # source text on top, suggestions underneath - same shape as
+        # the Write Card view, divider draggable
         self.vsplit = QSplitter(Qt.Orientation.Vertical, self)
         self.vsplit.setHandleWidth(7)
         self.vsplit.setChildrenCollapsible(False)
-        self.vsplit.addWidget(self.suggest_panel)
         self.vsplit.addWidget(source_host)
+        self.vsplit.addWidget(self.suggest_panel)
         self.vsplit.setStretchFactor(0, 0)
         self.vsplit.setStretchFactor(1, 1)
         self._user_sized = False
@@ -691,9 +696,12 @@ class SuggestionsPage(QWidget):
             "<b>📄 Source text</b> <span style='color:#8a8171'>— click "
             "🔎 on a card to highlight where it came from.</span>"
         )
+        # new text auto-sizes the pane again only if the user hasn't
+        # dragged the divider this batch (the batch starters reset it)
+        QTimer.singleShot(0, self._fit_source_if_auto)
 
     def _show_card_source(self, card: dict) -> None:
-        """🔎: highlight the card's origin inline in the browser below."""
+        """🔎: highlight the card's origin inline in the browser above."""
         source = card.get("_source") or self._current_source
         if not source.strip():
             tooltip("No source text stored for this card.", parent=self)
@@ -750,31 +758,42 @@ class SuggestionsPage(QWidget):
         # once the user drags the divider, stop auto-sizing this batch
         self._user_sized = True
 
-    def _fit_suggestions_if_auto(self) -> None:
+    def _fit_source_if_auto(self) -> None:
         if not self._user_sized:
-            self._fit_suggestions()
+            self._fit_source()
 
-    def _fit_suggestions(self) -> None:
-        """Show every card without scrolling; the source pane shrinks."""
+    def _fit_source(self) -> None:
+        """Size the source pane (top) to show the WHOLE text.
+
+        Same behaviour as the Write Card view: the suggestions below
+        take whatever is left and scroll; only when the text is taller
+        than the window itself does the pane cap out. A manual
+        splitter drag takes over until the next snip or lesson
+        arrives.
+        """
         sizes = self.vsplit.sizes()
         total = sum(sizes)
         if total <= 0:
             return  # not laid out yet (view not shown); showEvent refits
-        inner = self.suggest_scroll.widget()
-        if inner.layout() is not None:
-            inner.layout().activate()
-        needed = inner.sizeHint().height() + 6  # rows
-        panel_lay = self.suggest_panel.layout()
-        item = panel_lay.itemAt(0)  # title row
+        doc = self.source_browser.document()
+        doc.setTextWidth(max(60, self.source_browser.viewport().width()))
+        needed = int(doc.size().height()) + 20
+        host_lay = self.vsplit.widget(0).layout()
+        item = host_lay.itemAt(0)  # the legend row
         if item is not None:
-            needed += item.sizeHint().height() + panel_lay.spacing()
-        bottom_min = 150  # keep a useful strip of source text visible
-        top = max(60, min(needed, total - bottom_min))
+            needed += item.sizeHint().height() + host_lay.spacing()
+        bottom_min = 200  # keep a useful strip of suggestions visible
+        top = max(90, min(needed, total - bottom_min))
         self.vsplit.setSizes([top, total - top])
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        QTimer.singleShot(0, self._fit_suggestions_if_auto)
+        QTimer.singleShot(0, self._fit_source_if_auto)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        # width changes reflow the text, changing its height
+        QTimer.singleShot(0, self._fit_source_if_auto)
 
     # -------------------------------------------- pasted-text generation
 
@@ -946,7 +965,7 @@ class SuggestionsPage(QWidget):
             for card in cards:
                 card["_image"] = image
                 self._add_card_row(card)
-            QTimer.singleShot(0, self._fit_suggestions_if_auto)
+            QTimer.singleShot(0, self._fit_source_if_auto)
 
         mw.taskman.run_in_background(work, done)
 
@@ -984,7 +1003,7 @@ class SuggestionsPage(QWidget):
         lay = QVBoxLayout(dlg)
         info = QLabel(
             "Paste a whole lesson or element text below. It is split "
-            "into sections and the cards stream in above as each "
+            "into sections and the cards stream in below as each "
             "section finishes — start reviewing them straight away.",
             dlg,
         )
@@ -1092,7 +1111,7 @@ class SuggestionsPage(QWidget):
             self._set_suggest_status(
                 "section %d/%d…" % (done_count + 1, total)
             )
-        QTimer.singleShot(0, self._fit_suggestions_if_auto)
+        QTimer.singleShot(0, self._fit_source_if_auto)
 
     def _doc_finish(
         self, job: int, status: str, detail: str | None = None
@@ -1213,7 +1232,7 @@ class SuggestionsPage(QWidget):
                 self.set_snip_source(fallback_text, image=fallback_source)
             for card in cards:
                 self._add_card_row(card)
-            QTimer.singleShot(0, self._fit_suggestions_if_auto)
+            QTimer.singleShot(0, self._fit_source_if_auto)
 
         mw.taskman.run_in_background(work, done)
 
@@ -1251,7 +1270,7 @@ class SuggestionsPage(QWidget):
         except Exception:
             pass
         self._add_card_row(row_card, index=index)
-        QTimer.singleShot(0, self._fit_suggestions_if_auto)
+        QTimer.singleShot(0, self._fit_source_if_auto)
 
     def _teach_correction(
         self, card: dict, corrected: dict, index: int
@@ -1411,7 +1430,7 @@ class SuggestionsPage(QWidget):
             row.setParent(None)
             row.deleteLater()
             # shrink back to fit the remaining cards (unless hand-sized)
-            QTimer.singleShot(0, self._fit_suggestions_if_auto)
+            QTimer.singleShot(0, self._fit_source_if_auto)
 
         def use() -> None:
             try:
@@ -1433,7 +1452,7 @@ class SuggestionsPage(QWidget):
                     pass
                 if self._batch_id == batch:
                     self._add_card_row(card, index=index)
-                    QTimer.singleShot(0, self._fit_suggestions_if_auto)
+                    QTimer.singleShot(0, self._fit_source_if_auto)
                     tooltip(
                         "Card returned to the suggestions — no longer "
                         "counted as kept.",
@@ -1569,7 +1588,7 @@ class SuggestionsPage(QWidget):
             buttons.append(
                 (
                     "🔎",
-                    "Highlight, in the source text below, the sentences "
+                    "Highlight, in the source text above, the sentences "
                     "this card most likely came from",
                     show_source,
                     "",

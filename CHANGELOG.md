@@ -4,6 +4,15 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.27.1 — 2026-09-01
+
+- **The Suggested Cards view now matches the Write Card view's
+  shape**: the source text sits at the top and the suggested cards
+  underneath. The source pane defaults to exactly the height its
+  text needs (the suggestions take the rest and scroll) and re-fits
+  when a new snip or lesson arrives; drag the divider to override it
+  for the current batch, just like the Write Card view.
+
 ## v0.27.0 — 2026-09-01
 
 - **Reveal source is now a split view: the slide AND the highlighted
