@@ -10,6 +10,7 @@ import json
 import re
 import uuid
 
+from . import source_image as source_image_mod
 from . import template
 from .consts import (
     BASIC_FIELDS,
@@ -197,23 +198,38 @@ def add_text_note(
     front: str,
     back: str,
     notes: str,
-    source: str = "",
+    source=None,
     attach_source: bool = True,
 ):
-    """`source` is ready field HTML (e.g. '<img src="...">') showing the
-    material the card came from; revealed on demand on the card back.
-    On a note type without the Source field (upgrade declined, or the
-    feature switched off) the card is added without it."""
-    nt = ensure_basic_note_type(
-        col, attach_source=attach_source or bool(source)
-    )
+    """`source` is where the card came from: None, ready field HTML
+    (a redeploy keeping the original note's source), or a
+    source_image.SourceImage. The image is written to the media
+    collection only once the note type is confirmed to store it, so a
+    declined upgrade (or the feature switched off) leaves no orphaned
+    media file - the card is simply added without a source."""
+    nt = ensure_basic_note_type(col, attach_source=attach_source)
     note = col.new_note(nt)
+    fields = set(note.keys())
+    source_html = ""
+    if source is not None and "Source" in fields:
+        try:
+            source_html = source_image_mod.as_field_html(source, col)
+        except Exception:
+            source_html = ""  # a bonus; the card must still go in
+    if notes and "Notes" not in fields:
+        # the Notes field is gone (upgrade declined): typed text must
+        # not vanish - fold it into the back the way the template would
+        back = (
+            '%s<div class="sn-notes">%s</div>' % (back, notes)
+            if back
+            else notes
+        )
     note["Front"] = front
     note["Back"] = back
-    if "Notes" in note.keys():
+    if "Notes" in fields:
         note["Notes"] = notes
-    if "Source" in note.keys():
-        note["Source"] = source
+    if "Source" in fields:
+        note["Source"] = source_html
     col.add_note(note, deck_id)
     return note
 

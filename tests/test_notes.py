@@ -415,6 +415,88 @@ def test_attach_source_off_leaves_note_type_untouched(col):
     assert ".sn-source" not in nt["css"]
 
 
+class _StubSource:
+    """Stands in for a SourceImage: counts media materialisations."""
+
+    def __init__(self):
+        self.writes = 0
+
+    def html(self, col) -> str:
+        self.writes += 1
+        return '<img src="stub-snip.png">'
+
+
+def test_source_written_only_after_field_is_confirmed(col, monkeypatch):
+    # declined upgrade: the snip must NOT be written to media (no
+    # orphan file), and the card goes in without a source
+    _make_pre_v026_basic_model(col)
+    stub = _StubSource()
+
+    def refuse(check):
+        raise Exception("user declined the full sync")
+
+    monkeypatch.setattr(col, "mod_schema", refuse)
+    note = notes_mod.add_text_note(
+        col, col.decks.id("Default"), "F", "B", "", source=stub
+    )
+    assert note.id and stub.writes == 0
+    # consent possible again: now the write happens, exactly once
+    monkeypatch.undo()
+    note2 = notes_mod.add_text_note(
+        col, col.decks.id("Default"), "F2", "B2", "", source=stub
+    )
+    assert stub.writes == 1
+    assert note2["Source"] == '<img src="stub-snip.png">'
+
+
+def test_attach_source_off_never_upgrades_even_with_a_source(col):
+    # rows stamped while the feature was ON can be added after it was
+    # switched OFF: still no consent prompt, no field, no media write
+    old = _make_pre_v026_basic_model(col)
+    stub = _StubSource()
+    note = notes_mod.add_text_note(
+        col, col.decks.id("Default"), "F", "B", "",
+        source=stub, attach_source=False,
+    )
+    assert note.id and stub.writes == 0
+    nt = col.models.by_name("Snip Occlusion Basic")
+    assert nt["id"] == old["id"]
+    assert "Source" not in {f["name"] for f in nt["flds"]}
+    # but on a note type that already stores sources (a redeploy), the
+    # existing source HTML is kept even with the feature off
+    nt2 = notes_mod.ensure_basic_note_type(col)
+    assert "Source" in {f["name"] for f in nt2["flds"]}
+    note2 = notes_mod.add_text_note(
+        col, col.decks.id("Default"), "F2", "B2", "",
+        source='<img src="kept.png">', attach_source=False,
+    )
+    assert note2["Source"] == '<img src="kept.png">'
+
+
+def test_declined_notes_field_folds_typed_notes_into_back(col, monkeypatch):
+    # only Front/Back left on the model and the user declines the
+    # upgrade: the notes they typed must still end up on the card
+    mm = col.models
+    old = mm.new("Snip Occlusion Basic")
+    for fname in ("Front", "Back"):
+        mm.add_field(old, mm.new_field(fname))
+    t = mm.new_template("Card 1")
+    t["qfmt"] = "{{Front}}"
+    t["afmt"] = "{{FrontSide}}<hr id=answer>{{Back}}"
+    mm.add_template(old, t)
+    mm.add(old)
+
+    def refuse(check):
+        raise Exception("declined")
+
+    monkeypatch.setattr(col, "mod_schema", refuse)
+    note = notes_mod.add_text_note(
+        col, col.decks.id("Default"), "F", "B", "IMPORTANT TYPED NOTES"
+    )
+    assert "IMPORTANT TYPED NOTES" in note["Back"]
+    assert "IMPORTANT TYPED NOTES" in note.cards()[0].answer()
+
+
 def test_user_removed_reveal_block_stays_removed(col):
     # the user upgraded, then deliberately deleted the block from the
     # back template: it must not come back on the next card add

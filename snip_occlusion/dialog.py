@@ -13,7 +13,7 @@ from .uitools import cream_tooltips, notify as tooltip
 
 from .qtshim import *  # noqa: F401,F403
 from . import notes as notes_mod
-from . import ocr, qgen_bakeoff, qgen_prefetch
+from . import ocr, qgen_bakeoff, qgen_prefetch, source_image
 from .newcard_panel import AddedCardsList, NewCardQueuePanel
 from .consts import (
     ADDON_NAME,
@@ -213,13 +213,21 @@ def _remember_ocr(text: str) -> None:
         _LAST_OCR_TEXT = text
 
 
+# the last (base image cacheKey, OCR text, SourceImage) served by
+# get_previous_snip, so repeated ↻ presses (and both suggestion panels)
+# share one SourceImage - and so one media file - per unchanged snip
+_SNIP_SOURCE_MEMO = (None, "", None)
+
+
 def get_previous_snip() -> tuple:
-    """(text, image) of the current/most recent snip.
+    """(text, source) of the current/most recent snip.
 
     Reads the live occlusion editor's image if one is open - the OCR
-    text and the QImage it was read from, a matched pair. Otherwise
-    the last OCR result remembered, whose image is gone: (text, None).
+    text and a SourceImage of the very image it was read from, a
+    matched pair. Otherwise the last OCR result remembered, whose
+    image is gone: (text, None).
     """
+    global _SNIP_SOURCE_MEMO
     dlg = getattr(mw, "_snip_occlusion_dialog", None)
     if dlg is not None and dlg.isVisible() and dlg.canvas.has_image():
         try:
@@ -229,7 +237,13 @@ def get_previous_snip() -> tuple:
             text = ""
         if text:
             _remember_ocr(text)
-            return text, baked
+            key = dlg.canvas.image.cacheKey()
+            memo_key, memo_text, memo_src = _SNIP_SOURCE_MEMO
+            if memo_src is not None and (memo_key, memo_text) == (key, text):
+                return text, memo_src
+            src = source_image.SourceImage(baked)
+            _SNIP_SOURCE_MEMO = (key, text, src)
+            return text, src
     return _LAST_OCR_TEXT, None
 
 
