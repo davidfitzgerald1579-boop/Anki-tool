@@ -19,6 +19,7 @@ from .consts import (
     FIELDS,
     MARKER_FIELDS,
     MODEL_NAME,
+    SOURCE_FIELDS,
 )
 from .shapes import normalized_payload, shapes_from_payload, target_groups
 
@@ -127,20 +128,42 @@ def _mod_schema(col) -> None:
     mod(True)
 
 
-def _upgrade_basic_templates(mm, nt) -> None:
-    """Append the "Reveal source" block (v0.26) to the back template
-    and its CSS, leaving everything the user customised untouched.
+def _upgrade_basic_templates(mm, nt, install: bool) -> None:
+    """Install the current "Reveal source" block and CSS, leaving
+    everything the user customised untouched.
 
-    Called only in the same pass that adds the missing Source field:
-    a note type that already has the field but not the block had the
-    block deleted on purpose, and the deletion must stick.
+    The stock v0.26 (image-only) block is replaced in place wherever
+    it appears. `install` says whether a template carrying no block
+    at all should get one: True only when the Source field itself was
+    just added (the note type never had the reveal feature); a v0.26
+    note type gaining only "Source Text" but carrying no block had
+    the block deleted on purpose, and the deletion must stick.
+    Called only in the same pass that adds a missing source field.
     """
     for tmpl in nt["tmpls"]:
-        if "{{Source}}" not in tmpl["afmt"]:
+        if template.BASIC_SOURCE_BLOCK_V1 in tmpl["afmt"]:
+            tmpl["afmt"] = tmpl["afmt"].replace(
+                template.BASIC_SOURCE_BLOCK_V1, template.BASIC_SOURCE_BLOCK
+            )
+        elif install and "{{Source}}" not in tmpl["afmt"]:
             tmpl["afmt"] = (
                 tmpl["afmt"].rstrip() + "\n" + template.BASIC_SOURCE_BLOCK
             )
-    if ".sn-source" not in nt.get("css", ""):
+    css = nt.get("css", "")
+    if template.BASIC_SOURCE_CSS_V1 in css:
+        nt["css"] = css.replace(
+            template.BASIC_SOURCE_CSS_V1, template.BASIC_SOURCE_CSS
+        )
+    elif install and ".sn-source" not in css:
+        nt["css"] = css + "\n" + template.BASIC_SOURCE_CSS
+    # the current block cannot work without its rules (pane layout,
+    # mode switching, highlight colours). When a template now carries
+    # it but the CSS lacks them - e.g. the user customised the v0.26
+    # CSS so the exact-match swap above could not fire - append the
+    # current CSS; appending never edits the user's own rules.
+    if any(
+        template.BASIC_SOURCE_BLOCK in t["afmt"] for t in nt["tmpls"]
+    ) and ".sn-source-panes" not in nt.get("css", ""):
         nt["css"] = nt.get("css", "") + "\n" + template.BASIC_SOURCE_CSS
 
 
@@ -165,7 +188,7 @@ def ensure_basic_note_type(col, attach_source: bool = True):
         if {"Front", "Back"} <= existing:
             missing = [f for f in BASIC_FIELDS if f not in existing]
             if not attach_source:
-                missing = [f for f in missing if f != "Source"]
+                missing = [f for f in missing if f not in SOURCE_FIELDS]
             if not missing:
                 return nt
             try:
@@ -174,8 +197,10 @@ def ensure_basic_note_type(col, attach_source: bool = True):
                 return nt  # declined the full sync; upgrade another day
             for fname in missing:
                 mm.add_field(nt, mm.new_field(fname))
-            if "Source" in missing:
-                _upgrade_basic_templates(mm, nt)
+            if any(f in SOURCE_FIELDS for f in missing):
+                _upgrade_basic_templates(
+                    mm, nt, install="Source" in missing
+                )
             _save(mm, nt)
             return _by_name(mm, name)
         name = "%s %d" % (BASIC_MODEL_NAME, attempt + 2)
@@ -192,6 +217,26 @@ def ensure_basic_note_type(col, attach_source: bool = True):
     return _by_name(mm, name)
 
 
+def source_trace_html(
+    front: str, back: str, notes: str, source_text: str
+) -> str:
+    """Field-ready HTML for "Source Text": the source with the
+    sentences the card most likely came from highlighted.
+
+    Takes PLAIN text (the trace matches on words; HTML tags would
+    pollute the match). Baked once at add time, so the highlights
+    render at review time with no add-on on the device.
+    """
+    if not (source_text or "").strip():
+        return ""
+    from . import qgen_trace
+
+    body, _matches, _notes_matches = qgen_trace.highlight_html(
+        {"front": front, "back": back, "notes": notes}, source_text
+    )
+    return '<div class="sn-source-ocr">%s</div>' % body
+
+
 def add_text_note(
     col,
     deck_id: int,
@@ -199,6 +244,7 @@ def add_text_note(
     back: str,
     notes: str,
     source=None,
+    source_text: str = "",
     attach_source: bool = True,
 ):
     """`source` is where the card came from: None, ready field HTML
@@ -206,7 +252,9 @@ def add_text_note(
     source_image.SourceImage. The image is written to the media
     collection only once the note type is confirmed to store it, so a
     declined upgrade (or the feature switched off) leaves no orphaned
-    media file - the card is simply added without a source."""
+    media file - the card is simply added without a source.
+    `source_text` is ready field HTML for the highlighted source text
+    (see source_trace_html); stored only when the field exists."""
     nt = ensure_basic_note_type(col, attach_source=attach_source)
     note = col.new_note(nt)
     fields = set(note.keys())
@@ -230,6 +278,8 @@ def add_text_note(
         note["Notes"] = notes
     if "Source" in fields:
         note["Source"] = source_html
+    if "Source Text" in fields:
+        note["Source Text"] = source_text
     col.add_note(note, deck_id)
     return note
 

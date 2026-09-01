@@ -20,8 +20,11 @@ _MIN_OVERLAP = 3  # shared substantial words for a confident match
 _MAX_NOTE_HIGHLIGHTS = 4
 _NOTE_MIN_OVERLAP = 2  # notes are short (often just a citation)
 
-HIGHLIGHT_STYLE = "background:#ffe58a;border-radius:3px;"
-NOTE_HIGHLIGHT_STYLE = "background:#ffc9a0;border-radius:3px;"
+# the explicit text colour keeps highlighted sentences readable when
+# the surrounding page is dark (night-mode card review inherits light
+# text, which would vanish on these light backgrounds)
+HIGHLIGHT_STYLE = "color:#1c1c1c;background:#ffe58a;border-radius:3px;"
+NOTE_HIGHLIGHT_STYLE = "color:#1c1c1c;background:#ffc9a0;border-radius:3px;"
 
 
 def _words(text: str) -> set:

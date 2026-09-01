@@ -111,21 +111,28 @@
   after a request (e.g. `"30m"`, `"2h"`; `-1` for as long as Ollama
   runs). Default: `"30m"`. Longer means fewer model-load waits during a
   study session, at the cost of the RAM staying used.
-- `text_card_attach_source`: save the full snip into each text card
+- `text_card_attach_source`: save the source behind each text card
   made from an AI suggestion (Use →). While reviewing, the card back
-  then has a "🔍 Reveal source" button that opens the whole slide the
-  card was generated from. The snip is stored once per slide in Anki's
-  media collection, however many cards cite it; cards from pasted text
-  have no snip and get no button. Set to `false` if you don't want
-  slide images in your collection — the note type is then left
-  entirely untouched too. Adding the Source field to a note type
+  then has a "🔍 Reveal source" button that opens a split view below
+  the card: the whole slide on one side, and on the other the source
+  text with the sentences the card most likely came from highlighted
+  (the same 🔎 trace as the Suggested Cards page, computed against
+  the card as you added it). Image / Text / Both buttons switch the
+  view. The snip is stored once per slide in Anki's media collection,
+  however many cards cite it; cards from pasted text have no snip, so
+  their image pane says "No image to display" and the text pane shows
+  the highlighted passage. Set to `false` if you don't want any of
+  this in your collection — the note type is then left entirely
+  untouched too. Adding the Source field to a note type
   created by an older version is a schema change, so on a synced
   collection the first card added after updating shows Anki's
   standard "requires a full upload" confirmation once; declining
   simply adds the card without a source, and you'll be asked again
   another time. Deleted the "Reveal source" block from your card
-  template? It stays deleted — the add-on only installs it when it
-  first adds the Source field. Default: `true`.
+  template? It stays deleted — the add-on installs a block only into
+  a template that has never had one (upgrading its own stock block
+  in place when versions change), never into one you stripped it
+  from. Default: `true`.
 
 Note: `mask_fill` and `target_fill` are written into the note type's CSS
 when the note type is first created. To restyle existing cards, edit the

@@ -163,16 +163,78 @@ def build_css(mask_fill: str, target_fill: str) -> str:
 
 BASIC_FRONT = "{{Front}}"
 
-# The full snip the card was generated from, tucked behind a "Reveal
-# source" button on the back. <details>/<summary> needs no JavaScript,
-# so it works on AnkiDroid and AnkiMobile exactly like on desktop.
-# Appended to the back template of pre-existing note types by
-# notes.ensure_basic_note_type, so keep it self-contained.
-BASIC_SOURCE_BLOCK = """{{#Source}}<details class="sn-source">
+# v0.26 shipped an image-only reveal block; kept verbatim so
+# notes.ensure_basic_note_type can find and replace it in place.
+BASIC_SOURCE_BLOCK_V1 = """{{#Source}}<details class="sn-source">
 <summary>&#128269; Reveal source</summary>
 <div class="sn-source-wrap">{{Source}}</div>
 </details>{{/Source}}
 """
+
+BASIC_SOURCE_CSS_V1 = """.sn-source {
+  margin-top: 16px;
+}
+.sn-source summary {
+  display: inline-block;
+  list-style: none;
+  cursor: pointer;
+  font-size: 0.7em;
+  color: #666;
+  border: 1px solid #bbb;
+  border-radius: 6px;
+  padding: 4px 12px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.sn-source summary::-webkit-details-marker { display: none; }
+.sn-source[open] summary { color: #333; border-color: #888; }
+.sn-source .sn-source-wrap { margin-top: 10px; line-height: 0; }
+.sn-source img { max-width: 100%; height: auto; }
+.night_mode .sn-source summary { color: #aaa; border-color: #555; }
+.night_mode .sn-source[open] summary { color: #ddd; border-color: #888; }
+"""
+
+# The source behind the card, tucked under a "Reveal source" button on
+# the back: the full snip image and the source text with the sentences
+# the card most likely came from highlighted (baked into the Source
+# Text field when the card is added - no add-on needed at review
+# time). Image / Text / Both buttons pick the pane; split view is the
+# default. <details>/<summary> handles the reveal itself with no
+# JavaScript; the tiny script only switches panes and works on
+# AnkiDroid and AnkiMobile like on desktop. Appended to (or upgraded
+# in) the back template of pre-existing note types by
+# notes.ensure_basic_note_type, so keep it self-contained.
+_SOURCE_DETAILS = """<details class="sn-source" data-mode="both">
+<summary>&#128269; Reveal source</summary>
+<script>
+window.snSrcMode = function (btn, mode) {
+  var box = btn.closest("details");
+  box.setAttribute("data-mode", mode);
+  var all = box.querySelectorAll(".sn-mode-btn");
+  for (var i = 0; i < all.length; i++) {
+    all[i].classList.toggle("sn-mode-on", all[i] === btn);
+  }
+};
+</script>
+<div class="sn-source-modes">
+<button type="button" class="sn-mode-btn" onclick="snSrcMode(this,'img')">Image</button>
+<button type="button" class="sn-mode-btn" onclick="snSrcMode(this,'text')">Text</button>
+<button type="button" class="sn-mode-btn sn-mode-on" onclick="snSrcMode(this,'both')">Both</button>
+</div>
+<div class="sn-source-panes">
+<div class="sn-source-pane sn-source-pane-img">{{#Source}}{{Source}}{{/Source}}{{^Source}}<div class="sn-source-none">No image to display</div>{{/Source}}</div>
+<div class="sn-source-pane sn-source-pane-text">{{#Source Text}}{{Source Text}}{{/Source Text}}{{^Source Text}}<div class="sn-source-none">No source text stored</div>{{/Source Text}}</div>
+</div>
+</details>"""
+
+# Anki's conditionals have no OR, so the block is emitted under
+# either field being non-empty (never twice).
+BASIC_SOURCE_BLOCK = (
+    "{{#Source}}" + _SOURCE_DETAILS + "{{/Source}}\n"
+    "{{^Source}}{{#Source Text}}"
+    + _SOURCE_DETAILS
+    + "{{/Source Text}}{{/Source}}\n"
+)
 
 BASIC_BACK = (
     """{{FrontSide}}
@@ -200,10 +262,65 @@ BASIC_SOURCE_CSS = """.sn-source {
 }
 .sn-source summary::-webkit-details-marker { display: none; }
 .sn-source[open] summary { color: #333; border-color: #888; }
+.sn-source-modes { margin-top: 10px; }
+.sn-mode-btn {
+  font-size: 12px;
+  color: #666;
+  background: transparent;
+  border: 1px solid #bbb;
+  border-radius: 6px;
+  padding: 3px 10px;
+  margin: 0 2px;
+  cursor: pointer;
+}
+.sn-mode-btn.sn-mode-on {
+  color: #222;
+  border-color: #888;
+  background: rgba(0, 0, 0, 0.07);
+}
+.sn-source-panes {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: center;
+  margin-top: 10px;
+}
+.sn-source-pane { flex: 1 1 0; min-width: 0; }
+.sn-source-pane-img img { max-width: 100%; height: auto; }
+/* kept from v0.26 so a customised v0.26 block keeps rendering when
+   only the CSS was swapped to this version */
 .sn-source .sn-source-wrap { margin-top: 10px; line-height: 0; }
 .sn-source img { max-width: 100%; height: auto; }
+.sn-source-pane-text {
+  text-align: left;
+  font-size: 15px;
+  line-height: 1.5;
+  max-height: 65vh;
+  overflow-y: auto;
+}
+.sn-source-ocr { color: #333; }
+.sn-source-ocr span { color: #1c1c1c; }
+.sn-source-none {
+  color: #999;
+  font-size: 0.8em;
+  font-style: italic;
+  padding: 18px 0;
+}
+.sn-source[data-mode="img"] .sn-source-pane-text { display: none; }
+.sn-source[data-mode="text"] .sn-source-pane-img { display: none; }
+@media (max-width: 640px) {
+  .sn-source-panes { flex-direction: column; }
+}
 .night_mode .sn-source summary { color: #aaa; border-color: #555; }
 .night_mode .sn-source[open] summary { color: #ddd; border-color: #888; }
+.night_mode .sn-mode-btn { color: #aaa; border-color: #555; }
+.night_mode .sn-mode-btn.sn-mode-on {
+  color: #eee;
+  border-color: #999;
+  background: rgba(255, 255, 255, 0.12);
+}
+.night_mode .sn-source-ocr { color: #ccc; }
+.night_mode .sn-source-none { color: #777; }
 """
 
 BASIC_CSS = (

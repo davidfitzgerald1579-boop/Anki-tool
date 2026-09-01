@@ -97,6 +97,10 @@ class TextCardPanel(QWidget):
         # a SourceImage (the snip; media-written on first add), ready
         # HTML (a redeploy keeping the original), or None
         self.source = None
+        # the PLAIN source text the card was generated from (OCR or a
+        # pasted lesson); highlighted against the final card content
+        # at add time and saved into the Source Text field
+        self.source_text = ""
         self._src_user_sized = False
         self._build_ui(standalone_shortcuts)
 
@@ -426,9 +430,22 @@ class TextCardPanel(QWidget):
             # HTML - a redeploy keeping what the note already had - is
             # not a new image and survives the toggle)
             src = None
+        src_text = (self.source_text or "").strip()
+        source_text_html = ""
+        # like the image above, text a redeployed note already carries
+        # survives the feature toggle; only fresh adds respect it
+        if src_text and (attach or self.replaces_note_id is not None):
+            # highlight against the card AS ADDED (the user may have
+            # corrected it since the suggestion), like the 🔎 trace
+            try:
+                source_text_html = notes_mod.source_trace_html(
+                    plain[0], plain[1], plain[2], src_text
+                )
+            except Exception:
+                source_text_html = ""  # a bonus; the card must go in
         note = notes_mod.add_text_note(
             mw.col, deck_id, front, back_html, notes_html, src,
-            attach_source=attach,
+            source_text=source_text_html, attach_source=attach,
         )
         source_html = note["Source"] if "Source" in note.keys() else ""
         replaces = getattr(self, "replaces_note_id", None)
@@ -445,12 +462,13 @@ class TextCardPanel(QWidget):
                     notes_html,
                     plain[0],
                     source=source_html,
+                    source_text=src_text,
                 )
                 self.replaces_note_id = int(note.id)
             else:
                 added_cards.record(
                     int(note.id), deck_id, front, back_html, notes_html,
-                    plain[0], source=source_html,
+                    plain[0], source=source_html, source_text=src_text,
                 )
         except Exception:
             pass  # the note was added; tracking it is best-effort
@@ -1638,9 +1656,12 @@ class TextCardDialog(QDialog):
         else:
             self.panel.focus_front()
         if original_card:
-            # the suggested card remembers the snip it came from; the
-            # note's Source field then carries the full slide
+            # the suggested card remembers the snip it came from (the
+            # note's Source field then carries the full slide) and the
+            # source text it was generated from (highlighted into the
+            # Source Text field at add time)
             self.panel.source = original_card.get("_image")
+            self.panel.source_text = original_card.get("_source") or ""
             # the learning loop should remember the card AS ADDED, not
             # as suggested: if the user corrects wrong content before
             # adding, the corrected version replaces the original in
@@ -1764,8 +1785,10 @@ class AddedCardDialog(QDialog):
         self.panel.back.setHtml(entry.get("back", ""))
         self.panel.notes.setHtml(entry.get("notes", ""))
         # a redeploy keeps the original note's source snip (the media
-        # file already exists; its HTML is reused verbatim)
+        # file already exists; its HTML is reused verbatim) and its
+        # source text (re-highlighted against the corrected card)
         self.panel.source = entry.get("source") or None
+        self.panel.source_text = entry.get("source_text") or ""
         i = self.panel.deck_box.findData(entry.get("deck_id"))
         if i >= 0:
             self.panel.deck_box.setCurrentIndex(i)

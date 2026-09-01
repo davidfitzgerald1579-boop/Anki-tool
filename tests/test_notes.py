@@ -290,6 +290,13 @@ def test_basic_text_note_type_and_card(col):
 
 def test_text_note_with_source_gets_reveal_button(col):
     deck_id = col.decks.id("Default")
+    trace = notes_mod.source_trace_html(
+        "What is judicial review?",
+        "A challenge to the lawfulness of a public body's decision.",
+        "",
+        "Judicial review is a challenge to the lawfulness of a "
+        "public body's decision. Unrelated other sentence here.",
+    )
     note = notes_mod.add_text_note(
         col,
         deck_id,
@@ -297,23 +304,75 @@ def test_text_note_with_source_gets_reveal_button(col):
         "A challenge to the lawfulness of a public body's decision.",
         "",
         source='<img src="snip-occlusion-src-ab12cd34ef.png">',
+        source_text=trace,
     )
     assert note["Source"] == '<img src="snip-occlusion-src-ab12cd34ef.png">'
+    assert note["Source Text"] == trace
     q = note.cards()[0].question()
     a = note.cards()[0].answer()
-    # the snip is behind a click on the BACK only, never on the front
+    # the source is behind a click on the BACK only, never on the front
     assert "<details" not in q
     assert "snip-occlusion-src" not in q
-    assert '<details class="sn-source">' in a
+    assert '<details class="sn-source" data-mode="both">' in a
+    assert a.count("<details") == 1  # emitted once, not per conditional
     assert "Reveal source" in a
     assert 'src="snip-occlusion-src-ab12cd34ef.png"' in a
+    # both panes populated: image plus highlighted source text
+    assert 'class="sn-source-ocr"' in a
+    assert "lawfulness of a public body" in a
+    assert "No image to display" not in a
+    # the mode toggle is present
+    for label in (">Image<", ">Text<", ">Both<"):
+        assert label in a
     # and the styling for it is in the note type's CSS
-    assert ".sn-source" in note.note_type()["css"]
+    assert ".sn-source-panes" in note.note_type()["css"]
 
-    # a card without a source shows no reveal button at all
+    # a card without any source shows no reveal button at all
     note2 = notes_mod.add_text_note(col, deck_id, "F", "B", "")
-    assert note2["Source"] == ""
+    assert note2["Source"] == "" and note2["Source Text"] == ""
     assert "<details" not in note2.cards()[0].answer()
+
+
+def test_text_only_source_shows_placeholder_image_pane(col):
+    # a card from PASTED TEXT: no snip, but the highlighted source
+    # text still opens under Reveal source
+    trace = notes_mod.source_trace_html(
+        "What is negligence?",
+        "Breach of a duty of care causing damage.",
+        "",
+        "Negligence requires a duty of care, breach of that duty, "
+        "and damage caused by the breach. Something else entirely.",
+    )
+    assert trace.startswith('<div class="sn-source-ocr">')
+    note = notes_mod.add_text_note(
+        col, col.decks.id("Default"), "What is negligence?",
+        "Breach of a duty of care causing damage.", "",
+        source_text=trace,
+    )
+    a = note.cards()[0].answer()
+    assert a.count("<details") == 1
+    assert "No image to display" in a
+    assert 'class="sn-source-ocr"' in a
+    assert "duty of care" in a
+
+
+def test_source_trace_html_highlights_and_empty_cases():
+    from snip_occlusion import qgen_trace
+
+    html = notes_mod.source_trace_html(
+        "What is the rule in Rylands v Fletcher?",
+        "Strict liability for the escape of dangerous things.",
+        "",
+        "The rule imposes strict liability for the escape of "
+        "dangerous things from land. An unrelated filler sentence "
+        "talks about something different altogether.",
+    )
+    # the matching sentence is highlighted, the filler is not
+    assert qgen_trace.HIGHLIGHT_STYLE in html
+    assert html.count(qgen_trace.HIGHLIGHT_STYLE) == 1
+    # no source text -> no field content
+    assert notes_mod.source_trace_html("F", "B", "", "") == ""
+    assert notes_mod.source_trace_html("F", "B", "", "   ") == ""
 
 
 def test_old_basic_note_type_upgraded_with_source(col):
@@ -344,22 +403,143 @@ def test_old_basic_note_type_upgraded_with_source(col):
     # upgraded in place: same id, no "Snip Occlusion Basic 2"
     assert nt["id"] == old["id"]
     assert mm.by_name("Snip Occlusion Basic 2") is None
-    assert "Source" in {f["name"] for f in nt["flds"]}
+    names = {f["name"] for f in nt["flds"]}
+    assert "Source" in names and "Source Text" in names
     # the reveal block was appended; the customisation survived
     afmt = nt["tmpls"][0]["afmt"]
     assert "<!-- my custom footer -->" in afmt
-    assert "{{Source}}" in afmt and "Reveal source" in afmt
+    assert afmt.count(template.BASIC_SOURCE_BLOCK) == 1
+    assert "{{Source Text}}" in afmt and "Reveal source" in afmt
     assert ".card { color: purple; }" in nt["css"]
-    assert template.BASIC_SOURCE_CSS.strip() in nt["css"]
-    # legacy note keeps working, with an empty Source
+    assert nt["css"].count(template.BASIC_SOURCE_CSS) == 1
+    # legacy note keeps working, with empty source fields
     legacy = col.get_note(col.find_notes("legacy front")[0])
-    assert legacy["Source"] == ""
+    assert legacy["Source"] == "" and legacy["Source Text"] == ""
     assert "<details" not in legacy.cards()[0].answer()
 
     # a second ensure() must not append the block again
     again = notes_mod.ensure_basic_note_type(col)
-    assert again["tmpls"][0]["afmt"].count("{{Source}}") == 1
-    assert again["css"].count(template.BASIC_SOURCE_CSS.strip()) == 1
+    assert again["tmpls"][0]["afmt"].count(template.BASIC_SOURCE_BLOCK) == 1
+    assert again["css"].count(template.BASIC_SOURCE_CSS) == 1
+
+
+def _make_v026_model(col, afmt, css):
+    """A note type as v0.26 left it: Source field, no Source Text."""
+    mm = col.models
+    old = mm.new("Snip Occlusion Basic")
+    for fname in ("Front", "Back", "Notes", "Source"):
+        mm.add_field(old, mm.new_field(fname))
+    t = mm.new_template("Card 1")
+    t["qfmt"] = "{{Front}}"
+    t["afmt"] = afmt
+    mm.add_template(old, t)
+    old["css"] = css
+    mm.add(old)
+    return mm.by_name("Snip Occlusion Basic")
+
+
+def test_v026_user_deleted_block_stays_deleted_across_v027(col):
+    # v0.26 model whose user stripped the reveal block and CSS: the
+    # Source Text pass must add the field but NOT re-install either
+    from snip_occlusion import template
+
+    old = _make_v026_model(
+        col,
+        "{{FrontSide}}\n<hr id=answer>\n{{Back}}",
+        ".card { color: navy; }",
+    )
+    nt = notes_mod.ensure_basic_note_type(col)
+    assert nt["id"] == old["id"]
+    assert "Source Text" in {f["name"] for f in nt["flds"]}
+    afmt = nt["tmpls"][0]["afmt"]
+    assert "Reveal source" not in afmt
+    assert template.BASIC_SOURCE_BLOCK not in afmt
+    assert ".sn-source" not in nt["css"]
+
+
+def test_v026_declined_upgrade_leaves_v1_block_alone(col, monkeypatch):
+    from snip_occlusion import template
+
+    old = _make_v026_model(
+        col,
+        "{{FrontSide}}\n<hr id=answer>\n{{Back}}\n"
+        + template.BASIC_SOURCE_BLOCK_V1,
+        ".card {}\n" + template.BASIC_SOURCE_CSS_V1,
+    )
+
+    def refuse(check):
+        raise Exception("declined")
+
+    monkeypatch.setattr(col, "mod_schema", refuse)
+    nt = notes_mod.ensure_basic_note_type(col)
+    assert nt["id"] == old["id"]
+    assert "Source Text" not in {f["name"] for f in nt["flds"]}
+    assert template.BASIC_SOURCE_BLOCK_V1 in nt["tmpls"][0]["afmt"]
+    assert template.BASIC_SOURCE_CSS_V1 in nt["css"]
+
+
+def test_v026_customised_css_still_gets_split_view_rules(col):
+    # the user tweaked the stock v0.26 CSS (so the exact-match swap
+    # cannot fire) but kept the stock block: the swapped-in split-view
+    # block must not be left without its rules - the current CSS is
+    # appended, and the user's edits survive
+    from snip_occlusion import template
+
+    tweaked_css = (
+        ".card { color: maroon; }\n"
+        + template.BASIC_SOURCE_CSS_V1.replace("#666", "#123456")
+    )
+    _make_v026_model(
+        col,
+        "{{FrontSide}}\n<hr id=answer>\n{{Back}}\n"
+        + template.BASIC_SOURCE_BLOCK_V1,
+        tweaked_css,
+    )
+    nt = notes_mod.ensure_basic_note_type(col)
+    afmt = nt["tmpls"][0]["afmt"]
+    assert afmt.count(template.BASIC_SOURCE_BLOCK) == 1
+    assert template.BASIC_SOURCE_BLOCK_V1 not in afmt
+    # the split view's rules arrived; the user's tweak is untouched
+    assert ".sn-source-panes" in nt["css"]
+    assert "#123456" in nt["css"]
+    assert nt["css"].count(template.BASIC_SOURCE_CSS) == 1
+
+
+def test_v026_note_type_gets_block_swapped_not_duplicated(col):
+    # a note type upgraded (or created) by v0.26 carries the image-only
+    # reveal block; adding the Source Text field must swap it for the
+    # split-view block, once, keeping customisations around it
+    from snip_occlusion import template
+
+    mm = col.models
+    old = mm.new("Snip Occlusion Basic")
+    for fname in ("Front", "Back", "Notes", "Source"):
+        mm.add_field(old, mm.new_field(fname))
+    t = mm.new_template("Card 1")
+    t["qfmt"] = "{{Front}}"
+    t["afmt"] = (
+        "{{FrontSide}}\n<hr id=answer>\n{{Back}}\n"
+        + template.BASIC_SOURCE_BLOCK_V1
+        + "<!-- trailing custom bit -->"
+    )
+    mm.add_template(old, t)
+    old["css"] = ".card { color: teal; }\n" + template.BASIC_SOURCE_CSS_V1
+    mm.add(old)
+    old = mm.by_name("Snip Occlusion Basic")
+
+    nt = notes_mod.ensure_basic_note_type(col)
+    assert nt["id"] == old["id"]
+    assert "Source Text" in {f["name"] for f in nt["flds"]}
+    afmt = nt["tmpls"][0]["afmt"]
+    assert template.BASIC_SOURCE_BLOCK_V1 not in afmt
+    assert afmt.count(template.BASIC_SOURCE_BLOCK) == 1
+    assert afmt.count("<details") == template.BASIC_SOURCE_BLOCK.count(
+        "<details"
+    )
+    assert "<!-- trailing custom bit -->" in afmt
+    assert template.BASIC_SOURCE_CSS_V1 not in nt["css"]
+    assert nt["css"].count(template.BASIC_SOURCE_CSS) == 1
+    assert ".card { color: teal; }" in nt["css"]
 
 
 def _make_pre_v026_basic_model(col):
@@ -410,7 +590,8 @@ def test_attach_source_off_leaves_note_type_untouched(col):
     assert note.id and note["Notes"] == "N"
     nt = col.models.by_name("Snip Occlusion Basic")
     assert nt["id"] == old["id"]
-    assert "Source" not in {f["name"] for f in nt["flds"]}
+    names = {f["name"] for f in nt["flds"]}
+    assert "Source" not in names and "Source Text" not in names
     assert "{{Source}}" not in nt["tmpls"][0]["afmt"]
     assert ".sn-source" not in nt["css"]
 
