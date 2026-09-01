@@ -904,6 +904,10 @@ class SuggestionsPage(QWidget):
             )
 
         def done(fut) -> None:
+            if self._doc_running or self._batch_id != batch:
+                # the list was replaced while generating (e.g. by a
+                # pasted-lesson run, whose _busy this must not reset)
+                return
             self._busy = False
             try:
                 cards = fut.result()
@@ -914,8 +918,6 @@ class SuggestionsPage(QWidget):
                 )
                 return
             self._set_suggest_status("")
-            if self._batch_id != batch:
-                return  # the list was replaced while generating
             if not cards:
                 tooltip(
                     "The AI returned nothing for that selection — try "
@@ -948,7 +950,7 @@ class SuggestionsPage(QWidget):
         if self._doc_running:
             # the ↻ button reads ■ while a pasted-text run is going
             self._doc_job += 1  # workers see the change and bail
-            self._doc_finish("stopped")
+            self._doc_finish(self._doc_job, "stopped")
             return
         self.refresh_suggestions(force=True)
 
@@ -1004,11 +1006,14 @@ class SuggestionsPage(QWidget):
         return config
 
     def _start_doc_job(self, text: str) -> None:
-        if self._busy or self._doc_running:
-            # e.g. a snip landed (and started generating) while the
-            # paste dialog was open - its run must not be trampled
+        if self._doc_running:
             tooltip("Still generating — one moment.", parent=self)
             return
+        # a snip generation in flight (it can start while the paste
+        # dialog is open) is deliberately taken over rather than
+        # refused - refusing here would discard the pasted text, while
+        # the snip run's done() sees _doc_running/_batch_id change and
+        # bails; ↻ can re-fetch that snip's cards later
         config = self._config_with_count()
         chunks = qgen_doc.split_into_chunks(text)
         if not chunks:
@@ -1039,7 +1044,7 @@ class SuggestionsPage(QWidget):
                 except qgen.QGenError as exc:
                     mw.taskman.run_on_main(
                         lambda m=str(exc): self._doc_finish(
-                            "failed — ↻ to retry", m
+                            job, "failed — ↻ to retry", m
                         )
                     )
                     return
@@ -1048,13 +1053,13 @@ class SuggestionsPage(QWidget):
                         job, c, done_count, len(chunks)
                     )
                 )
-            mw.taskman.run_on_main(lambda: self._doc_finish(""))
+            mw.taskman.run_on_main(lambda: self._doc_finish(job, ""))
 
         def done(future) -> None:
             try:
                 future.result()
             except Exception as exc:
-                self._doc_finish("failed — ↻ to retry", str(exc))
+                self._doc_finish(job, "failed — ↻ to retry", str(exc))
 
         mw.taskman.run_in_background(work, done)
 
@@ -1071,8 +1076,12 @@ class SuggestionsPage(QWidget):
             )
         QTimer.singleShot(0, self._fit_suggestions_if_auto)
 
-    def _doc_finish(self, status: str, detail: str | None = None) -> None:
-        if not self._doc_running:
+    def _doc_finish(
+        self, job: int, status: str, detail: str | None = None
+    ) -> None:
+        # the job check keeps a stopped run's late "finished" callback
+        # from marking a NEWLY started paste run as idle mid-stream
+        if job != self._doc_job or not self._doc_running:
             return
         self._doc_running = False
         self._busy = False
