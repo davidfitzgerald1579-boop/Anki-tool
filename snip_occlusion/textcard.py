@@ -22,8 +22,14 @@ from aqt.utils import showWarning
 from .qtshim import *  # noqa: F401,F403
 from . import added_cards, notes as notes_mod
 from . import qgen, qgen_bakeoff, qgen_doc, qgen_feedback, qgen_prefetch
+from . import source_image
 from .consts import ADDON_NAME
-from .dialog import _STYLE, get_config, get_previous_snip_text
+from .dialog import (
+    _STYLE,
+    get_config,
+    get_previous_snip,
+    get_previous_snip_text,
+)
 from .uitools import cream_tooltips, notify as tooltip
 
 _SIZES = ["10", "12", "14", "16", "18", "20", "24", "28", "32"]
@@ -39,6 +45,20 @@ def _body_html(edit: QTextEdit) -> str:
 
 def _escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;")
+
+
+def _state_source_image(state):
+    """The one SourceImage shared by everything shown from `state`.
+
+    Cached on the prefetch state itself so the embedded panel and the
+    ⧉ pop-out hand out the same object - the snip is then written to
+    the media collection once, however many cards cite it."""
+    if state is None or getattr(state, "image", None) is None:
+        return None
+    src = getattr(state, "_source_image", None)
+    if src is None:
+        src = state._source_image = source_image.SourceImage(state.image)
+    return src
 
 
 class _CardEdit(QTextEdit):
@@ -73,6 +93,10 @@ class TextCardPanel(QWidget):
         self.added_any = False  # did add_card() succeed at least once
         self.on_added = None  # callback(front, back, notes) after an add
         self.replaces_note_id = None  # set for a redeploy of this note
+        # where the card came from, saved into the note's Source field:
+        # a SourceImage (the snip; media-written on first add), ready
+        # HTML (a redeploy keeping the original), or None
+        self.source = None
         self._src_user_sized = False
         self._build_ui(standalone_shortcuts)
 
@@ -395,9 +419,18 @@ class TextCardPanel(QWidget):
         back_html = _body_html(self.back)
         notes_html = _body_html(self.notes)
         deck_id = self.deck_box.currentData()
+        attach = bool(get_config().get("text_card_attach_source", True))
+        src = self.source
+        if not attach and not isinstance(src, str):
+            # feature switched off: write no new slide images (ready
+            # HTML - a redeploy keeping what the note already had - is
+            # not a new image and survives the toggle)
+            src = None
         note = notes_mod.add_text_note(
-            mw.col, deck_id, front, back_html, notes_html
+            mw.col, deck_id, front, back_html, notes_html, src,
+            attach_source=attach,
         )
+        source_html = note["Source"] if "Source" in note.keys() else ""
         replaces = getattr(self, "replaces_note_id", None)
         try:
             if replaces is not None:
@@ -411,12 +444,13 @@ class TextCardPanel(QWidget):
                     back_html,
                     notes_html,
                     plain[0],
+                    source=source_html,
                 )
                 self.replaces_note_id = int(note.id)
             else:
                 added_cards.record(
                     int(note.id), deck_id, front, back_html, notes_html,
-                    plain[0],
+                    plain[0], source=source_html,
                 )
         except Exception:
             pass  # the note was added; tracking it is best-effort
@@ -448,6 +482,7 @@ class SuggestionsPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._shown_state = None  # the prefetch whose cards are displayed
+        self._shown_image = None  # SourceImage of the displayed snip
         self._busy = False
         self._doc_job = 0  # incremented to cancel a pasted-text run
         self._doc_running = False
@@ -603,6 +638,23 @@ class SuggestionsPage(QWidget):
 
     def current_source(self) -> str:
         return self._current_source
+
+    def set_snip_source(self, text: str, state=None, image=None) -> None:
+        """Show a snip's text AND remember the snip image behind it.
+
+        The text pane and the provenance image must always move
+        together: cards are stamped with self._shown_image when their
+        row is created, so a pane showing slide B's text while the
+        image still points at slide A would write the wrong slide into
+        a card's Source field. Callers that swap the displayed snip
+        text must come through here, never set_source_text alone.
+        """
+        self.set_source_text(text)
+        if not get_config().get("text_card_attach_source", True):
+            image = None
+        elif state is not None:
+            image = _state_source_image(state)
+        self._shown_image = image
 
     def set_source_text(self, text: str) -> None:
         """Show plain source text (no highlights) and remember it."""
@@ -841,6 +893,10 @@ class SuggestionsPage(QWidget):
             % (n, "" if n == 1 else "s")
         )
         batch = self._batch_id
+        # snapshot the provenance NOW, with the text the run uses: a
+        # new snip landing mid-run moves _shown_image, and stamping at
+        # completion time would cite the new slide for old-slide cards
+        image = self._shown_image
 
         def work():
             return qgen_bakeoff.generate(
@@ -848,6 +904,10 @@ class SuggestionsPage(QWidget):
             )
 
         def done(fut) -> None:
+            if self._doc_running or self._batch_id != batch:
+                # the list was replaced while generating (e.g. by a
+                # pasted-lesson run, whose _busy this must not reset)
+                return
             self._busy = False
             try:
                 cards = fut.result()
@@ -858,8 +918,6 @@ class SuggestionsPage(QWidget):
                 )
                 return
             self._set_suggest_status("")
-            if self._batch_id != batch:
-                return  # the list was replaced while generating
             if not cards:
                 tooltip(
                     "The AI returned nothing for that selection — try "
@@ -868,6 +926,7 @@ class SuggestionsPage(QWidget):
                 )
                 return
             for card in cards:
+                card["_image"] = image
                 self._add_card_row(card)
             QTimer.singleShot(0, self._fit_suggestions_if_auto)
 
@@ -891,7 +950,7 @@ class SuggestionsPage(QWidget):
         if self._doc_running:
             # the ↻ button reads ■ while a pasted-text run is going
             self._doc_job += 1  # workers see the change and bail
-            self._doc_finish("stopped")
+            self._doc_finish(self._doc_job, "stopped")
             return
         self.refresh_suggestions(force=True)
 
@@ -947,6 +1006,14 @@ class SuggestionsPage(QWidget):
         return config
 
     def _start_doc_job(self, text: str) -> None:
+        if self._doc_running:
+            tooltip("Still generating — one moment.", parent=self)
+            return
+        # a snip generation in flight (it can start while the paste
+        # dialog is open) is deliberately taken over rather than
+        # refused - refusing here would discard the pasted text, while
+        # the snip run's done() sees _doc_running/_batch_id change and
+        # bails; ↻ can re-fetch that snip's cards later
         config = self._config_with_count()
         chunks = qgen_doc.split_into_chunks(text)
         if not chunks:
@@ -957,6 +1024,7 @@ class SuggestionsPage(QWidget):
         self._doc_running = True
         self._busy = True  # blocks snip refreshes while this runs
         self._user_sized = False
+        self._shown_image = None  # pasted text has no snip to cite
         self._clear_rows()
         self.set_source_text(text)
         self.regen_btn.setText("■")
@@ -976,7 +1044,7 @@ class SuggestionsPage(QWidget):
                 except qgen.QGenError as exc:
                     mw.taskman.run_on_main(
                         lambda m=str(exc): self._doc_finish(
-                            "failed — ↻ to retry", m
+                            job, "failed — ↻ to retry", m
                         )
                     )
                     return
@@ -985,13 +1053,13 @@ class SuggestionsPage(QWidget):
                         job, c, done_count, len(chunks)
                     )
                 )
-            mw.taskman.run_on_main(lambda: self._doc_finish(""))
+            mw.taskman.run_on_main(lambda: self._doc_finish(job, ""))
 
         def done(future) -> None:
             try:
                 future.result()
             except Exception as exc:
-                self._doc_finish("failed — ↻ to retry", str(exc))
+                self._doc_finish(job, "failed — ↻ to retry", str(exc))
 
         mw.taskman.run_in_background(work, done)
 
@@ -1008,8 +1076,12 @@ class SuggestionsPage(QWidget):
             )
         QTimer.singleShot(0, self._fit_suggestions_if_auto)
 
-    def _doc_finish(self, status: str, detail: str | None = None) -> None:
-        if not self._doc_running:
+    def _doc_finish(
+        self, job: int, status: str, detail: str | None = None
+    ) -> None:
+        # the job check keeps a stopped run's late "finished" callback
+        # from marking a NEWLY started paste run as idle mid-stream
+        if job != self._doc_job or not self._doc_running:
             return
         self._doc_running = False
         self._busy = False
@@ -1045,11 +1117,12 @@ class SuggestionsPage(QWidget):
         if state is not None and state is self._shown_state and not force:
             return  # already showing (or loading) this snip's cards
         fallback_text = ""
+        fallback_source = None  # SourceImage matching fallback_text
         if force and (state is None or not state.text.strip()):
             # OCR touches the canvas widget: main thread only
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             try:
-                fallback_text = get_previous_snip_text()
+                fallback_text, fallback_source = get_previous_snip()
             finally:
                 QApplication.restoreOverrideCursor()
             if state is None and not fallback_text:
@@ -1061,41 +1134,65 @@ class SuggestionsPage(QWidget):
         self._busy = True
         self._user_sized = False  # a fresh batch auto-sizes again
         self._clear_rows()
+        batch = self._batch_id  # a pasted-lesson run bumps this
         self._set_suggest_status("generating on your machine…")
 
         def work():
+            # second value: did generation use the state's OWN text?
+            # (False = the previous snip's remembered text - its cards
+            # must not carry the current state's image as their source)
             emphasis = (getattr(state, "emphasis", None) or None) if state else None
             if force:
-                text = (state.text if state else "").strip() or fallback_text
+                text = (state.text if state else "").strip()
+                used_state_text = bool(text)
+                text = text or fallback_text
                 if not text:
                     raise qgen.QGenError(
                         "No snip text available yet — snip a slide first."
                     )
-                return qgen_bakeoff.generate(text, config, emphasis=emphasis)
+                return (
+                    qgen_bakeoff.generate(text, config, emphasis=emphasis),
+                    used_state_text,
+                )
             timeout = int(config.get("qgen_timeout_seconds") or 300) + 30
             try:
-                return qgen_prefetch.wait_for_cards(state, timeout)
+                return qgen_prefetch.wait_for_cards(state, timeout), True
             except qgen.QGenError:
                 # e.g. Ollama wasn't running when the snip landed but is
                 # now - retry live before giving up
                 if state.text.strip():
-                    return qgen_bakeoff.generate(
-                        state.text, config, emphasis=emphasis
+                    return (
+                        qgen_bakeoff.generate(
+                            state.text, config, emphasis=emphasis
+                        ),
+                        True,
                     )
                 raise
 
         def done(future) -> None:
+            if self._doc_running or self._batch_id != batch:
+                # a pasted-lesson run took the panel over mid-wait: its
+                # text, image and rows must stay untouched (and _busy is
+                # its now, so leave it alone; ↻ can refetch this snip)
+                return
             self._busy = False
             try:
-                cards = future.result()
+                cards, used_state_text = future.result()
             except Exception as exc:
                 self._set_suggest_status("failed — ↻ to retry")
                 tooltip("Suggestions: %s" % exc, parent=self, period=6000)
                 return
             self._set_suggest_status("")
-            self.set_source_text(
-                (state.text if state else "").strip() or fallback_text
-            )
+            # show the text the cards actually came from, paired with
+            # the matching snip image (fallback text came from the live
+            # canvas when fallback_source is set, from an older
+            # remembered snip - so no image - otherwise)
+            if used_state_text:
+                self.set_snip_source(
+                    (state.text if state else "").strip(), state=state
+                )
+            else:
+                self.set_snip_source(fallback_text, image=fallback_source)
             for card in cards:
                 self._add_card_row(card)
             QTimer.singleShot(0, self._fit_suggestions_if_auto)
@@ -1248,6 +1345,13 @@ class SuggestionsPage(QWidget):
 
     def _add_card_row(self, source_card: dict, index=None) -> None:
         card = dict(source_card)
+        # tie the card to the snip whose text it was generated from -
+        # possibly "no snip" (None). The key is always materialised so
+        # a row returned to the list later (undo, Use-window discard)
+        # keeps the tie it was created with, even if the panel has
+        # moved on to a different snip in the meantime.
+        if "_image" not in card:
+            card["_image"] = self._shown_image
         front = card.get("front", "")
         back = card.get("back", "")
         notes = card.get("notes", "")
@@ -1534,6 +1638,9 @@ class TextCardDialog(QDialog):
         else:
             self.panel.focus_front()
         if original_card:
+            # the suggested card remembers the snip it came from; the
+            # note's Source field then carries the full slide
+            self.panel.source = original_card.get("_image")
             # the learning loop should remember the card AS ADDED, not
             # as suggested: if the user corrects wrong content before
             # adding, the corrected version replaces the original in
@@ -1656,6 +1763,9 @@ class AddedCardDialog(QDialog):
         self.panel.front.setHtml(entry.get("front", ""))
         self.panel.back.setHtml(entry.get("back", ""))
         self.panel.notes.setHtml(entry.get("notes", ""))
+        # a redeploy keeps the original note's source snip (the media
+        # file already exists; its HTML is reused verbatim)
+        self.panel.source = entry.get("source") or None
         i = self.panel.deck_box.findData(entry.get("deck_id"))
         if i >= 0:
             self.panel.deck_box.setCurrentIndex(i)

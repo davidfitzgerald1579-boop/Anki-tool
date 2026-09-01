@@ -132,7 +132,11 @@ drafts Q/A pairs from your last snip's OCR text using a **free,
 open-source AI model running on your own computer** — no API key, no
 cost, and the slide text never leaves your machine. Each "Use →" opens
 the draft in its own window; the list stays behind so you can pick
-several. One-time setup: install [Ollama](https://ollama.com/download)
+several. Cards added this way carry the full snip with them: while
+reviewing, a **🔍 Reveal source** button on the card back opens the
+whole slide the card was generated from (works on AnkiDroid and
+AnkiMobile too; switch off with `text_card_attach_source` in the
+config). One-time setup: install [Ollama](https://ollama.com/download)
 (no account needed), then run `ollama pull llama3.1:8b` in a terminal
 (~4.7 GB). Prefer a different runner? Any OpenAI-compatible server
 (LM Studio, llama.cpp, Jan, vLLM) works too — see

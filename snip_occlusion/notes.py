@@ -10,6 +10,7 @@ import json
 import re
 import uuid
 
+from . import source_image as source_image_mod
 from . import template
 from .consts import (
     BASIC_FIELDS,
@@ -115,8 +116,45 @@ def add_occlusion_notes(
 # ------------------------------------------------------ simple text cards
 
 
-def ensure_basic_note_type(col):
-    """Find or create the simple Front/Back/Notes note type."""
+def _mod_schema(col) -> None:
+    """Get the user's consent to a schema change (it forces a full sync).
+
+    Inside Anki this shows the standard "requires a full upload"
+    prompt and raises if the user declines; in a collection that has
+    never synced (and in tests) it proceeds silently.
+    """
+    mod = getattr(col, "mod_schema", None) or getattr(col, "modSchema")
+    mod(True)
+
+
+def _upgrade_basic_templates(mm, nt) -> None:
+    """Append the "Reveal source" block (v0.26) to the back template
+    and its CSS, leaving everything the user customised untouched.
+
+    Called only in the same pass that adds the missing Source field:
+    a note type that already has the field but not the block had the
+    block deleted on purpose, and the deletion must stick.
+    """
+    for tmpl in nt["tmpls"]:
+        if "{{Source}}" not in tmpl["afmt"]:
+            tmpl["afmt"] = (
+                tmpl["afmt"].rstrip() + "\n" + template.BASIC_SOURCE_BLOCK
+            )
+    if ".sn-source" not in nt.get("css", ""):
+        nt["css"] = nt.get("css", "") + "\n" + template.BASIC_SOURCE_CSS
+
+
+def ensure_basic_note_type(col, attach_source: bool = True):
+    """Find or create the simple Front/Back/Notes/Source note type.
+
+    An existing note type of ours is upgraded in place with any
+    missing fields - after the user consents to the full sync a field
+    addition forces. On decline the note type is used as-is (cards
+    still get added, just without the new fields) and the upgrade is
+    offered again another time. attach_source False skips the Source
+    upgrade entirely: the feature is off, so an untouched note type
+    must stay untouched.
+    """
     mm = col.models
     name = BASIC_MODEL_NAME
     for attempt in range(10):
@@ -124,12 +162,20 @@ def ensure_basic_note_type(col):
         if nt is None:
             break
         existing = {f["name"] for f in nt["flds"]}
-        if all(f in existing for f in BASIC_FIELDS):
-            return nt
         if {"Front", "Back"} <= existing:
-            for fname in BASIC_FIELDS:
-                if fname not in existing:
-                    mm.add_field(nt, mm.new_field(fname))
+            missing = [f for f in BASIC_FIELDS if f not in existing]
+            if not attach_source:
+                missing = [f for f in missing if f != "Source"]
+            if not missing:
+                return nt
+            try:
+                _mod_schema(col)
+            except Exception:
+                return nt  # declined the full sync; upgrade another day
+            for fname in missing:
+                mm.add_field(nt, mm.new_field(fname))
+            if "Source" in missing:
+                _upgrade_basic_templates(mm, nt)
             _save(mm, nt)
             return _by_name(mm, name)
         name = "%s %d" % (BASIC_MODEL_NAME, attempt + 2)
@@ -146,12 +192,44 @@ def ensure_basic_note_type(col):
     return _by_name(mm, name)
 
 
-def add_text_note(col, deck_id: int, front: str, back: str, notes: str):
-    nt = ensure_basic_note_type(col)
+def add_text_note(
+    col,
+    deck_id: int,
+    front: str,
+    back: str,
+    notes: str,
+    source=None,
+    attach_source: bool = True,
+):
+    """`source` is where the card came from: None, ready field HTML
+    (a redeploy keeping the original note's source), or a
+    source_image.SourceImage. The image is written to the media
+    collection only once the note type is confirmed to store it, so a
+    declined upgrade (or the feature switched off) leaves no orphaned
+    media file - the card is simply added without a source."""
+    nt = ensure_basic_note_type(col, attach_source=attach_source)
     note = col.new_note(nt)
+    fields = set(note.keys())
+    source_html = ""
+    if source is not None and "Source" in fields:
+        try:
+            source_html = source_image_mod.as_field_html(source, col)
+        except Exception:
+            source_html = ""  # a bonus; the card must still go in
+    if notes and "Notes" not in fields:
+        # the Notes field is gone (upgrade declined): typed text must
+        # not vanish - fold it into the back the way the template would
+        back = (
+            '%s<div class="sn-notes">%s</div>' % (back, notes)
+            if back
+            else notes
+        )
     note["Front"] = front
     note["Back"] = back
-    note["Notes"] = notes
+    if "Notes" in fields:
+        note["Notes"] = notes
+    if "Source" in fields:
+        note["Source"] = source_html
     col.add_note(note, deck_id)
     return note
 

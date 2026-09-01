@@ -13,7 +13,7 @@ from .uitools import cream_tooltips, notify as tooltip
 
 from .qtshim import *  # noqa: F401,F403
 from . import notes as notes_mod
-from . import ocr, qgen_bakeoff, qgen_prefetch
+from . import ocr, qgen_bakeoff, qgen_prefetch, source_image
 from .newcard_panel import AddedCardsList, NewCardQueuePanel
 from .consts import (
     ADDON_NAME,
@@ -213,19 +213,44 @@ def _remember_ocr(text: str) -> None:
         _LAST_OCR_TEXT = text
 
 
-def get_previous_snip_text() -> str:
-    """OCR text of the current/most recent snip: reads the live occlusion
-    editor's image if one is open, else the last OCR result remembered."""
+# the last (base image cacheKey, OCR text, SourceImage) served by
+# get_previous_snip, so repeated ↻ presses (and both suggestion panels)
+# share one SourceImage - and so one media file - per unchanged snip
+_SNIP_SOURCE_MEMO = (None, "", None)
+
+
+def get_previous_snip() -> tuple:
+    """(text, source) of the current/most recent snip.
+
+    Reads the live occlusion editor's image if one is open - the OCR
+    text and a SourceImage of the very image it was read from, a
+    matched pair. Otherwise the last OCR result remembered, whose
+    image is gone: (text, None).
+    """
+    global _SNIP_SOURCE_MEMO
     dlg = getattr(mw, "_snip_occlusion_dialog", None)
     if dlg is not None and dlg.isVisible() and dlg.canvas.has_image():
         try:
-            text = ocr.extract_text(dlg.canvas.bake_image(), dlg.config)
+            baked = dlg.canvas.bake_image()
+            text = ocr.extract_text(baked, dlg.config)
         except Exception:
             text = ""
         if text:
             _remember_ocr(text)
-            return text
-    return _LAST_OCR_TEXT
+            key = dlg.canvas.image.cacheKey()
+            memo_key, memo_text, memo_src = _SNIP_SOURCE_MEMO
+            if memo_src is not None and (memo_key, memo_text) == (key, text):
+                return text, memo_src
+            src = source_image.SourceImage(baked)
+            _SNIP_SOURCE_MEMO = (key, text, src)
+            return text, src
+    return _LAST_OCR_TEXT, None
+
+
+def get_previous_snip_text() -> str:
+    """OCR text of the current/most recent snip: reads the live occlusion
+    editor's image if one is open, else the last OCR result remembered."""
+    return get_previous_snip()[0]
 
 
 class SnipOcclusionDialog(QDialog):
@@ -902,9 +927,11 @@ class SnipOcclusionDialog(QDialog):
             if qgen_prefetch.current() is not state:
                 return  # a newer snip took over in the meantime
             for panel in self._suggestion_panels():
-                # never clobber a pasted-lesson run's source text
+                # never clobber a pasted-lesson run's source text; the
+                # snip image travels with its text so cards written
+                # from this text cite the right slide
                 if not panel._doc_running:
-                    panel.set_source_text(state.text)
+                    panel.set_snip_source(state.text, state=state)
             self.write_page.set_source_text(state.text)
 
         try:
