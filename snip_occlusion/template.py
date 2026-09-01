@@ -287,6 +287,10 @@ BASIC_SOURCE_CSS = """.sn-source {
 }
 .sn-source-pane { flex: 1 1 0; min-width: 0; }
 .sn-source-pane-img img { max-width: 100%; height: auto; }
+/* kept from v0.26 so a customised v0.26 block keeps rendering when
+   only the CSS was swapped to this version */
+.sn-source .sn-source-wrap { margin-top: 10px; line-height: 0; }
+.sn-source img { max-width: 100%; height: auto; }
 .sn-source-pane-text {
   text-align: left;
   font-size: 15px;

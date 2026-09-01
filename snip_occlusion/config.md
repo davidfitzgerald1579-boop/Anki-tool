@@ -129,8 +129,10 @@
   standard "requires a full upload" confirmation once; declining
   simply adds the card without a source, and you'll be asked again
   another time. Deleted the "Reveal source" block from your card
-  template? It stays deleted — the add-on only installs it when it
-  first adds the Source field. Default: `true`.
+  template? It stays deleted — the add-on installs a block only into
+  a template that has never had one (upgrading its own stock block
+  in place when versions change), never into one you stripped it
+  from. Default: `true`.
 
 Note: `mask_fill` and `target_fill` are written into the note type's CSS
 when the note type is first created. To restyle existing cards, edit the

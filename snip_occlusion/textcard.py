@@ -432,7 +432,9 @@ class TextCardPanel(QWidget):
             src = None
         src_text = (self.source_text or "").strip()
         source_text_html = ""
-        if attach and src_text:
+        # like the image above, text a redeployed note already carries
+        # survives the feature toggle; only fresh adds respect it
+        if src_text and (attach or self.replaces_note_id is not None):
             # highlight against the card AS ADDED (the user may have
             # corrected it since the suggestion), like the 🔎 trace
             try:

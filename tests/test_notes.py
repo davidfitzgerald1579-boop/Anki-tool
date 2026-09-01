@@ -423,6 +423,88 @@ def test_old_basic_note_type_upgraded_with_source(col):
     assert again["css"].count(template.BASIC_SOURCE_CSS) == 1
 
 
+def _make_v026_model(col, afmt, css):
+    """A note type as v0.26 left it: Source field, no Source Text."""
+    mm = col.models
+    old = mm.new("Snip Occlusion Basic")
+    for fname in ("Front", "Back", "Notes", "Source"):
+        mm.add_field(old, mm.new_field(fname))
+    t = mm.new_template("Card 1")
+    t["qfmt"] = "{{Front}}"
+    t["afmt"] = afmt
+    mm.add_template(old, t)
+    old["css"] = css
+    mm.add(old)
+    return mm.by_name("Snip Occlusion Basic")
+
+
+def test_v026_user_deleted_block_stays_deleted_across_v027(col):
+    # v0.26 model whose user stripped the reveal block and CSS: the
+    # Source Text pass must add the field but NOT re-install either
+    from snip_occlusion import template
+
+    old = _make_v026_model(
+        col,
+        "{{FrontSide}}\n<hr id=answer>\n{{Back}}",
+        ".card { color: navy; }",
+    )
+    nt = notes_mod.ensure_basic_note_type(col)
+    assert nt["id"] == old["id"]
+    assert "Source Text" in {f["name"] for f in nt["flds"]}
+    afmt = nt["tmpls"][0]["afmt"]
+    assert "Reveal source" not in afmt
+    assert template.BASIC_SOURCE_BLOCK not in afmt
+    assert ".sn-source" not in nt["css"]
+
+
+def test_v026_declined_upgrade_leaves_v1_block_alone(col, monkeypatch):
+    from snip_occlusion import template
+
+    old = _make_v026_model(
+        col,
+        "{{FrontSide}}\n<hr id=answer>\n{{Back}}\n"
+        + template.BASIC_SOURCE_BLOCK_V1,
+        ".card {}\n" + template.BASIC_SOURCE_CSS_V1,
+    )
+
+    def refuse(check):
+        raise Exception("declined")
+
+    monkeypatch.setattr(col, "mod_schema", refuse)
+    nt = notes_mod.ensure_basic_note_type(col)
+    assert nt["id"] == old["id"]
+    assert "Source Text" not in {f["name"] for f in nt["flds"]}
+    assert template.BASIC_SOURCE_BLOCK_V1 in nt["tmpls"][0]["afmt"]
+    assert template.BASIC_SOURCE_CSS_V1 in nt["css"]
+
+
+def test_v026_customised_css_still_gets_split_view_rules(col):
+    # the user tweaked the stock v0.26 CSS (so the exact-match swap
+    # cannot fire) but kept the stock block: the swapped-in split-view
+    # block must not be left without its rules - the current CSS is
+    # appended, and the user's edits survive
+    from snip_occlusion import template
+
+    tweaked_css = (
+        ".card { color: maroon; }\n"
+        + template.BASIC_SOURCE_CSS_V1.replace("#666", "#123456")
+    )
+    _make_v026_model(
+        col,
+        "{{FrontSide}}\n<hr id=answer>\n{{Back}}\n"
+        + template.BASIC_SOURCE_BLOCK_V1,
+        tweaked_css,
+    )
+    nt = notes_mod.ensure_basic_note_type(col)
+    afmt = nt["tmpls"][0]["afmt"]
+    assert afmt.count(template.BASIC_SOURCE_BLOCK) == 1
+    assert template.BASIC_SOURCE_BLOCK_V1 not in afmt
+    # the split view's rules arrived; the user's tweak is untouched
+    assert ".sn-source-panes" in nt["css"]
+    assert "#123456" in nt["css"]
+    assert nt["css"].count(template.BASIC_SOURCE_CSS) == 1
+
+
 def test_v026_note_type_gets_block_swapped_not_duplicated(col):
     # a note type upgraded (or created) by v0.26 carries the image-only
     # reveal block; adding the Source Text field must swap it for the

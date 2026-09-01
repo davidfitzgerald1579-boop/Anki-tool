@@ -128,22 +128,24 @@ def _mod_schema(col) -> None:
     mod(True)
 
 
-def _upgrade_basic_templates(mm, nt) -> None:
+def _upgrade_basic_templates(mm, nt, install: bool) -> None:
     """Install the current "Reveal source" block and CSS, leaving
     everything the user customised untouched.
 
-    The stock v0.26 (image-only) block is replaced in place; a
-    template without any block gets the current one appended. Called
-    only in the same pass that adds a missing source field: a note
-    type that already has the fields but not the block had the block
-    deleted on purpose, and the deletion must stick.
+    The stock v0.26 (image-only) block is replaced in place wherever
+    it appears. `install` says whether a template carrying no block
+    at all should get one: True only when the Source field itself was
+    just added (the note type never had the reveal feature); a v0.26
+    note type gaining only "Source Text" but carrying no block had
+    the block deleted on purpose, and the deletion must stick.
+    Called only in the same pass that adds a missing source field.
     """
     for tmpl in nt["tmpls"]:
         if template.BASIC_SOURCE_BLOCK_V1 in tmpl["afmt"]:
             tmpl["afmt"] = tmpl["afmt"].replace(
                 template.BASIC_SOURCE_BLOCK_V1, template.BASIC_SOURCE_BLOCK
             )
-        elif "{{Source}}" not in tmpl["afmt"]:
+        elif install and "{{Source}}" not in tmpl["afmt"]:
             tmpl["afmt"] = (
                 tmpl["afmt"].rstrip() + "\n" + template.BASIC_SOURCE_BLOCK
             )
@@ -152,8 +154,17 @@ def _upgrade_basic_templates(mm, nt) -> None:
         nt["css"] = css.replace(
             template.BASIC_SOURCE_CSS_V1, template.BASIC_SOURCE_CSS
         )
-    elif ".sn-source" not in css:
+    elif install and ".sn-source" not in css:
         nt["css"] = css + "\n" + template.BASIC_SOURCE_CSS
+    # the current block cannot work without its rules (pane layout,
+    # mode switching, highlight colours). When a template now carries
+    # it but the CSS lacks them - e.g. the user customised the v0.26
+    # CSS so the exact-match swap above could not fire - append the
+    # current CSS; appending never edits the user's own rules.
+    if any(
+        template.BASIC_SOURCE_BLOCK in t["afmt"] for t in nt["tmpls"]
+    ) and ".sn-source-panes" not in nt.get("css", ""):
+        nt["css"] = nt.get("css", "") + "\n" + template.BASIC_SOURCE_CSS
 
 
 def ensure_basic_note_type(col, attach_source: bool = True):
@@ -187,7 +198,9 @@ def ensure_basic_note_type(col, attach_source: bool = True):
             for fname in missing:
                 mm.add_field(nt, mm.new_field(fname))
             if any(f in SOURCE_FIELDS for f in missing):
-                _upgrade_basic_templates(mm, nt)
+                _upgrade_basic_templates(
+                    mm, nt, install="Source" in missing
+                )
             _save(mm, nt)
             return _by_name(mm, name)
         name = "%s %d" % (BASIC_MODEL_NAME, attempt + 2)
