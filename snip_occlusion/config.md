@@ -39,25 +39,54 @@
   by more than this (RGB distance, 0–441) — on lines that mix both
   colours — are flagged to the AI as key terms to work into the cards.
   Lower = more sensitive. `0` turns the feature off. Default: `110`.
-- `qgen_provider`: how the text card dialog's "Suggest cards" button
-  reaches an AI model. `"ollama"` (default) talks to a free, open-source
-  model running on your own computer via [Ollama](https://ollama.com) —
-  no account, no API key, no cost, and the slide text never leaves your
-  machine. `"openai_compatible"` talks to any server exposing the OpenAI
-  chat-completions API (LM Studio, llama.cpp, Jan, vLLM, ...).
-- `qgen_model`: the model to use. Default: `"llama3.1:8b"` (download it
-  once with `ollama pull llama3.1:8b`). Other good choices:
-  `"qwen2.5:7b"`, `"mistral:7b"`, or `"llama3.2:3b"` on low-RAM
-  machines.
+- `qgen_provider`: where the AI behind "Suggest cards" runs. Easiest
+  changed in the ⚙ Settings window, which also has a Fetch-models list
+  and a Test-connection button.
+  - `"ollama"` (default): a free, open-source model on your own
+    computer via [Ollama](https://ollama.com) — no account, no API key,
+    no cost, and (as long as `qgen_ollama_url` is this computer) the
+    slide text never leaves your machine. Slow on a laptop CPU
+    (typically a minute or more per slide).
+  - A hosted service: `"groq"`, `"cerebras"`, `"openrouter"`,
+    `"together"`, `"fireworks"`, `"deepinfra"`, `"huggingface"`,
+    `"ollama_cloud"` or `"mistral"`. The same open-source models run on
+    that company's GPUs — tens of times faster — and you pay per use
+    (a fraction of a cent per slide; several have free tiers). Needs
+    an API key in `qgen_api_key`. **The slide or lesson text is sent
+    to that service** (never the image). See
+    [docs/hosted-llm.md](https://github.com/davidfitzgerald1579-boop/Anki-tool/blob/main/docs/hosted-llm.md) for how this works,
+    what it costs and how to set it up.
+  - `"openai_compatible"`: any other server exposing the OpenAI
+    chat-completions API — LM Studio, llama.cpp, Jan, vLLM on this
+    machine, or a GPU server you rent and run yourself.
+- `qgen_model`: the model to use, named the way the chosen provider
+  names it. Default: `"llama3.1:8b"` for Ollama (download it once
+  with `ollama pull llama3.1:8b`; other good choices: `"qwen2.5:7b"`,
+  `"mistral:7b"`, or `"llama3.2:3b"` on low-RAM machines). Each hosted
+  preset has its own default and suggestions in the Settings window;
+  the Fetch button lists everything the server actually offers.
 - `qgen_ollama_url`: the Ollama server address. Default:
   `"http://localhost:11434"`. Point it at another machine on your
-  network to run the model on a more powerful PC.
+  network (or a server you rent) to run the model there; put an
+  authenticating reverse proxy or Tailscale in front of a server on
+  the internet and pass its token in `qgen_api_key`.
 - `qgen_openai_base_url`: base URL for `"openai_compatible"` servers,
   including any `/v1` suffix. Default: `"http://localhost:1234/v1"`
-  (LM Studio's default).
-- `qgen_api_key`: optional Bearer token for `"openai_compatible"`
-  servers that require one; local servers normally don't. Unused by
-  Ollama. Default: empty.
+  (LM Studio's default). Hosted presets ignore this — their URLs are
+  built in.
+- `qgen_api_key`: the Bearer token for the provider `qgen_provider`
+  is set to — hosted services need one; local servers normally don't;
+  Ollama gets it too when set (Ollama Cloud, or a proxy in front of a
+  remote Ollama). Stored in this add-on's config file on your
+  computer, like every other setting. If left empty, the hosted
+  presets also look for the usual environment variable
+  (`GROQ_API_KEY`, `OPENROUTER_API_KEY`, `HF_TOKEN`, ...). Default:
+  empty.
+- `qgen_api_keys`: written by the ⚙ Settings window — one key per
+  provider you have entered one for (`{"groq": "...", "openai_compatible":
+  "..."}`), so switching between services doesn't lose them and a key
+  entered for one service is never sent to another. `qgen_api_key`
+  wins for the current provider. Default: `{}`.
 - `qgen_max_cards`: maximum suggested cards per slide (1–8). Default:
   `4`. Easiest changed via the "Cards:" selector at the top of the
   Suggested Cards view. The model is told to write fewer (or none)
@@ -76,6 +105,9 @@
   Default: `4`.
 - `qgen_timeout_seconds`: how long to wait for the model. Default:
   `300` — the first request after Ollama loads a model can be slow.
+  (Replies are also capped at a generous number of tokens per card,
+  so a small local model that starts rambling is cut off after a
+  couple of minutes instead of running to this timeout.)
 - `qgen_prefetch`: start generating suggestions in the background the
   moment a snip lands in the editor, so "Suggest cards" is (usually)
   instant. Default: `true`. Set to `false` if the background generation
@@ -97,20 +129,23 @@
   `qgen_bakeoff_models` and score each by your Use/★/Skip/✗ verdicts
   (plus generation times). The scoreboard — including whether the
   quality difference is statistically meaningful yet — lives in the ⚙
-  Settings dialog, which is also the easy on/off switch. Default:
-  `false`.
-- `qgen_bakeoff_models`: the contenders when the bake-off is on.
-  Default: `["llama3.1:8b", "llama3.2:3b"]` — pull each with
-  `ollama pull <name>` first.
+  Settings dialog, which is also the easy on/off switch ("Alternate
+  at random with:"). Default: `false`.
+- `qgen_bakeoff_models`: the contenders when the bake-off is on, named
+  the way the current provider names them (both must be on the same
+  provider). Default: `["llama3.1:8b", "llama3.2:3b"]` — pull each
+  with `ollama pull <name>` first.
 - `qgen_leave_cores_free`: CPU cores the model must leave alone while
-  generating (Ollama only). Default `1`, so Anki and the rest of the
-  laptop stay responsive during background generation; raise it if the
+  generating (Ollama on this computer only; a remote server has its
+  own core count). Default `1`, so Anki and the rest of the laptop
+  stay responsive during background generation; raise it if the
   machine still feels sluggish, or set `0` to let the model use every
   core (slightly faster generation).
 - `qgen_keep_alive`: how long Ollama keeps the model loaded in RAM
   after a request (e.g. `"30m"`, `"2h"`; `-1` for as long as Ollama
   runs). Default: `"30m"`. Longer means fewer model-load waits during a
-  study session, at the cost of the RAM staying used.
+  study session, at the cost of the RAM staying used. Not sent to
+  Ollama Cloud.
 - `text_card_attach_source`: save the source behind each text card
   made from an AI suggestion (Use →). While reviewing, the card back
   then has a "🔍 Reveal source" button that opens a split view below

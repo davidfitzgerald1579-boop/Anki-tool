@@ -1,18 +1,23 @@
 """AI question generation: turn a snip's OCR text into flashcard drafts.
 
-Talks to a free, open-source LLM running on the user's own machine (raw
-HTTPS via the standard library - Anki's bundled Python cannot install
-SDKs). Two providers are supported:
+Talks to an open-weight LLM (raw HTTPS via the standard library - Anki's
+bundled Python cannot install SDKs). Where that model runs is decided by
+the qgen_provider config key, see qgen_providers:
 
   "ollama" (default)
-      The Ollama server (https://ollama.com), default
-      http://localhost:11434. No account, no API key, no cost - and the
-      slide text never leaves the computer.
+      Ollama (https://ollama.com) on this computer: no account, no API
+      key, no cost, and the slide text never leaves the machine. Point
+      qgen_ollama_url at another machine and the text goes there
+      instead (with a Bearer key, if a proxy in front of it wants one).
+
+  a hosted preset: "groq", "cerebras", "openrouter", "together", ...
+      The same open models on a company's datacentre GPUs, paid per use
+      (often free at student volumes) and tens of times faster. Needs an
+      API key; the slide text is sent to that company.
 
   "openai_compatible"
-      Any server exposing the OpenAI chat-completions API: LM Studio,
-      llama.cpp's server, Jan, KoboldCpp, vLLM, or a remote endpoint the
-      user chooses to point it at.
+      Any other server exposing the OpenAI chat-completions API: LM
+      Studio, llama.cpp's server, Jan, KoboldCpp, vLLM, a rented GPU box.
 """
 
 from __future__ import annotations
@@ -20,10 +25,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 
-from . import qgen_feedback
+from . import qgen_feedback, qgen_providers
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_OPENAI_BASE_URL = "http://localhost:1234/v1"
@@ -237,21 +243,20 @@ def generate_cards(
         focus=focus,
         emphasis=emphasis,
     )
-    provider = (
-        str(config.get("qgen_provider") or "ollama")
-        .strip()
-        .lower()
-        .replace("-", "_")
-    )
-    if provider == "ollama":
-        reply = _chat_ollama(config, prompt)
-    elif provider == "openai_compatible":
-        reply = _chat_openai_compatible(config, prompt)
-    else:
+    cfg = dict(config)
+    cfg[_REPLY_CARDS_KEY] = max_cards
+    try:
+        target = qgen_providers.resolve(cfg)
+    except qgen_providers.UnknownProvider as exc:
         raise QGenError(
             'Unknown "qgen_provider" %r in the add-on config. '
-            'Use "ollama" or "openai_compatible".' % provider
+            "Use one of: %s."
+            % (str(exc), ", ".join(qgen_providers.valid_providers()))
         )
+    if target.api == qgen_providers.API_OLLAMA:
+        reply = _chat_ollama(cfg, prompt)
+    else:
+        reply = _chat_openai_compatible(cfg, prompt)
     cards = _drop_off_topic(parse_cards(reply), text)
     _verify_references(cards, text)
     for card in cards:
@@ -349,59 +354,127 @@ def _drop_off_topic(cards: list, source_text: str) -> list:
     return kept or cards
 
 
-def _ollama_options(config: dict) -> dict:
-    """Per-request Ollama options; currently just CPU-thread limiting.
+# generate_cards stashes the card count here so the transports can cap
+# the reply length (internal; never a documented config key)
+_REPLY_CARDS_KEY = "_qgen_reply_cards"
+_TOKENS_PER_CARD = 256
+_TOKENS_SLACK = 128
+
+
+def _reply_token_cap(config: dict, target=None):
+    """Upper bound on reply tokens, or None to leave the server's default.
+
+    A card is ~100-150 tokens of JSON; the cap is generous so a full
+    answer never hits it, but a model that starts rambling or looping
+    (small ones occasionally do) is cut off after a couple of minutes on
+    a CPU rather than running until the timeout. "Thinking" models
+    spend hidden reasoning tokens inside the same budget, so they get
+    several times the room.
+    """
+    try:
+        n = int(config.get(_REPLY_CARDS_KEY) or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if n <= 0:
+        return None
+    cap = _TOKENS_PER_CARD * n + _TOKENS_SLACK
+    if target is not None and qgen_providers.is_reasoning_model(target.model):
+        cap = cap * 4 + 1024
+    return cap
+
+
+def _ollama_options(config: dict, target) -> dict:
+    """Per-request Ollama options: thread limiting and a reply cap.
 
     Generation on CPU pegs every core, which can make the rest of the
     machine (Anki included) feel frozen. Leaving a core or two free
     slows generation slightly but keeps the laptop responsive - and the
-    background prefetch hides the difference anyway.
+    background prefetch hides the difference anyway. Only for a server
+    on THIS computer: a remote box has its own core count.
     """
+    options = {}
+    cap = _reply_token_cap(config, target)
+    if cap:
+        options["num_predict"] = cap
+    if target.remote:
+        return options
     try:
         reserve = int(config.get("qgen_leave_cores_free", 1))
     except (TypeError, ValueError):
         reserve = 1
     if reserve <= 0:
-        return {}
+        return options
     cores = os.cpu_count() or 0
-    if cores <= reserve:
-        return {}
-    return {"num_thread": cores - reserve}
+    if cores > reserve:
+        options["num_thread"] = cores - reserve
+    return options
+
+
+def _auth_headers(target) -> dict:
+    headers = dict(target.headers)
+    if target.api_key:
+        headers["Authorization"] = "Bearer %s" % target.api_key
+    return headers
 
 
 def _chat_ollama(config: dict, prompt: str) -> str:
-    base = str(config.get("qgen_ollama_url") or DEFAULT_OLLAMA_URL).rstrip("/")
-    model = config.get("qgen_model") or DEFAULT_MODEL
+    target = qgen_providers.resolve(config)
+    model = target.model or DEFAULT_MODEL
     body = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
+    }
+    if not target.remote or target.preset is None:
         # keep the model in RAM between requests so only the first
         # generation of a study session pays the model-load wait
-        "keep_alive": config.get("qgen_keep_alive") or "30m",
-    }
-    options = _ollama_options(config)
+        # (meaningless for Ollama Cloud, which manages its own fleet)
+        body["keep_alive"] = config.get("qgen_keep_alive") or "30m"
+    options = _ollama_options(config, target)
     if options:
         body["options"] = options
-    payload = _post_json(
-        base + "/api/chat",
-        body,
-        headers={},
-        timeout=_timeout(config),
-        server_hint=(
+    if qgen_providers.is_gpt_oss(model):
+        # think briefly - cards need no long deliberation (other
+        # thinking models reject a string level; they keep their default)
+        body["think"] = "low"
+    if target.preset is not None:
+        hint = _hosted_hint(target)
+    elif target.remote:
+        hint = (
+            "Could not reach the Ollama server at %s.\n\n"
+            "Make sure that machine is on, Ollama is running there with "
+            "OLLAMA_HOST=0.0.0.0 (so it accepts connections from other "
+            'computers), and that "qgen_ollama_url" in the add-on config '
+            "is right." % target.base_url
+        )
+    else:
+        hint = (
             "Could not reach the Ollama server at %s.\n\n"
             "Suggesting cards uses a free AI model running on your own "
             "computer via Ollama (https://ollama.com).\n\n"
             "1. Install Ollama and make sure it is running\n"
             "2. Download the model once:  ollama pull %s\n"
-            "3. Click Suggest cards again" % (base, model)
-        ),
+            "3. Click Suggest cards again\n\n"
+            "Too slow on your machine? A hosted service (⚙ Settings → "
+            "AI model) runs the same open models many times faster."
+            % (target.base_url, model)
+        )
+    payload = _post_json(
+        target.base_url + "/api/chat",
+        body,
+        headers=_auth_headers(target),
+        timeout=_timeout(config),
+        server_hint=hint,
+        target=target,
     )
     if "error" in payload:
-        raise QGenError(
-            "Ollama reported an error: %s\n\nIf the model is missing, "
-            "download it with:  ollama pull %s" % (payload["error"], model)
-        )
+        message = payload["error"]
+        if target.preset is None:
+            message += (
+                "\n\nIf the model is missing, download it with:  "
+                "ollama pull %s" % model
+            )
+        raise QGenError("Ollama reported an error: %s" % message)
     try:
         return payload["message"]["content"]
     except (KeyError, TypeError):
@@ -409,34 +482,64 @@ def _chat_ollama(config: dict, prompt: str) -> str:
 
 
 def _chat_openai_compatible(config: dict, prompt: str) -> str:
-    base = str(
-        config.get("qgen_openai_base_url") or DEFAULT_OPENAI_BASE_URL
-    ).rstrip("/")
-    headers = {}
-    api_key = (config.get("qgen_api_key") or "").strip()
-    if api_key:
-        headers["Authorization"] = "Bearer %s" % api_key
-    payload = _post_json(
-        base + "/chat/completions",
-        {
-            "model": config.get("qgen_model") or "",
-            "messages": [{"role": "user", "content": prompt}],
-            "stream": False,
-        },
-        headers=headers,
-        timeout=_timeout(config),
-        server_hint=(
+    target = qgen_providers.resolve(config)
+    body = {
+        "model": target.model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+    }
+    cap = _reply_token_cap(config, target)
+    if cap:
+        body["max_tokens"] = cap
+    if target.preset is not None and qgen_providers.is_gpt_oss(target.model):
+        param = target.preset.reasoning_param
+        if param == "reasoning":
+            body["reasoning"] = {"effort": "low"}
+        elif param:
+            body[param] = "low"
+    if target.preset is not None:
+        hint = _hosted_hint(target)
+    else:
+        hint = (
             "Could not reach the LLM server at %s.\n\n"
-            "Make sure your local server (LM Studio, llama.cpp, Jan, ...) "
+            "Make sure your server (LM Studio, llama.cpp, Jan, vLLM, ...) "
             'is running and that "qgen_openai_base_url" in the add-on '
             "config points at it (including the /v1 suffix if the server "
-            "uses one)." % base
-        ),
+            "uses one)." % target.base_url
+        )
+    if target.preset is not None and not target.model:
+        raise QGenError(
+            'No model chosen for %s - set "qgen_model" (⚙ Settings → '
+            "AI model)." % target.label
+        )
+    payload = _post_json(
+        target.base_url + "/chat/completions",
+        body,
+        headers=_auth_headers(target),
+        timeout=_timeout(config),
+        server_hint=hint,
+        target=target,
     )
+    if isinstance(payload, dict) and "error" in payload and not payload.get(
+        "choices"
+    ):
+        err = payload["error"]
+        if isinstance(err, dict):
+            err = err.get("message") or json.dumps(err)
+        raise QGenError("%s reported an error: %s" % (target.label, err))
     try:
         return payload["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
         raise QGenError("Unexpected reply from the server: %r" % payload)
+
+
+def _hosted_hint(target) -> str:
+    return (
+        "Could not reach %s at %s.\n\n"
+        "Check your internet connection. If the service is down, switch "
+        "back to the free model on your own computer in ⚙ Settings → "
+        "AI model." % (target.label, target.host)
+    )
 
 
 def _timeout(config: dict) -> int:
@@ -447,38 +550,256 @@ def _timeout(config: dict) -> int:
     return max(5, value)
 
 
-def _post_json(url, body, headers, timeout, server_hint):
+def _http_error_message(exc, target, detail: str) -> str:
+    label = target.label if target else "The LLM server"
+    key_help = ""
+    if target is not None and target.key_url:
+        key_help = " Keys are created at %s" % target.key_url
+    if 300 <= exc.code < 400:
+        location = ""
+        try:
+            location = exc.headers.get("Location") or ""
+        except Exception:
+            pass
+        return (
+            "%s redirected the request (HTTP %d)%s. Redirects are not "
+            "followed, so that your API key is only ever sent to the "
+            "address you configured - set the server URL to the "
+            "redirect target instead." % (
+                label,
+                exc.code,
+                " to %s" % location if location else "",
+            )
+        )
+    if exc.code in (401, 403):
+        if target is not None and target.preset is not None:
+            return (
+                "%s rejected the API key (HTTP %d).\n\nPaste the key into "
+                "⚙ Settings → AI model, or set \"qgen_api_key\" in the "
+                "add-on config.%s\n%s" % (label, exc.code, key_help, detail)
+            )
+        return (
+            "%s refused the request (HTTP %d) - it wants an API key or "
+            "a different one.\n%s" % (label, exc.code, detail)
+        )
+    if exc.code == 402:
+        return (
+            "%s reports no credit left (HTTP 402). Top up your account "
+            "there, or switch to another provider or the free local model "
+            "in ⚙ Settings.\n%s" % (label, detail)
+        )
+    if exc.code == 404:
+        model = target.model if target else ""
+        return (
+            "%s could not find that endpoint or model (HTTP 404). Check "
+            "the model name%s - the Fetch button in ⚙ Settings → AI model "
+            "lists the ones the server knows.\n%s"
+            % (label, " (%r)" % model if model else "", detail)
+        )
+    if exc.code == 429:
+        return (
+            "%s is rate-limiting you (HTTP 429) - a free tier's "
+            "per-minute or per-day allowance, or a busy server. Wait a "
+            "little and try again.\n%s" % (label, detail)
+        )
+    return "%s returned an error (HTTP %d).\n%s" % (label, exc.code, detail)
+
+
+def _post_json(url, body, headers, timeout, server_hint, target=None):
     request = urllib.request.Request(
         url,
         data=json.dumps(body).encode("utf-8"),
         headers={"Content-Type": "application/json", **headers},
         method="POST",
     )
+    return _send(request, timeout, server_hint, target)
+
+
+def _get_json(url, headers, timeout, server_hint, target=None):
+    request = urllib.request.Request(url, headers=headers, method="GET")
+    return _send(request, timeout, server_hint, target)
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse to follow redirects.
+
+    urllib would otherwise re-send the request - Authorization header
+    included - to wherever the server points, and turn a POST into a
+    GET while at it. A wrong base URL should produce a clear message
+    naming the right one, not a leaked key or a baffling 405.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url, code, msg, headers, fp)
+
+
+def _urlopen(request, timeout):
+    return urllib.request.build_opener(_NoRedirect()).open(
+        request, timeout=timeout
+    )
+
+
+_TAG_RE = re.compile(r"<[^>]*>")
+
+
+def _plain(text: str, limit: int = 500) -> str:
+    """A server's error body as plain text, for showing in a tooltip.
+
+    Error pages from CDNs arrive as HTML; the popups that show QGenError
+    messages render rich text, so the markup is stripped rather than
+    displayed.
+    """
+    text = _TAG_RE.sub(" ", str(text or ""))
+    return " ".join(text.split())[:limit]
+
+
+def _send(request, timeout, server_hint, target):
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as resp:
+        with _urlopen(request, timeout) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
         detail = ""
         try:
-            detail = exc.read().decode("utf-8", errors="replace")[:500]
+            detail = _plain(exc.read().decode("utf-8", errors="replace"))
         except Exception:
             pass
-        raise QGenError(
-            "The LLM server returned an error (HTTP %d).\n%s"
-            % (exc.code, detail)
-        )
+        raise QGenError(_http_error_message(exc, target, detail))
     except urllib.error.URLError as exc:
-        raise QGenError(
-            "%s\n\n(Underlying error: %s)"
-            % (server_hint, getattr(exc, "reason", exc))
-        )
+        reason = getattr(exc, "reason", exc)
+        if isinstance(reason, TimeoutError) or "timed out" in str(reason):
+            raise QGenError(_timeout_message(target))
+        raise QGenError("%s\n\n(Underlying error: %s)" % (server_hint, reason))
     except TimeoutError:
-        raise QGenError(
-            "The local model took too long to reply. The first request "
-            "after Ollama loads a model can be slow; try again, raise "
-            '"qgen_timeout_seconds" in the config, or use a smaller model.'
-        )
+        raise QGenError(_timeout_message(target))
     try:
         return json.loads(raw)
     except ValueError:
-        raise QGenError("The server did not return JSON:\n%s" % raw[:500])
+        raise QGenError("The server did not return JSON:\n%s" % _plain(raw))
+
+
+def _timeout_message(target) -> str:
+    if target is not None and target.remote:
+        return (
+            "%s took too long to reply. Try again; if it keeps "
+            "happening, pick a different model or provider in ⚙ Settings "
+            "→ AI model." % target.label
+        )
+    return (
+        "The local model took too long to reply. The first request "
+        "after Ollama loads a model can be slow; try again, raise "
+        '"qgen_timeout_seconds" in the config, use a smaller model - or '
+        "switch to a hosted service in ⚙ Settings → AI model, which is "
+        "many times faster."
+    )
+
+
+# ------------------------------------------------- Settings-dialog helpers
+
+
+def list_models(config: dict, timeout: int = 20) -> list:
+    """Model ids the configured server offers, as it names them.
+
+    Ollama: GET /api/tags. OpenAI-compatible: GET /models, whose reply
+    is {"data": [{"id": ...}]} on most servers and a bare list on a few.
+    Raises QGenError when the server can't be reached or refuses.
+    """
+    try:
+        target = qgen_providers.resolve(config)
+    except qgen_providers.UnknownProvider as exc:
+        raise QGenError('Unknown "qgen_provider" %r.' % str(exc))
+    headers = _auth_headers(target)
+    hint = "Could not reach %s at %s." % (target.label, target.base_url)
+    if target.api == qgen_providers.API_OLLAMA:
+        payload = _get_json(
+            target.base_url + "/api/tags", headers, timeout, hint, target
+        )
+        items = payload.get("models") if isinstance(payload, dict) else None
+        names = [
+            m.get("name") or m.get("model")
+            for m in (items or [])
+            if isinstance(m, dict)
+        ]
+    else:
+        payload = _get_json(
+            target.base_url + "/models", headers, timeout, hint, target
+        )
+        items = payload.get("data") if isinstance(payload, dict) else payload
+        names = [
+            m.get("id") or m.get("name")
+            for m in (items or [])
+            if isinstance(m, dict)
+        ]
+    return sorted({str(n) for n in names if n}, key=str.lower)
+
+
+def model_listed(model: str, known: list) -> bool:
+    """Is `model` in a server's listing, allowing Ollama's ":latest"?
+
+    `ollama pull llama3.2` lists as "llama3.2:latest" but answers to
+    "llama3.2" - the two are the same model.
+    """
+    model = str(model or "").strip()
+    if not model:
+        return False
+    wanted = {model, model + ":latest"}
+    if model.endswith(":latest"):
+        wanted.add(model[: -len(":latest")])
+    return any(name in wanted for name in known)
+
+
+def check_connection(config: dict, timeout: int = 30) -> str:
+    """Probe the configured server; return a one-line human verdict.
+
+    Lists models when the server can, then sends a minimal chat request
+    to prove the chosen model actually answers (and how quickly).
+    Raises QGenError with the same friendly messages generation uses.
+    """
+    try:
+        target = qgen_providers.resolve(config)
+    except qgen_providers.UnknownProvider as exc:
+        raise QGenError('Unknown "qgen_provider" %r.' % str(exc))
+    if not target.model:
+        raise QGenError("Pick a model first.")
+    if target.preset is not None and not target.api_key:
+        raise QGenError(
+            "%s needs an API key - create one at %s and paste it in."
+            % (target.label, target.key_url)
+        )
+    known = None
+    try:
+        known = list_models(config, timeout=min(timeout, 20))
+    except QGenError:
+        pass  # listing is optional; the chat below is the real test
+    if known and not model_listed(target.model, known):
+        if target.api == qgen_providers.API_OLLAMA and not target.remote:
+            raise QGenError(
+                "Connected, but %r is not downloaded yet. In a terminal "
+                "run:  ollama pull %s\n\nModels already there: %s"
+                % (target.model, target.model, ", ".join(known[:12]))
+            )
+        # remote listings can be partial (aliases, hidden models):
+        # fall through and let the chat probe decide
+    started = time.monotonic()
+    probe_cfg = dict(config)
+    probe_cfg[_REPLY_CARDS_KEY] = 0  # no cap; a tiny reply anyway
+    probe_cfg["qgen_timeout_seconds"] = timeout  # a probe, not a generation
+    prompt = "Reply with exactly one word: OK"
+    if target.api == qgen_providers.API_OLLAMA:
+        reply = _chat_ollama(probe_cfg, prompt)
+    else:
+        reply = _chat_openai_compatible(probe_cfg, prompt)
+    elapsed = time.monotonic() - started
+    reply = " ".join(str(reply or "").split())[:40]
+    summary = "✓ %s answered with %s in %.1f s" % (
+        target.label,
+        target.model,
+        elapsed,
+    )
+    if known:
+        summary += " · %d model%s listed" % (
+            len(known),
+            "" if len(known) == 1 else "s",
+        )
+    if reply:
+        summary += " · said %r" % reply
+    return summary

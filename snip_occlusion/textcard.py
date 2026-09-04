@@ -22,6 +22,7 @@ from aqt.utils import showWarning
 from .qtshim import *  # noqa: F401,F403
 from . import added_cards, notes as notes_mod
 from . import qgen, qgen_bakeoff, qgen_doc, qgen_feedback, qgen_prefetch
+from . import qgen_providers
 from . import source_image
 from .consts import ADDON_NAME
 from .dialog import (
@@ -1153,7 +1154,9 @@ class SuggestionsPage(QWidget):
         self._user_sized = False  # a fresh batch auto-sizes again
         self._clear_rows()
         batch = self._batch_id  # a pasted-lesson run bumps this
-        self._set_suggest_status("generating on your machine…")
+        self._set_suggest_status(
+            "generating %s…" % qgen_providers.describe(config)
+        )
 
         def work():
             # second value: did generation use the state's OWN text?

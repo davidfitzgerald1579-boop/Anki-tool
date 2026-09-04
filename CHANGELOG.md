@@ -4,6 +4,70 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.28.0 — 2026-09-04
+
+- **Run the AI on a hosted service — or keep it on your own machine.**
+  The ⚙ Settings window's "AI model for card suggestions" section now
+  chooses *where* the open-source model runs: on this computer via
+  Ollama (the default, unchanged: free, private, slow), on a hosted
+  pay-per-use service (Groq, Cerebras, OpenRouter, Together AI,
+  Fireworks, DeepInfra, Hugging Face, Ollama Cloud, Mistral — presets
+  with the right URL, a "Get a key" link and sensible models built
+  in), or any other OpenAI-compatible server (LM Studio, vLLM, a GPU
+  box you rent). Hosted services run the same open models tens of
+  times faster than a laptop CPU; you bring your own API key and pay
+  that service per use — a fraction of a cent per slide, and several
+  have free tiers. The add-on itself stays free. The window says
+  plainly, next to the option, that the slide/lesson text (never the
+  image) is sent to the chosen service; the local default sends
+  nothing anywhere. New [docs/hosted-llm.md](docs/hosted-llm.md)
+  explains how "paying for the server" works, what it costs, the
+  privacy trade-off, and how to set each option up.
+- **Model picker with Fetch and Test.** An editable model box replaces
+  the fixed smaller/bigger radios; "↻ Fetch list" asks the server
+  (Ollama or OpenAI-compatible) which models it actually has, and
+  "Test connection" sends a one-word request and reports the answer
+  and the round-trip time — so a wrong key, a missing model or a
+  typo'd URL shows up before you snip. The bake-off is now a checkbox
+  ("Alternate at random with:") with its own model box, so it works
+  with any provider's models. Saving is refused, with the reason, when
+  a hosted service has no key or no model is chosen.
+- **Remote servers behave.** The CPU-thread limit
+  (`qgen_leave_cores_free`) is applied only to an Ollama on this
+  computer — a remote box has its own core count, and the old code
+  throttled it to the laptop's. `qgen_api_key` is now also sent to
+  Ollama when set (Ollama Cloud, or an authenticating proxy in front
+  of your own server), and HTTP redirects are refused rather than
+  followed, so the key only ever goes to the address you configured
+  (Python's urllib would otherwise forward it to wherever a server
+  pointed). Error messages name the service and say what to
+  do: a rejected key links to where keys are made, HTTP 402/429
+  explain credit and rate limits, a 404 points at the model list, and
+  an unreachable hosted service suggests checking the connection or
+  falling back to the local model. The Suggested Cards status line
+  says where it is generating ("generating via Groq (…)…").
+- **Faster, more predictable generation.** Replies are capped at a
+  generous 256 tokens per requested card, so a small local model that
+  starts rambling or looping is cut off after a couple of minutes
+  rather than running to the five-minute timeout. gpt-oss models are
+  asked to think briefly (`reasoning_effort: low` on the hosted
+  presets, `think: low` on Ollama) since flashcards need no long
+  deliberation and hidden reasoning tokens cost time and money; other
+  "thinking" models (Qwen 3, DeepSeek R1) keep their default effort
+  but get several times the token room. Hosted presets fall back to
+  the usual environment variable (`GROQ_API_KEY`, `HF_TOKEN`, …) when
+  the config has no key.
+- **Keys stay with the service they were entered for.** The Settings
+  window keeps one key per provider (`qgen_api_keys`), so switching
+  from Groq to OpenRouter shows an empty box rather than silently
+  sending the Groq key to OpenRouter, and a hosted key is never
+  attached to a local or self-hosted server. The "On this computer"
+  pane gained an optional key box for a proxy in front of a remote
+  Ollama. The privacy note under the options now also says that, with
+  background pre-generation on, every snip's text goes to the service
+  the moment it is captured, along with a few of your kept/flagged
+  example cards as style guidance.
+
 ## v0.27.0 — 2026-09-01
 
 - **Reveal source is now a split view: the slide AND the highlighted
