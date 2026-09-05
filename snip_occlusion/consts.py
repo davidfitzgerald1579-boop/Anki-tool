@@ -86,11 +86,15 @@ DEFAULT_CONFIG = {
     "tesseract_path": "",
     "tesseract_user_words": "",
     "ocr_corrections": {},
-    "qgen_provider": "ollama",  # "ollama" | "openai_compatible"
+    # where the AI runs: "ollama" (this computer), a hosted preset from
+    # qgen_providers ("groq", "cerebras", "openrouter", ...), or
+    # "openai_compatible" (any other server)
+    "qgen_provider": "ollama",
     "qgen_model": "llama3.1:8b",
     "qgen_ollama_url": "http://localhost:11434",
     "qgen_openai_base_url": "http://localhost:1234/v1",
-    "qgen_api_key": "",
+    "qgen_api_key": "",  # for the provider above
+    "qgen_api_keys": {},  # per-provider keys, kept by the Settings window
     "qgen_max_cards": 4,
     "qgen_timeout_seconds": 300,
     "qgen_prefetch": True,

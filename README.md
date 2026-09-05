@@ -128,24 +128,36 @@ sharing that slide, adds cards for new boxes, and asks before deleting
 cards whose boxes were removed.
 
 **AI-suggested cards:** in the text card dialog, "✨ Suggest cards"
-drafts Q/A pairs from your last snip's OCR text using a **free,
-open-source AI model running on your own computer** — no API key, no
-cost, and the slide text never leaves your machine. Each "Use →" opens
-the draft in its own window; the list stays behind so you can pick
-several. Cards added this way carry their source with them: while
-reviewing, a **🔍 Reveal source** button on the card back opens a
-split view below the card — the whole slide on one side, the source
-text with the card's origin sentences highlighted on the other, with
-Image / Text / Both buttons to switch (cards from pasted text show
-the highlighted text with a "No image to display" placeholder).
+drafts Q/A pairs from your last snip's OCR text using an
+**open-source AI model**. Out of the box that model runs **on your own
+computer** — no API key, no cost, and the slide text never leaves your
+machine — but a laptop CPU takes a minute or more per slide. If you'd
+rather have the cards in a couple of seconds, the ⚙ Settings window
+can point the same open models at a **hosted service** (Groq,
+OpenRouter, Together, Hugging Face, Ollama Cloud, …): you bring your
+own API key and pay that service for the compute it uses — a fraction
+of a cent per slide, and several have a free tier that covers a
+student's day. The add-on itself stays free either way. Choosing a
+hosted service means the slide *text* (never the image) is sent to
+it, and the Settings window says so next to the option.
+[`docs/hosted-llm.md`](docs/hosted-llm.md) explains how the "server"
+side works, what it costs, and the third option — renting a GPU box
+and running the model there yourself.
+Each "Use →" opens the draft in its own window; the list stays behind
+so you can pick several. Cards added this way carry their source with
+them: while reviewing, a **🔍 Reveal source** button on the card back
+opens a split view below the card — the whole slide on one side, the
+source text with the card's origin sentences highlighted on the other,
+with Image / Text / Both buttons to switch (cards from pasted text
+show the highlighted text with a "No image to display" placeholder).
 Works on AnkiDroid and AnkiMobile too; switch off with
 `text_card_attach_source` in the config.
-One-time setup: install [Ollama](https://ollama.com/download)
-(no account needed), then run `ollama pull llama3.1:8b` in a terminal
-(~4.7 GB). Prefer a different runner? Any OpenAI-compatible server
-(LM Studio, llama.cpp, Jan, vLLM) works too — see
-[`snip_occlusion/config.md`](snip_occlusion/config.md) for the
-`qgen_*` settings.
+One-time setup for the local option: install
+[Ollama](https://ollama.com/download) (no account needed), then run
+`ollama pull llama3.1:8b` in a terminal (~4.7 GB). Prefer a different
+runner? Any OpenAI-compatible server (LM Studio, llama.cpp, Jan, vLLM)
+works too — see [`snip_occlusion/config.md`](snip_occlusion/config.md)
+for the `qgen_*` settings.
 
 **Text cards in your own words:** press **Ctrl+Shift+T** (or the 📝
 button in the editor) for a minimal Front/Back/Notes card with
@@ -175,6 +187,9 @@ snip_occlusion/
 ├── color_utils.py    # majority-colour and local-background detection
 ├── notes.py          # note type management + note creation (no aqt)
 ├── template.py       # card templates: % -positioned mask divs + CSS
+├── qgen.py           # AI card drafts: prompt, parsing, HTTP to the model
+├── qgen_providers.py # where the model runs: local Ollama / hosted presets
+├── qgen_settings.py  # the AI section of the ⚙ Settings window
 └── qtshim.py         # aqt.qt in Anki, PyQt6 in tests
 ```
 

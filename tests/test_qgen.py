@@ -153,7 +153,7 @@ def test_generate_cards_via_ollama(monkeypatch):
             {"message": {"role": "assistant", "content": _CARD_JSON}}
         )
 
-    monkeypatch.setattr(qgen.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(qgen, "_urlopen", fake_urlopen)
     cards = qgen.generate_cards(
         "Private members bills are brought forward by individual MPs.",
         {"qgen_max_cards": 6},  # ollama is the default provider
@@ -180,7 +180,7 @@ def test_generate_cards_via_openai_compatible(monkeypatch):
             {"choices": [{"message": {"content": _CARD_JSON}}]}
         )
 
-    monkeypatch.setattr(qgen.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(qgen, "_urlopen", fake_urlopen)
     cards = qgen.generate_cards(
         "Some slide text.",
         {
@@ -204,8 +204,7 @@ def test_unknown_provider_raises():
 
 def test_ollama_missing_model_error(monkeypatch):
     monkeypatch.setattr(
-        qgen.urllib.request,
-        "urlopen",
+        qgen, "_urlopen",
         lambda request, timeout=None: _FakeResponse(
             {"error": 'model "llama3.1:8b" not found'}
         ),
@@ -219,7 +218,7 @@ def test_generate_cards_connection_and_http_errors(monkeypatch):
     def fail_conn(request, timeout=None):
         raise urllib.error.URLError("connection refused")
 
-    monkeypatch.setattr(qgen.urllib.request, "urlopen", fail_conn)
+    monkeypatch.setattr(qgen, "_urlopen", fail_conn)
     with pytest.raises(qgen.QGenError) as exc:
         qgen.generate_cards("text", {})
     # the error walks the user through installing/starting Ollama
@@ -235,7 +234,7 @@ def test_generate_cards_connection_and_http_errors(monkeypatch):
             io.BytesIO(b"{}"),
         )
 
-    monkeypatch.setattr(qgen.urllib.request, "urlopen", fail_500)
+    monkeypatch.setattr(qgen, "_urlopen", fail_500)
     with pytest.raises(qgen.QGenError) as exc:
         qgen.generate_cards("text", {})
     assert "500" in str(exc.value)
@@ -255,21 +254,56 @@ def test_ollama_leaves_cores_free(monkeypatch):
             {"message": {"role": "assistant", "content": _CARD_JSON}}
         )
 
-    monkeypatch.setattr(qgen.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(qgen, "_urlopen", fake_urlopen)
     monkeypatch.setattr(qgen.os, "cpu_count", lambda: 8)
     # default: one core left free
     qgen.generate_cards("text", {})
-    assert captured["body"]["options"] == {"num_thread": 7}
+    assert captured["body"]["options"]["num_thread"] == 7
     # explicit reserve
     qgen.generate_cards("text", {"qgen_leave_cores_free": 3})
-    assert captured["body"]["options"] == {"num_thread": 5}
-    # 0 = use every core: no options sent at all
+    assert captured["body"]["options"]["num_thread"] == 5
+    # 0 = use every core: no thread limit sent
     qgen.generate_cards("text", {"qgen_leave_cores_free": 0})
-    assert "options" not in captured["body"]
+    assert "num_thread" not in captured["body"]["options"]
     # never reserve the machine into nothing
     monkeypatch.setattr(qgen.os, "cpu_count", lambda: 1)
     qgen.generate_cards("text", {})
-    assert "options" not in captured["body"]
+    assert "num_thread" not in captured["body"]["options"]
+    # a remote Ollama has its own core count: never limit its threads
+    monkeypatch.setattr(qgen.os, "cpu_count", lambda: 8)
+    qgen.generate_cards(
+        "text", {"qgen_ollama_url": "http://192.168.1.20:11434"}
+    )
+    assert "num_thread" not in captured["body"]["options"]
+
+
+def test_reply_length_is_capped_generously(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout=None):
+        captured["body"] = json.loads(request.data.decode())
+        if request.full_url.endswith("/chat/completions"):
+            return _FakeResponse(
+                {"choices": [{"message": {"content": _CARD_JSON}}]}
+            )
+        return _FakeResponse(
+            {"message": {"role": "assistant", "content": _CARD_JSON}}
+        )
+
+    monkeypatch.setattr(qgen, "_urlopen", fake_urlopen)
+    qgen.generate_cards("text", {"qgen_max_cards": 4})
+    assert captured["body"]["options"]["num_predict"] == 4 * 256 + 128
+    qgen.generate_cards(
+        "text", {"qgen_provider": "openai_compatible", "qgen_model": "m"}
+    )
+    assert captured["body"]["max_tokens"] == 4 * 256 + 128
+    # focused generation: the cap follows the card count asked for
+    qgen.generate_cards(
+        "text", {"qgen_max_cards": 4}, focus=["a", "b"], focus_cards=1
+    )
+    assert captured["body"]["options"]["num_predict"] == 256 + 128
+    # the internal stash never leaks into the request
+    assert qgen._REPLY_CARDS_KEY not in json.dumps(captured["body"])
 
 
 def test_prompt_puts_source_last_and_examples_first():

@@ -15,6 +15,7 @@ from .qtshim import *  # noqa: F401,F403
 from . import notes as notes_mod
 from . import ocr, qgen_bakeoff, qgen_prefetch, source_image
 from .newcard_panel import AddedCardsList, NewCardQueuePanel
+from .qgen_settings import ProviderSettings
 from .consts import (
     ADDON_NAME,
     DEFAULT_CONFIG,
@@ -1066,37 +1067,13 @@ class SnipOcclusionDialog(QDialog):
             lay.addWidget(cb)
 
         lay.addSpacing(8)
-        lay.addWidget(QLabel("<b>AI model for card suggestions</b>", dlg))
-        smaller, bigger = qgen_bakeoff.small_large(self.config)
-        small_radio = QRadioButton(
-            "Smaller, faster model (%s)" % smaller, dlg
-        )
-        big_radio = QRadioButton(
-            "Bigger, slower model (%s)" % bigger, dlg
-        )
-        alt_radio = QRadioButton(
-            "Alternate between the two at random, and keep score", dlg
-        )
-        alt_radio.setToolTip(
-            "Each generation randomly picks one of the two models; your "
-            "Use/★/Skip/✗ verdicts and generation times are tallied per "
-            "model in the scoreboard below."
-        )
-        model_group = QButtonGroup(dlg)
-        for btn in (small_radio, big_radio, alt_radio):
-            model_group.addButton(btn)
-            lay.addWidget(btn)
-        if self.config.get("qgen_bakeoff", False):
-            alt_radio.setChecked(True)
-        elif (self.config.get("qgen_model") or "") == bigger:
-            big_radio.setChecked(True)
-        else:
-            small_radio.setChecked(True)
+        provider_widget = ProviderSettings(self.config, dlg)
+        lay.addWidget(provider_widget)
         learn_note = QLabel(
-            "<span style='color:#8a8171'>Whichever you pick, BOTH models "
-            "keep learning from all your verdicts — your kept/flagged "
-            "examples are shared, not tied to the model that wrote "
-            "them.</span>",
+            "<span style='color:#8a8171'>Whichever model or service you "
+            "pick, it keeps learning from all your verdicts — your "
+            "kept/flagged examples are shared, not tied to the model "
+            "that wrote them.</span>",
             dlg,
         )
         learn_note.setWordWrap(True)
@@ -1105,7 +1082,8 @@ class SnipOcclusionDialog(QDialog):
             score = qgen_bakeoff.summary()
         except Exception:
             score = ""
-        if score:
+        has_data = score and not score.startswith("No bake-off data")
+        if has_data or (score and self.config.get("qgen_bakeoff", False)):
             score_label = QLabel(
                 "<span style='color:#6b6252'>%s</span>"
                 % score.replace("\n", "<br>"),
@@ -1119,7 +1097,7 @@ class SnipOcclusionDialog(QDialog):
 
         note = QLabel(
             "<span style='color:#8a8171'>All other settings (OCR, "
-            "colours, other models…) live in Tools → Add-ons → "
+            "colours, timeouts…) live in Tools → Add-ons → "
             "Snip Occlusion → Config.</span>",
             dlg,
         )
@@ -1130,32 +1108,33 @@ class SnipOcclusionDialog(QDialog):
             | QDialogButtonBox.StandardButton.Cancel,
             dlg,
         )
-        qconnect(buttons.accepted, dlg.accept)
+        def try_accept() -> None:
+            problem = provider_widget.problem()
+            if problem:
+                showWarning(problem, parent=dlg, title=ADDON_NAME)
+                return
+            dlg.accept()
+
+        qconnect(buttons.accepted, try_accept)
         qconnect(buttons.rejected, dlg.reject)
         lay.addWidget(buttons)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         value = "hide" if hide_radio.isChecked() else "keep"
-        bakeoff = alt_radio.isChecked()
         hidden_sections = [
             key for key, cb in section_checks.items() if not cb.isChecked()
         ]
+        ai_values = provider_widget.values()
         self.config["text_editor_sidebar"] = value
-        self.config["qgen_bakeoff"] = bakeoff
         self.config["sidebar_hidden"] = hidden_sections
+        self.config.update(ai_values)
         self._apply_sidebar_mode(self._view_mode)
-        if not bakeoff:
-            self.config["qgen_model"] = (
-                bigger if big_radio.isChecked() else smaller
-            )
         try:
             module = __name__.split(".")[0]
             user_cfg = mw.addonManager.getConfig(module) or {}
             user_cfg["text_editor_sidebar"] = value
-            user_cfg["qgen_bakeoff"] = bakeoff
             user_cfg["sidebar_hidden"] = hidden_sections
-            if not bakeoff:
-                user_cfg["qgen_model"] = self.config["qgen_model"]
+            user_cfg.update(ai_values)
             mw.addonManager.writeConfig(module, user_cfg)
         except Exception:
             pass  # settings still apply for this window
