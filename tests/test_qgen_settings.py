@@ -387,3 +387,19 @@ def test_privacy_note_mentions_prefetch_and_examples(qapp, monkeypatch):
         {"qgen_provider": "groq", "qgen_api_key": "k", "qgen_prefetch": False}
     )
     assert "when you ask for suggestions" in w2.privacy.text()
+
+
+def test_widget_fits_a_small_screen(qapp, monkeypatch):
+    """Radio text can't wrap and sets the minimum width; keep it short so
+    the Settings window (and its Save button) fits a laptop screen."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    for cfg in ({}, {"qgen_provider": "groq", "qgen_api_key": "k"},
+                {"qgen_provider": "openai_compatible", "qgen_model": "m"}):
+        w = ProviderSettings(cfg)
+        w.show()
+        qapp.processEvents()
+        assert w.minimumSizeHint().width() <= 560, cfg
+        for radio in (w.local_radio, w.hosted_radio, w.custom_radio):
+            assert len(radio.text()) <= 30, radio.text()
+    assert "On this computer" in w.local_radio.text()
+    assert w.hosted_radio.text() == "A hosted service"

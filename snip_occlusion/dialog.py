@@ -1025,9 +1025,45 @@ class SnipOcclusionDialog(QDialog):
     def _open_settings(self) -> None:
         dlg = QDialog(self)
         dlg.setWindowTitle(ADDON_NAME + " — Settings")
+        # resizable, maximisable, F11 for full screen - and the settings
+        # themselves scroll, so the Save button never falls off a short
+        # screen however many options the page grows
+        dlg.setWindowFlags(
+            dlg.windowFlags()
+            | Qt.WindowType.WindowMinimizeButtonHint
+            | Qt.WindowType.WindowMaximizeButtonHint
+        )
+        dlg.setSizeGripEnabled(True)
         dlg.setStyleSheet(_STYLE)
         cream_tooltips(dlg)
-        lay = QVBoxLayout(dlg)
+
+        def toggle_fullscreen() -> None:
+            if dlg.isFullScreen():
+                dlg.showNormal()
+            else:
+                dlg.showFullScreen()
+
+        fs_shortcut = QShortcut(QKeySequence("F11"), dlg)
+        qconnect(fs_shortcut.activated, toggle_fullscreen)
+
+        outer = QVBoxLayout(dlg)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        scroll = QScrollArea(dlg)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        scroll.setStyleSheet(
+            "QScrollArea{background:transparent;border:none;}"
+            "QScrollArea>QWidget>QWidget{background:transparent;}"
+        )
+        body = QWidget(scroll)
+        lay = QVBoxLayout(body)
+        lay.setContentsMargins(12, 12, 12, 12)
+        scroll.setWidget(body)
+        outer.addWidget(scroll, 1)
         lay.addWidget(
             QLabel("<b>When switching to the Text Editor…</b>", dlg)
         )
@@ -1103,11 +1139,13 @@ class SnipOcclusionDialog(QDialog):
         )
         note.setWordWrap(True)
         lay.addWidget(note)
+        lay.addStretch(1)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save
             | QDialogButtonBox.StandardButton.Cancel,
             dlg,
         )
+
         def try_accept() -> None:
             problem = provider_widget.problem()
             if problem:
@@ -1117,7 +1155,30 @@ class SnipOcclusionDialog(QDialog):
 
         qconnect(buttons.accepted, try_accept)
         qconnect(buttons.rejected, dlg.reject)
-        lay.addWidget(buttons)
+        # pinned below the scrolling page: always on screen
+        button_row = QWidget(dlg)
+        button_lay = QHBoxLayout(button_row)
+        button_lay.setContentsMargins(12, 8, 12, 12)
+        fs_hint = QLabel(
+            "<span style='color:#8a8171'>F11 full screen</span>", button_row
+        )
+        button_lay.addWidget(fs_hint)
+        button_lay.addStretch(1)
+        button_lay.addWidget(buttons)
+        outer.addWidget(button_row)
+
+        # open as tall as the page wants, but never taller (or wider)
+        # than the screen it is on; the page scrolls for the rest
+        hint = body.sizeHint()
+        wanted_w = hint.width() + 48
+        wanted_h = hint.height() + button_row.sizeHint().height() + 48
+        screen = dlg.screen() or QApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            wanted_w = min(wanted_w, int(avail.width() * 0.95))
+            wanted_h = min(wanted_h, int(avail.height() * 0.92))
+        dlg.setMinimumSize(360, 300)
+        dlg.resize(max(wanted_w, 360), max(wanted_h, 300))
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         value = "hide" if hide_radio.isChecked() else "keep"

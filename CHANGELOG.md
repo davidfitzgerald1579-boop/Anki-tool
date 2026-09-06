@@ -4,6 +4,17 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.28.2 — 2026-09-06
+
+- **Fix: the Settings window's Save button could sit below the bottom
+  of the screen.** The page had grown taller than a laptop display and
+  the dialog could not be shrunk. The settings now scroll, with Save /
+  Cancel pinned underneath and always visible; the window is
+  resizable, has a maximise button, opens no taller than the screen,
+  and **F11** toggles full screen (as in the editor). The three
+  "where the AI runs" options have short labels with their
+  explanations wrapped beneath, so the window can also be narrow.
+
 ## v0.28.1 — 2026-09-06
 
 - **Fix: hosted services refused every request with "rejected the API
