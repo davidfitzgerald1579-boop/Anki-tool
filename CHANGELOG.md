@@ -4,6 +4,19 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.28.1 — 2026-09-06
+
+- **Fix: hosted services refused every request with "rejected the API
+  key (HTTP 403) … error code: 1010".** Groq (and others) sit behind
+  Cloudflare, which bans the standard library's default
+  `Python-urllib` client signature outright — before the request
+  reaches the API, whatever the key. Every request now identifies the
+  add-on (`SnipOcclusion/<version>`), and a Cloudflare block (error
+  codes 10xx) is reported as what it is — a network-edge refusal, with
+  the likely causes — instead of being blamed on the key. A plain 401
+  still says the key was rejected; a bare 403 is described as
+  "usually a rejected or insufficient key".
+
 ## v0.28.0 — 2026-09-04
 
 - **Run the AI on a hosted service — or keep it on your own machine.**
