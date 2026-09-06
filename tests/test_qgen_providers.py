@@ -354,7 +354,7 @@ def _http_error(code, body=b"{}"):
     "code,needle",
     [
         (401, "rejected the API key"),
-        (403, "rejected the API key"),
+        (403, "usually a rejected or insufficient API key"),
         (402, "no credit left"),
         (404, "could not find that endpoint or model"),
         (429, "rate-limiting"),
