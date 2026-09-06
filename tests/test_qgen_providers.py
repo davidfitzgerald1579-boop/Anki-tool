@@ -354,7 +354,7 @@ def _http_error(code, body=b"{}"):
     "code,needle",
     [
         (401, "rejected the API key"),
-        (403, "rejected the API key"),
+        (403, "usually a rejected or insufficient API key"),
         (402, "no credit left"),
         (404, "could not find that endpoint or model"),
         (429, "rate-limiting"),
@@ -708,3 +708,60 @@ def test_redirects_are_refused_and_explained():
     assert "secret-token" not in message
     # exactly one request reached the server, and nothing was re-sent
     assert hits == [("/v1/chat/completions", "Bearer secret-token")]
+
+
+# -------------------------------------------------- Cloudflare / User-Agent
+
+
+def test_every_request_identifies_the_addon(monkeypatch):
+    """Cloudflare bans the default Python-urllib signature (error 1010)."""
+    agents = []
+
+    def fake_urlopen(request, timeout=None):
+        agents.append(request.get_header("User-agent"))
+        if request.full_url.endswith("/models"):
+            return _FakeResponse({"data": [{"id": "m"}]})
+        if request.full_url.endswith("/api/tags"):
+            return _FakeResponse({"models": [{"name": "llama3.1:8b"}]})
+        if request.full_url.endswith("/chat/completions"):
+            return _FakeResponse({"choices": [{"message": {"content": _CARD_JSON}}]})
+        return _FakeResponse({"message": {"content": _CARD_JSON}})
+
+    monkeypatch.setattr(qgen, "_urlopen", fake_urlopen)
+    qgen.generate_cards("text", {"qgen_provider": "groq", "qgen_api_key": "k"})
+    qgen.generate_cards("text", {})
+    qgen.list_models({"qgen_provider": "groq", "qgen_api_key": "k"})
+    qgen.list_models({})
+    assert len(agents) == 4
+    assert all(a == qgen.USER_AGENT for a in agents)
+    assert qgen.USER_AGENT.startswith("SnipOcclusion/")
+    assert "Python-urllib" not in qgen.USER_AGENT
+    assert "github.com" in qgen.USER_AGENT
+
+
+def test_cloudflare_block_is_not_blamed_on_the_key(monkeypatch):
+    page = b"<html><body>error code: 1010</body></html>"
+    monkeypatch.setattr(qgen, "_urlopen", _http_error(403, page))
+    with pytest.raises(qgen.QGenError) as exc:
+        qgen.generate_cards(
+            "text", {"qgen_provider": "groq", "qgen_api_key": "gsk_real"}
+        )
+    message = str(exc.value)
+    assert "Cloudflare" in message and "1010" in message
+    assert "not a key problem" in message
+    assert "rejected the API key" not in message
+    # a plain 401 is still a key problem
+    monkeypatch.setattr(qgen, "_urlopen", _http_error(401, b'{"error":"x"}'))
+    with pytest.raises(qgen.QGenError) as exc:
+        qgen.generate_cards(
+            "text", {"qgen_provider": "groq", "qgen_api_key": "gsk_bad"}
+        )
+    assert "rejected the API key (HTTP 401)" in str(exc.value)
+    # a 403 without a Cloudflare code: probably the key, said less surely
+    monkeypatch.setattr(qgen, "_urlopen", _http_error(403, b'{"error":"x"}'))
+    with pytest.raises(qgen.QGenError) as exc:
+        qgen.generate_cards(
+            "text", {"qgen_provider": "groq", "qgen_api_key": "gsk_bad"}
+        )
+    assert "usually a rejected or insufficient API key" in str(exc.value)
+    assert "console.groq.com" in str(exc.value)

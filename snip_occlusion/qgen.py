@@ -35,6 +35,25 @@ DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_OPENAI_BASE_URL = "http://localhost:1234/v1"
 DEFAULT_MODEL = "llama3.1:8b"
 DEFAULT_TIMEOUT_S = 300
+_PROJECT_URL = "https://github.com/davidfitzgerald1579-boop/Anki-tool"
+
+
+def _addon_version() -> str:
+    try:
+        path = os.path.join(os.path.dirname(__file__), "manifest.json")
+        with open(path, encoding="utf-8") as fh:
+            return str(json.load(fh).get("human_version") or "dev")
+    except Exception:
+        return "dev"
+
+
+# Hosted services sit behind Cloudflare, which bans the standard
+# library's default "Python-urllib/3.x" signature outright (its error
+# code 1010) - so every request identifies the add-on instead.
+USER_AGENT = "SnipOcclusion/%s (Anki add-on; +%s)" % (
+    _addon_version(),
+    _PROJECT_URL,
+)
 
 
 class QGenError(Exception):
@@ -550,6 +569,11 @@ def _timeout(config: dict) -> int:
     return max(5, value)
 
 
+# Cloudflare's block pages carry "error code: 10xx" (1010 = banned client
+# signature, 1015 = rate limited, 1020 = access denied by a firewall rule)
+_CLOUDFLARE_CODE_RE = re.compile(r"error code:\s*(10\d\d)\b", re.I)
+
+
 def _http_error_message(exc, target, detail: str) -> str:
     label = target.label if target else "The LLM server"
     key_help = ""
@@ -571,12 +595,29 @@ def _http_error_message(exc, target, detail: str) -> str:
                 " to %s" % location if location else "",
             )
         )
+    edge = _CLOUDFLARE_CODE_RE.search(detail or "")
+    if edge and exc.code in (403, 429, 503):
+        return (
+            "%s's edge network (Cloudflare) blocked the request before it "
+            "reached the API - error code %s. That is not a key problem: "
+            "Cloudflare refuses connections it takes for bots. This add-on "
+            "identifies itself as %s; if you are on an older version, "
+            "update. Otherwise a VPN, proxy or shared network is the usual "
+            "cause - try another connection.\n%s"
+            % (label, edge.group(1), USER_AGENT.split(" ")[0], detail)
+        )
     if exc.code in (401, 403):
         if target is not None and target.preset is not None:
+            what = (
+                "rejected the API key"
+                if exc.code == 401
+                else "refused the request - usually a rejected or "
+                "insufficient API key"
+            )
             return (
-                "%s rejected the API key (HTTP %d).\n\nPaste the key into "
+                "%s %s (HTTP %d).\n\nPaste the key into "
                 "⚙ Settings → AI model, or set \"qgen_api_key\" in the "
-                "add-on config.%s\n%s" % (label, exc.code, key_help, detail)
+                "add-on config.%s\n%s" % (label, what, exc.code, key_help, detail)
             )
         return (
             "%s refused the request (HTTP %d) - it wants an API key or "
@@ -609,14 +650,20 @@ def _post_json(url, body, headers, timeout, server_hint, target=None):
     request = urllib.request.Request(
         url,
         data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json", **headers},
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": USER_AGENT,
+            **headers,
+        },
         method="POST",
     )
     return _send(request, timeout, server_hint, target)
 
 
 def _get_json(url, headers, timeout, server_hint, target=None):
-    request = urllib.request.Request(url, headers=headers, method="GET")
+    request = urllib.request.Request(
+        url, headers={"User-Agent": USER_AGENT, **headers}, method="GET"
+    )
     return _send(request, timeout, server_hint, target)
 
 

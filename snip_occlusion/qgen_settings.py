@@ -64,23 +64,33 @@ class ProviderSettings(QWidget):
         lay.setSpacing(4)
         lay.addWidget(QLabel("<b>AI model for card suggestions</b>", self))
 
+        # short radio labels (a radio's text can't wrap, and it sets
+        # the window's minimum width); the explanations wrap beneath
         self.mode_group = QButtonGroup(self)
-        self.local_radio = QRadioButton(
-            "On this computer — free and private, but slow (Ollama)", self
-        )
-        self.hosted_radio = QRadioButton(
-            "A hosted service — many times faster, pay-per-use "
-            "(often free); the text is sent to that service",
-            self,
-        )
-        self.custom_radio = QRadioButton(
-            "Another server — any OpenAI-compatible URL (LM Studio, "
-            "vLLM, a rented GPU box…)",
-            self,
-        )
+        self.local_radio = QRadioButton("On this computer (Ollama)", self)
+        self.hosted_radio = QRadioButton("A hosted service", self)
+        self.custom_radio = QRadioButton("Another server", self)
+        explanations = {
+            self.local_radio: "Free and private, but slow on a laptop CPU.",
+            self.hosted_radio: (
+                "Many times faster; pay per use, often free. The slide "
+                "text is sent to that service."
+            ),
+            self.custom_radio: (
+                "Any OpenAI-compatible URL: LM Studio, vLLM, a rented "
+                "GPU box…"
+            ),
+        }
         for radio in (self.local_radio, self.hosted_radio, self.custom_radio):
             self.mode_group.addButton(radio)
             lay.addWidget(radio)
+            why = QLabel(
+                "<span style='%s'>%s</span>" % (_MUTED, explanations[radio]),
+                self,
+            )
+            why.setWordWrap(True)
+            why.setContentsMargins(24, 0, 0, 2)
+            lay.addWidget(why)
             qconnect(radio.toggled, self._mode_changed)
 
         # --- local pane
