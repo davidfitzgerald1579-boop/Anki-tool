@@ -129,17 +129,22 @@ cards whose boxes were removed.
 
 **AI-suggested cards:** in the text card dialog, "✨ Suggest cards"
 drafts Q/A pairs from your last snip's OCR text using an
-**open-source AI model**. Out of the box that model runs **on your own
-computer** — no API key, no cost, and the slide text never leaves your
-machine — but a laptop CPU takes a minute or more per slide. If you'd
-rather have the cards in a couple of seconds, the ⚙ Settings window
-can point the same open models at a **hosted service** (Groq,
-OpenRouter, Together, Hugging Face, Ollama Cloud, …): you bring your
-own API key and pay that service for the compute it uses — a fraction
-of a cent per slide, and several have a free tier that covers a
-student's day. The add-on itself stays free either way. Choosing a
-hosted service means the slide *text* (never the image) is sent to
-it, and the Settings window says so next to the option.
+**open-source AI model**. **No download needed:** the quickest way is
+a free [Groq](https://console.groq.com/keys) account (no card) —
+paste the key into ⚙ Settings → "A hosted service", press Test
+connection, and cards arrive in a second or two. Groq's free tier
+covers over a hundred slides a day; beyond that you pay Groq a
+fraction of a cent per slide. OpenRouter, Together, Hugging Face,
+Ollama Cloud and others are offered the same way. Choosing a hosted
+service means the slide *text* (never the image) is sent to it, and
+the Settings window says so next to the option.
+Prefer everything on your own machine? Switch to "On this computer":
+install [Ollama](https://ollama.com/download) and run
+`ollama pull llama3.1:8b` (~5 GB) — no account, no key, nothing sent
+anywhere, but a laptop CPU takes a minute or more per slide. The
+add-on itself is free either way.
+**[Step-by-step guide (PDF)](docs/Snip-Occlusion-Getting-Started.pdf)**
+with screenshots, from install to your first AI cards;
 [`docs/hosted-llm.md`](docs/hosted-llm.md) explains how the "server"
 side works, what it costs, and the third option — renting a GPU box
 and running the model there yourself.
@@ -152,12 +157,10 @@ with Image / Text / Both buttons to switch (cards from pasted text
 show the highlighted text with a "No image to display" placeholder).
 Works on AnkiDroid and AnkiMobile too; switch off with
 `text_card_attach_source` in the config.
-One-time setup for the local option: install
-[Ollama](https://ollama.com/download) (no account needed), then run
-`ollama pull llama3.1:8b` in a terminal (~4.7 GB). Prefer a different
-runner? Any OpenAI-compatible server (LM Studio, llama.cpp, Jan, vLLM)
-works too — see [`snip_occlusion/config.md`](snip_occlusion/config.md)
-for the `qgen_*` settings.
+Prefer a different local runner? Any OpenAI-compatible server (LM
+Studio, llama.cpp, Jan, vLLM) works too — see
+[`snip_occlusion/config.md`](snip_occlusion/config.md) for the
+`qgen_*` settings.
 
 **Text cards in your own words:** press **Ctrl+Shift+T** (or the 📝
 button in the editor) for a minimal Front/Back/Notes card with

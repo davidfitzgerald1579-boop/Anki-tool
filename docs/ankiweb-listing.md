@@ -64,25 +64,29 @@ slide with all its boxes; during review, Delete removes a bad card and
 Shift+Delete removes every card from that slide.</li>
 </ul>
 
-<b>AI-suggested flashcards — free, and private by default</b>
+<b>AI-suggested flashcards — free, no download needed</b>
 
 <ul>
 <li>"✨ Suggest cards" turns the snip's text into question/answer drafts.
 Each "Use →" opens the draft for a quick edit before it is added; 👎
 teaches the AI what you don't want, and it learns your card style from
 what you keep.</li>
-<li><b>Runs on your own computer out of the box</b> via Ollama
-(free, no account, no API key) — the slide text never leaves your
-machine. A one-off setup: install Ollama and run
-<code>ollama pull llama3.1:8b</code>.</li>
-<li><b>Want it in two seconds instead of a minute?</b> In ⚙ Settings,
-point the same open-source models at a hosted service (Groq, OpenRouter,
-Together, Hugging Face, Ollama Cloud, …). You bring your own API key and
-pay that service per use — a fraction of a cent per slide, and several
-have free tiers. The add-on itself is free either way, and the window
-says plainly that the slide <i>text</i> (never the image) is sent to
-the service you choose. Nothing is sent anywhere unless you turn this
-on.</li>
+<li><b>Two-minute setup, nothing to install:</b> make a free account at
+Groq (no card needed), paste the key into ⚙ Settings → "A hosted
+service", press Test connection, done. Cards arrive in a second or two.
+Groq's free tier covers over a hundred slides a day; heavier use costs
+a fraction of a cent per slide, paid to Groq, not to us. OpenRouter,
+Together, Hugging Face, Ollama Cloud and others work the same way.</li>
+<li><b>Prefer to keep everything on your computer?</b> Switch to "On
+this computer": install Ollama and run
+<code>ollama pull llama3.1:8b</code> (about 5 GB) and the same
+open-source model runs locally — no account, no key, and the slide text
+never leaves your machine. Slower (a minute or so per slide on a
+laptop), but completely private.</li>
+<li>Either way the add-on is free and open source. The Settings window
+says plainly what is sent where: with a hosted service, the slide
+<i>text</i> (never the image) goes to that service; with the local
+option, nothing leaves your machine.</li>
 <li>Paste a whole lesson and get cards section by section; highlight a
 passage and ask for cards about just that; a 🔍 Reveal source button on
 every AI card shows the slide and the sentence it came from while you
@@ -97,6 +101,10 @@ the source text is stripped or flagged.</li>
 snip a slide, draw boxes with R, group with G, erase junk with C, pick a
 deck and press Add Cards. Click the ? button in the editor for all
 shortcuts. For AI suggestions, switch to the Suggested Cards view.
+
+<b>Step-by-step guide (PDF)</b> with screenshots, from install to your
+first AI cards:
+https://github.com/davidfitzgerald1579-boop/Anki-tool/blob/main/docs/Snip-Occlusion-Getting-Started.pdf
 
 <b>Free and open source</b> (Apache 2.0). Source code, full
 documentation and the guide to hosted AI services:
