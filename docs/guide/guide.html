@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Snip Occlusion — Getting Started</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 20mm 16mm; }
+  :root {
+    --ink: #2f2b1e; --muted: #6b6252; --line: #e3dcd0; --cream: #faf6ef;
+    --accent: #d97757; --accent-dark: #b85a3c; --green: #2f7d4a; --tip: #fff5e6;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: "Liberation Sans", "DejaVu Sans", Arial, Helvetica, sans-serif;
+    color: var(--ink); font-size: 10.5pt; line-height: 1.45;
+  }
+  h1 { font-size: 26pt; margin: 0 0 4mm; letter-spacing: -0.01em; }
+  h2 { font-size: 16pt; margin: 0 0 3mm; break-before: auto; padding-bottom: 1.5mm; border-bottom: 2px solid var(--accent);
+       break-after: avoid; page-break-after: avoid; }
+  h3 { font-size: 12pt; margin: 5mm 0 2mm; break-after: avoid; page-break-after: avoid; }
+  p { margin: 0 0 2.5mm; }
+  code, kbd {
+    font-family: "Liberation Mono", "DejaVu Sans Mono", monospace; font-size: 9.5pt;
+    background: #f3ede2; border: 1px solid var(--line); border-radius: 3px; padding: 0 3px;
+  }
+  kbd { background: #fff; }
+  a { color: var(--accent-dark); text-decoration: none; }
+  .muted { color: var(--muted); }
+  section { break-inside: auto; }
+  .page { break-before: page; page-break-before: always; }
+
+  /* cover */
+  .cover { border-left: 8px solid var(--accent); padding: 4mm 0 4mm 6mm; margin-bottom: 8mm; }
+  .cover .sub { font-size: 13pt; color: var(--muted); margin: 0; }
+  .cover .meta { font-size: 9.5pt; color: var(--muted); margin-top: 3mm; }
+  .toc { background: var(--cream); border: 1px solid var(--line); border-radius: 6px; padding: 4mm 6mm; margin-bottom: 6mm; }
+  .toc ol { margin: 0; padding-left: 6mm; columns: 2; column-gap: 8mm; }
+  .toc li { margin: 1mm 0; break-inside: avoid; }
+  .paths { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; margin: 4mm 0 2mm; }
+  .path { border: 1px solid var(--line); border-radius: 8px; padding: 3.5mm 4.5mm; background: #fff; }
+  .path.rec { border-color: var(--accent); background: #fff8f3; }
+  .path h3 { margin: 0 0 1.5mm; font-size: 11.5pt; }
+  .path .tag { display: inline-block; font-size: 8.5pt; font-weight: bold; color: #fff; background: var(--accent);
+               border-radius: 3px; padding: 0 5px; margin-left: 4px; vertical-align: middle; }
+  .path ul { margin: 0; padding-left: 4.5mm; }
+
+  /* steps */
+  ol.steps { list-style: none; counter-reset: step; margin: 0; padding: 0; }
+  ol.steps > li {
+    counter-increment: step; position: relative; padding-left: 12mm; margin: 0 0 4mm; break-inside: avoid; page-break-inside: avoid;
+  }
+  ol.steps > li::before {
+    content: counter(step); position: absolute; left: 0; top: 0.2mm;
+    width: 8.5mm; height: 8.5mm; border-radius: 50%; background: var(--accent); color: #fff;
+    font-weight: bold; font-size: 11pt; text-align: center; line-height: 8.5mm;
+  }
+  ol.steps > li > b:first-child { display: block; margin-bottom: 1mm; font-size: 11pt; }
+  .shot { display: block; max-width: 100%; border: 1px solid var(--line); border-radius: 6px; margin: 2.5mm 0 1mm; }
+  .shot.small { max-width: 78%; }
+  .caption { font-size: 9pt; color: var(--muted); margin: 0 0 3mm; }
+  .tip { background: var(--tip); border-left: 4px solid var(--accent); border-radius: 0 6px 6px 0;
+         padding: 2.5mm 4mm; margin: 3mm 0; break-inside: avoid; page-break-inside: avoid; }
+  .tip b { color: var(--accent-dark); }
+  .ok { color: var(--green); font-weight: bold; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; align-items: start; }
+
+  table { border-collapse: collapse; width: 100%; margin: 2mm 0 4mm; font-size: 9.8pt; }
+  th, td { border: 1px solid var(--line); padding: 1.6mm 2.5mm; vertical-align: top; text-align: left; }
+  th { background: var(--cream); }
+  tr { break-inside: avoid; page-break-inside: avoid; }
+  td:first-child { white-space: nowrap; }
+  .footer { margin-top: 8mm; padding-top: 3mm; border-top: 1px solid var(--line); font-size: 9pt; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <h1>Snip Occlusion — Getting Started</h1>
+  <p class="sub">Snip a slide, box the facts, and let a free open-source AI draft the flashcards.</p>
+  <p class="meta">For version 0.28 · Anki 2.1.50 or later on Windows, Mac and Linux · Guide updated September 2026</p>
+</div>
+
+<div class="toc">
+  <ol>
+    <li>Install the add-on (2 minutes)</li>
+    <li>Your first cards from a slide (5 minutes)</li>
+    <li>AI-suggested cards with Groq — no download (2 minutes)</li>
+    <li>Keeping everything on your own computer (optional)</li>
+    <li>Using the suggestions</li>
+    <li>If something goes wrong</li>
+    <li>Shortcut cheat sheet</li>
+  </ol>
+</div>
+
+<p>Snip Occlusion is an Anki add-on for studying from slide decks. You take a screenshot of a slide, it appears in the editor, you draw boxes over the facts you need to recall, and one click makes the cards. Since version 0.28 it can also read the slide's text and draft question-and-answer cards for you, using an open-source AI that runs either on a free hosted service or on your own computer.</p>
+
+<div class="paths">
+  <div class="path rec">
+    <h3>Fastest route <span class="tag">RECOMMENDED</span></h3>
+    <ul>
+      <li>Install the add-on (section 1)</li>
+      <li>Make a free Groq account, paste the key (section 3)</li>
+      <li>Nothing to download; cards arrive in a second or two</li>
+    </ul>
+  </div>
+  <div class="path">
+    <h3>Fully private route</h3>
+    <ul>
+      <li>Install the add-on (section 1)</li>
+      <li>Install Ollama and download a model, about 5 GB (section 4)</li>
+      <li>Nothing ever leaves your computer; a minute or so per slide on a laptop</li>
+    </ul>
+  </div>
+</div>
+
+<section>
+<h2>1. Install the add-on</h2>
+<ol class="steps">
+  <li><b>Get the code or the file.</b>
+    On AnkiWeb, the add-on has a numeric code shown on its page. In Anki choose <b>Tools → Add-ons → Get Add-ons…</b>, paste the code and press OK.
+    <div class="tip"><b>No code yet, or installing from GitHub?</b> Download <code>snip_occlusion.ankiaddon</code> from the project's Releases page at <a href="https://github.com/davidfitzgerald1579-boop/Anki-tool/releases">github.com/davidfitzgerald1579-boop/Anki-tool/releases</a>, then use <b>Tools → Add-ons → Install from file…</b> and pick that file.</div>
+  </li>
+  <li><b>Restart Anki.</b> Add-ons only load at start-up. After the restart, the Tools menu has two new entries: <i>Snip Occlusion — New from Clipboard…</i> and <i>Snip Occlusion — Write a Text Card…</i>.</li>
+  <li><b>Updating later.</b> If you installed with a code, <b>Tools → Add-ons → Check for Updates</b> fetches new versions. If you installed from a file, install the newer file the same way; your settings, saved API keys and the AI's learned examples are kept.</li>
+</ol>
+</section>
+
+<section style="margin-top:8mm">
+<h2>2. Your first cards from a slide</h2>
+<ol class="steps">
+  <li><b>Open the editor.</b> Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd> in Anki's main window (or Tools → Snip Occlusion — New from Clipboard…).</li>
+  <li><b>Snip a slide.</b> Use your normal screenshot tool — <kbd>Win</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> on Windows, <kbd>Cmd</kbd>+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>4</kbd> on a Mac. The snip lands in the editor by itself, straight from the clipboard.
+    <img class="shot" src="../editor.png" alt="The editor with masks, a cover-up box and a snip patch">
+    <p class="caption">The editor: yellow masks (a group shares a bold outline colour), a selected box, a grey cover-up box that erased a line of text, and a snip patch parked beside the slide.</p>
+  </li>
+  <li><b>Box the facts.</b> Press <kbd>R</kbd> and drag a box over each thing you want to recall — or simply <b>double-click a word</b> to box exactly that word. Press <kbd>C</kbd> to draw a cover-up box that erases irrelevant text (it is filled with the slide's background colour).</li>
+  <li><b>Group boxes that should be revealed together.</b> Shift-click each box, in any order, then press <kbd>G</kbd>. Shift-click never moves anything.</li>
+  <li><b>Pick a deck and a mode.</b> <i>Hide All, Guess One</i> masks everything and highlights the target; <i>Hide One, Guess One</i> masks only the target.</li>
+  <li><b>Add Cards</b> (or <kbd>Ctrl</kbd>+<kbd>Enter</kbd>). One card per group. The editor clears, ready for the next snip.
+    <div class="two">
+      <div><img class="shot" src="../front_hag1.png" alt="Card front"><p class="caption">Question side: the target group in red, everything else masked.</p></div>
+      <div><img class="shot" src="../back_hag1.png" alt="Card back"><p class="caption">Answer side: the target revealed; other masks can be clicked to peek.</p></div>
+    </div>
+  </li>
+</ol>
+<div class="tip"><b>Cards work everywhere.</b> They are plain HTML, so they review correctly on AnkiDroid and AnkiMobile with nothing installed on the phone.</div>
+</section>
+
+<section class="page">
+<h2>3. AI-suggested cards with Groq — no download</h2>
+<p>The add-on can read a snip's text and draft question-and-answer cards. The quickest way to run the AI is a hosted service: the same open-source model runs on that company's computers instead of your laptop, so drafts arrive in a second or two. <b>Groq</b> is the recommended first choice — no card details, a free daily allowance that covers over a hundred slides, and very fast. The add-on itself stays free; you never pay us anything.</p>
+<ol class="steps">
+  <li><b>Create a free Groq account and an API key.</b> Go to <a href="https://console.groq.com/keys">console.groq.com/keys</a>, sign up (email or Google/GitHub), press <b>Create API Key</b>, give it any name, and copy the key. It starts with <code>gsk_</code>. Keep it private, like a password.</li>
+  <li><b>Open the add-on's settings.</b> In the Snip Occlusion editor, press the <b>⚙</b> button (top right of the view toggle). The window scrolls; Save and Cancel stay at the bottom. <kbd>F11</kbd> makes it full screen if you like.</li>
+  <li><b>Choose "A hosted service", paste the key, test.</b> Under <i>AI model for card suggestions</i> pick <b>A hosted service</b>. Groq is already selected in the Service box. Paste the key into <b>API key</b>, leave the model as suggested, and press <b>Test connection</b>.
+    <img class="shot" src="settings_ai.png" alt="The AI model section with Groq selected and a successful test">
+    <p class="caption">A successful test: <span class="ok">✓ Groq answered with openai/gpt-oss-20b in 0.6 s</span>. The note underneath spells out exactly what is sent where.</p>
+  </li>
+  <li><b>Save.</b> That's the whole setup. From now on, the moment a snip lands in the editor the add-on reads its text and starts drafting cards in the background, so they are usually ready before you finish drawing boxes.</li>
+</ol>
+<div class="tip"><b>What is sent, and what it costs.</b> With a hosted service the slide's <i>text</i> is sent to that service — never the image — along with a few of your kept cards as style examples. Groq's free tier allows roughly 200,000 tokens a day per model, which is over a hundred slides; beyond that Groq charges a fraction of a cent per slide, billed by Groq to your Groq account. If you would rather send nothing anywhere, use section 4 instead.</div>
+<p class="muted">OpenRouter, Together AI, Hugging Face, Ollama Cloud, Mistral, Fireworks, DeepInfra and Cerebras are offered the same way: pick the service, press <i>Get a key ↗</i>, paste, test. <b>↻ Fetch list</b> shows every model the service currently offers; bigger models such as gpt-oss-120b write noticeably better cards and are still fast.</p>
+</section>
+
+<section style="margin-top:8mm">
+<h2>4. Keeping everything on your own computer (optional)</h2>
+<p>Skip this section if you set up Groq. Choose it instead if you want nothing to leave your machine: the same open-source model runs locally through Ollama, free, with no account and no key. The trade-off is speed — a laptop CPU takes a minute or more per slide (a computer with a gaming GPU, or an Apple-silicon Mac, takes a few seconds).</p>
+<ol class="steps">
+  <li><b>Install Ollama</b> from <a href="https://ollama.com/download">ollama.com/download</a> (Windows, Mac, Linux). It runs quietly in the background.</li>
+  <li><b>Download a model once.</b> Open a terminal (Windows: search for <i>PowerShell</i>; Mac: <i>Terminal</i>) and run:
+    <p><code>ollama pull llama3.1:8b</code></p>
+    About 5 GB; it needs roughly 8 GB of RAM to run. On a low-memory machine use <code>ollama pull llama3.2:3b</code> instead (2 GB, faster, slightly weaker cards).</li>
+  <li><b>Choose "On this computer" in ⚙ Settings.</b> This is the default, so a fresh install is already set. Press <b>↻ Fetch list</b> to see the models you have downloaded, pick one, press <b>Test connection</b>, then Save. The first answer after Ollama starts can take a minute while the model loads; later ones are faster.</li>
+</ol>
+<div class="tip"><b>Switching later is one click.</b> The Settings window remembers a model and key for each option separately, so you can move between the local model and a hosted service whenever you like — a key entered for one service is never sent to another.</div>
+</section>
+
+<section style="margin-top:8mm">
+<h2>5. Using the suggestions</h2>
+<ol class="steps">
+  <li><b>Open the Suggested Cards view.</b> After snipping a slide, use the view toggle at the top of the editor to switch from <i>Image Editor</i> to <i>Suggested Cards</i>. The status line says where the AI is working ("generating via Groq…" or "generating on your machine…"); the drafts appear underneath, with the slide's text alongside.</li>
+  <li><b>Judge each draft.</b> <b>Use →</b> opens the card in a small window for a quick edit before adding it. <b>★</b> keeps it as a great example without adding. <b>👎</b> flags a poor card so the AI avoids that habit. <b>✕</b> simply discards. The AI learns your taste from what you keep and reject.</li>
+  <li><b>Ask for cards about one passage.</b> Highlight any sentence in the slide's text, right-click, and choose <i>✨ Make a card from this selection</i>. Pick how many cards you want.</li>
+  <li><b>Paste a whole lesson.</b> The 📋 button takes a pasted document and generates cards section by section, streaming them in as they are ready.</li>
+  <li><b>See where a card came from.</b> The 🔎 button on a draft highlights the sentences it was written from. Cards you add keep that link: while reviewing, <b>🔍 Reveal source</b> on the card's back shows the whole slide and the highlighted source text — on your phone too.</li>
+</ol>
+<div class="tip"><b>Invented citations are caught.</b> If a draft cites a case, statute or year that is not in the slide's text, the add-on strips it from the notes or marks the card with a ⚠ warning, so you never memorise an authority the AI made up.</div>
+</section>
+
+<section class="page">
+<h2>6. If something goes wrong</h2>
+<table>
+  <tr><th>What you see</th><th>What it means and what to do</th></tr>
+  <tr><td>"…edge network (Cloudflare) blocked the request… error code 1010"</td><td>Your copy of the add-on is older than 0.28.1, which identifies itself properly to Groq's network. Update the add-on. If it persists, a VPN or shared network is the usual cause — try another connection.</td></tr>
+  <tr><td>"…rejected the API key (HTTP 401)"</td><td>The key is wrong or was deleted. Make a new one at the service's key page (the <i>Get a key ↗</i> link in Settings), paste it, and Test connection again.</td></tr>
+  <tr><td>"…rate-limiting you (HTTP 429)"</td><td>You have hit the free tier's per-minute or per-day allowance. Wait a little, pick a different model (each has its own allowance), or switch service.</td></tr>
+  <tr><td>"…could not find that endpoint or model (HTTP 404)"</td><td>The model name has changed — services retire models now and then. Press <b>↻ Fetch list</b> in Settings and choose a current one.</td></tr>
+  <tr><td>"Could not reach the Ollama server…"</td><td>Ollama is not running or the model is not downloaded. Start Ollama, run <code>ollama pull llama3.1:8b</code>, then press Test connection.</td></tr>
+  <tr><td>"…is not downloaded yet. In a terminal run: ollama pull …"</td><td>Exactly that: run the command shown, wait for the download, try again.</td></tr>
+  <tr><td>"The local model took too long to reply"</td><td>Normal on the first request after Ollama starts. Try again; if it keeps happening use a smaller model, or a hosted service (section 3).</td></tr>
+  <tr><td>Suggestions say "no snip text"</td><td>The slide's text could not be read. On Windows the built-in OCR is used; on Mac and Linux install Tesseract (<code>brew install tesseract</code> / <code>apt install tesseract-ocr</code>) and restart Anki.</td></tr>
+  <tr><td>The Settings window's Save button is off-screen</td><td>Update to 0.28.2 or later: the window now scrolls and Save stays visible. <kbd>F11</kbd> toggles full screen.</td></tr>
+</table>
+<p>Still stuck? Report it on GitHub with the exact message: <a href="https://github.com/davidfitzgerald1579-boop/Anki-tool/issues">github.com/davidfitzgerald1579-boop/Anki-tool/issues</a>. Reviews on AnkiWeb can't be replied to, so GitHub is the place where you'll get an answer.</p>
+
+<h2 style="margin-top:8mm">7. Shortcut cheat sheet</h2>
+<table>
+  <tr><th>Keys</th><th>Action</th></tr>
+  <tr><td><kbd>S</kbd> / <kbd>R</kbd> / <kbd>H</kbd> / <kbd>C</kbd> / <kbd>P</kbd></td><td>Select / Rectangle mask / Highlighter / Cover-up (erase text) / Snip patch</td></tr>
+  <tr><td>Double-click a word</td><td>Occlude exactly that word (highlight it in the Highlighter tool, erase it in the Cover-up tool)</td></tr>
+  <tr><td><kbd>Shift</kbd>+click</td><td>Add or remove a box from the selection — never moves it</td></tr>
+  <tr><td><kbd>G</kbd> / <kbd>U</kbd></td><td>Group / ungroup the selection</td></tr>
+  <tr><td>Drag a box · <kbd>Ctrl</kbd>+drag</td><td>Move only that box · move the whole selection</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>Ctrl</kbd>+<kbd>V</kbd></td><td>Copy selected boxes / paste them beside the originals</td></tr>
+  <tr><td><kbd>T</kbd></td><td>See-through mode: outlines only, text visible underneath</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>Undo / redo</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+wheel · <kbd>F</kbd> · <kbd>F11</kbd></td><td>Zoom · fit to window · full screen</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>Add cards</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd></td><td>Write a plain text card in your own words</td></tr>
+  <tr><td><kbd>Delete</kbd> / <kbd>Shift</kbd>+<kbd>Delete</kbd> while reviewing</td><td>Delete this card / delete every card made from the same slide (Ctrl+Z undoes)</td></tr>
+</table>
+
+<div class="footer">
+  Snip Occlusion is free and open source (Apache 2.0). Source, documentation and the full guide to hosted AI services, including what they cost and how to run your own server: <a href="https://github.com/davidfitzgerald1579-boop/Anki-tool">github.com/davidfitzgerald1579-boop/Anki-tool</a>
+</div>
+</section>
+
+</body>
+</html>
