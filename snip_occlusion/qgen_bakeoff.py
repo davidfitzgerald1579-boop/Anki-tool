@@ -107,6 +107,7 @@ def generate(
     focus=None,
     focus_cards=None,
     emphasis=None,
+    mode=None,
 ) -> list:
     """qgen.generate_cards, randomising and timing models when enabled.
 
@@ -122,6 +123,8 @@ def generate(
             kwargs["focus_cards"] = focus_cards
     if emphasis:
         kwargs["emphasis"] = emphasis
+    if mode:
+        kwargs["mode"] = mode
     if not enabled(config):
         return qgen.generate_cards(text, config, **kwargs)
     # random choice, so verdicts can't be biased by a predictable order

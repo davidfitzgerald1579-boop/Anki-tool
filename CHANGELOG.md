@@ -4,6 +4,28 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.29.0 — 2026-09-15
+
+- **Ask the AI for a particular kind of card.** Two buttons under the
+  "✨ Suggested cards" title write another batch from the current text
+  in a chosen style and add it below the cards already there:
+  - **🎭 Similar scenarios** — fresh one-or-two-sentence fact patterns
+    (different people and details) that turn on the same point of law,
+    each ending in a question; the answer gives the outcome and the
+    rule. Built for snips of a practice question and its explanation:
+    the model is told not to reuse the question's facts or options.
+  - **⚖️ Principle, test or ratio** — cards that ask you to *identify
+    and state* the rule, test or ratio decidendi the text applies, with
+    its elements and any exception, rather than the outcome of one set
+    of facts.
+
+  Both use the Cards: count; with 🖍-picked passages, only those
+  passages are used (the picks stay marked so the other button can be
+  pressed for the same text). The style is an instruction block after
+  the general rules plus a one-line reminder at the very end of the
+  prompt, and `qgen.generate_cards` / `qgen_bakeoff.generate` take it
+  as `mode="scenarios"` / `"principle"`.
+
 ## v0.28.2 — 2026-09-06
 
 - **Fix: the Settings window's Save button could sit below the bottom

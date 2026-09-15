@@ -565,6 +565,47 @@ class SuggestionsPage(QWidget):
         qconnect(self.regen_btn.clicked, self._regen_clicked)
         title_row.addWidget(self.regen_btn)
         panel_lay.addLayout(title_row)
+
+        # on-demand card styles: each button writes another batch (the
+        # Cards: count) from the current source and appends it
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(6)
+        ask_lbl = QLabel("Ask for:", self)
+        ask_lbl.setStyleSheet("color:#8a8171;")
+        mode_row.addWidget(ask_lbl)
+        self.mode_btns = {}
+        for mode, text, tip in (
+            (
+                qgen.MODE_SCENARIOS,
+                "🎭 Similar scenarios",
+                "Write fresh one-or-two-sentence scenarios that turn on "
+                "the same point of law as this text, each ending in a "
+                "question; the answer gives the outcome and the rule. "
+                "Ideal for a practice question and its explanation.",
+            ),
+            (
+                qgen.MODE_PRINCIPLE,
+                "⚖️ Principle, test or ratio",
+                "Write cards that ask you to identify and state the "
+                "legal rule, test or ratio decidendi this text applies "
+                "— its name, elements and any exceptions.",
+            ),
+        ):
+            btn = QPushButton(text, self)
+            btn.setToolTip(
+                tip + " Uses the Cards: count; with 🖍 picked passages, "
+                "only those are used. New cards are added below the "
+                "existing ones."
+            )
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            qconnect(
+                btn.clicked,
+                lambda _=False, m=mode: self._generate_mode(m),
+            )
+            mode_row.addWidget(btn)
+            self.mode_btns[mode] = btn
+        mode_row.addStretch(1)
+        panel_lay.addLayout(mode_row)
         self.suggest_scroll = QScrollArea(self)
         self.suggest_scroll.setWidgetResizable(True)
         self.suggest_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -765,9 +806,13 @@ class SuggestionsPage(QWidget):
         if inner.layout() is not None:
             inner.layout().activate()
         needed = inner.sizeHint().height() + 6  # rows
+        # plus every fixed row above the scroll area (the title row and
+        # the "Ask for:" style buttons), each with its layout spacing
         panel_lay = self.suggest_panel.layout()
-        item = panel_lay.itemAt(0)  # title row
-        if item is not None:
+        for i in range(panel_lay.count()):
+            item = panel_lay.itemAt(i)
+            if item is None or item.widget() is self.suggest_scroll:
+                continue
             needed += item.sizeHint().height() + panel_lay.spacing()
         bottom_min = 150  # keep a useful strip of source text visible
         top = max(60, min(needed, total - bottom_min))
@@ -895,6 +940,62 @@ class SuggestionsPage(QWidget):
         passages = [p for p in passages if p.strip()]
         if not passages:
             return
+        n = count or len(passages)
+        self._append_batch(
+            status="writing %d card%s for your highlighted text…"
+            % (n, "" if n == 1 else "s"),
+            label="Focused cards",
+            empty_hint=(
+                "The AI returned nothing for that selection — try a "
+                "slightly longer passage."
+            ),
+            focus=passages,
+            focus_cards=count,
+        )
+
+    def _generate_mode(self, mode: str) -> None:
+        """A batch in a chosen style (🎭 scenarios / ⚖️ principle),
+        appended to the suggestions.
+
+        Works from the whole current source, or - when the student has
+        🖍-picked passages - from those only; the Cards: count says
+        how many either way. The picks are left in place so the other
+        style button can be pressed for the same passages.
+        """
+        try:
+            title = qgen.MODES[mode]["title"]
+        except KeyError:
+            return
+        passages = [t for _, _, t in self._picked if t.strip()]
+        config = self._config_with_count()
+        n = int(config.get("qgen_max_cards", 4) or 4)
+        kwargs = {"mode": mode}
+        if passages:
+            kwargs["focus"] = passages
+            kwargs["focus_cards"] = n
+        self._append_batch(
+            status="writing %d %s%s…"
+            % (n, title, " for your picked text" if passages else ""),
+            label=title[:1].upper() + title[1:],
+            empty_hint=(
+                "The AI returned nothing in that style for this text — "
+                "try again, or pick a passage that states a rule."
+            ),
+            config=config,
+            **kwargs,
+        )
+
+    def _append_batch(
+        self,
+        status: str,
+        label: str,
+        empty_hint: str,
+        config=None,
+        **kwargs,
+    ) -> None:
+        """Generate extra cards from the current source in the
+        background and append them to the list (the rows already shown
+        stay). `kwargs` go to qgen_bakeoff.generate."""
         if self._busy or self._doc_running:
             tooltip("Still generating — one moment.", parent=self)
             return
@@ -904,13 +1005,10 @@ class SuggestionsPage(QWidget):
                 "No source text yet — snip a slide first.", parent=self
             )
             return
-        config = self._config_with_count()
+        if config is None:
+            config = self._config_with_count()
         self._busy = True
-        n = count or len(passages)
-        self._set_suggest_status(
-            "writing %d card%s for your highlighted text…"
-            % (n, "" if n == 1 else "s")
-        )
+        self._set_suggest_status(status)
         batch = self._batch_id
         # snapshot the provenance NOW, with the text the run uses: a
         # new snip landing mid-run moves _shown_image, and stamping at
@@ -918,9 +1016,7 @@ class SuggestionsPage(QWidget):
         image = self._shown_image
 
         def work():
-            return qgen_bakeoff.generate(
-                source, config, focus=passages, focus_cards=count
-            )
+            return qgen_bakeoff.generate(source, config, **kwargs)
 
         def done(fut) -> None:
             if self._doc_running or self._batch_id != batch:
@@ -931,18 +1027,14 @@ class SuggestionsPage(QWidget):
             try:
                 cards = fut.result()
             except Exception as exc:
-                self._set_suggest_status("focused cards failed — retry")
+                self._set_suggest_status("%s failed — retry" % label.lower())
                 tooltip(
-                    "Focused cards: %s" % exc, parent=self, period=6000
+                    "%s: %s" % (label, exc), parent=self, period=6000
                 )
                 return
             self._set_suggest_status("")
             if not cards:
-                tooltip(
-                    "The AI returned nothing for that selection — try "
-                    "a slightly longer passage.",
-                    parent=self,
-                )
+                tooltip(empty_hint, parent=self)
                 return
             for card in cards:
                 card["_image"] = image

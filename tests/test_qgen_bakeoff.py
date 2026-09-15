@@ -207,6 +207,28 @@ def test_emphasis_forwarded_only_when_set(alternate, monkeypatch):
     assert calls[-1] is None  # empty list is omitted entirely
 
 
+def test_mode_forwarded_only_when_set(alternate, monkeypatch):
+    calls = []
+
+    def fake(text, config, source="slide", mode=None, focus=None,
+             focus_cards=None):
+        calls.append((mode, focus, focus_cards))
+        return [{"front": "Q", "back": "A"}]
+
+    monkeypatch.setattr(qgen_bakeoff.qgen, "generate_cards", fake)
+    # a style button goes through the bake-off machinery like any run
+    card = qgen_bakeoff.generate("text", CFG, mode="scenarios")[0]
+    assert card["_model"] == "llama3.1:8b"
+    assert calls[-1] == ("scenarios", None, None)
+    # ...and combines with picked passages
+    qgen_bakeoff.generate(
+        "text", CFG, mode="principle", focus=["a passage"], focus_cards=3
+    )
+    assert calls[-1] == ("principle", ["a passage"], 3)
+    qgen_bakeoff.generate("text", CFG, mode=None)
+    assert calls[-1] == (None, None, None)
+
+
 def test_timings_recorded(fake_generate, alternate):
     qgen_bakeoff.generate("text", CFG)
     s = qgen_bakeoff._load()["models"]["llama3.1:8b"]

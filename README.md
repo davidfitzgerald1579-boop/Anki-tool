@@ -148,6 +148,13 @@ with screenshots, from install to your first AI cards;
 [`docs/hosted-llm.md`](docs/hosted-llm.md) explains how the "server"
 side works, what it costs, and the third option — renting a GPU box
 and running the model there yourself.
+Two buttons under the title ask for a particular kind of card from
+the same text: **🎭 Similar scenarios** writes fresh one-or-two-sentence
+fact patterns that turn on the same point of law (ideal for a snipped
+practice question and its explanation), and **⚖️ Principle, test or
+ratio** writes cards that ask you to identify and state the rule, test
+or ratio decidendi the text applies. Each adds a batch below the cards
+already shown.
 Each "Use →" opens the draft in its own window; the list stays behind
 so you can pick several. Cards added this way carry their source with
 them: while reviewing, a **🔍 Reveal source** button on the card back
