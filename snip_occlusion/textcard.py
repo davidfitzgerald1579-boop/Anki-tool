@@ -806,9 +806,13 @@ class SuggestionsPage(QWidget):
         if inner.layout() is not None:
             inner.layout().activate()
         needed = inner.sizeHint().height() + 6  # rows
+        # plus every fixed row above the scroll area (the title row and
+        # the "Ask for:" style buttons), each with its layout spacing
         panel_lay = self.suggest_panel.layout()
-        item = panel_lay.itemAt(0)  # title row
-        if item is not None:
+        for i in range(panel_lay.count()):
+            item = panel_lay.itemAt(i)
+            if item is None or item.widget() is self.suggest_scroll:
+                continue
             needed += item.sizeHint().height() + panel_lay.spacing()
         bottom_min = 150  # keep a useful strip of source text visible
         top = max(60, min(needed, total - bottom_min))

@@ -69,6 +69,7 @@ def test_prompt_mode_blocks_and_reminder_last():
     )
     assert "SIMILAR SCENARIOS" in p
     # the style block sits after the rules, before the JSON instruction
+    assert p.index("Rules:") < p.index("SIMILAR SCENARIOS")
     assert p.index("SIMILAR SCENARIOS") < p.index("Respond with ONLY")
     # the one-line reminder is the very last thing, after the focus block
     assert p.index("MUST-COVER") < p.index("Remember: fresh")
