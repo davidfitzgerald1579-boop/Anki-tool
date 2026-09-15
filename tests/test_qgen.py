@@ -60,6 +60,65 @@ def test_prompt_emphasis_block():
     assert "DIFFERENT COLOUR" not in qgen.build_prompt("text", 4)
 
 
+def test_prompt_mode_blocks_and_reminder_last():
+    p = qgen.build_prompt(
+        "A solicitor acts for co-defendants A and B.",
+        3,
+        focus=["acts for co-defendants"],
+        mode=qgen.MODE_SCENARIOS,
+    )
+    assert "SIMILAR SCENARIOS" in p
+    # the style block sits after the rules, before the JSON instruction
+    assert p.index("SIMILAR SCENARIOS") < p.index("Respond with ONLY")
+    # the one-line reminder is the very last thing, after the focus block
+    assert p.index("MUST-COVER") < p.index("Remember: fresh")
+    assert p.rstrip().endswith("the rule from the source.")
+    q = qgen.build_prompt("text", 2, mode=qgen.MODE_PRINCIPLE)
+    assert "NAME THE PRINCIPLE" in q and "ratio" in q
+    assert q.rstrip().endswith("with its elements.")
+    plain = qgen.build_prompt("text", 2)
+    assert "STYLE FOR THIS BATCH" not in plain and "Remember:" not in plain
+    assert qgen.build_prompt("text", 2, mode=None) == plain
+
+
+def test_unknown_mode_rejected_before_any_request(monkeypatch):
+    with pytest.raises(qgen.QGenError, match="Unknown card style"):
+        qgen.build_prompt("text", 2, mode="essay")
+
+    def boom(config, prompt):
+        raise AssertionError("must not reach the model")
+
+    monkeypatch.setattr(qgen, "_chat_ollama", boom)
+    with pytest.raises(qgen.QGenError, match="Unknown card style"):
+        qgen.generate_cards("text", {"qgen_feedback": False}, mode="essay")
+
+
+def test_generate_cards_mode_reaches_prompt_and_stamps_cards(monkeypatch):
+    prompts = []
+
+    def fake_chat(config, prompt):
+        prompts.append(prompt)
+        return (
+            '[{"front": "C instructs a solicitor who also acts for D. '
+            'D admits guilt. What must the solicitor do?", '
+            '"back": "Withdraw from both: the solicitor cannot act in '
+            'the best interests of either client."}]'
+        )
+
+    monkeypatch.setattr(qgen, "_chat_ollama", fake_chat)
+    cfg = {"qgen_provider": "ollama", "qgen_feedback": False,
+           "qgen_max_cards": 4}
+    text = (
+        "The solicitor must withdraw from representing both clients as "
+        "they are unable to act in the best interests of the clients."
+    )
+    cards = qgen.generate_cards(text, cfg, mode=qgen.MODE_SCENARIOS)
+    assert "SIMILAR SCENARIOS" in prompts[0]
+    assert cards[0]["_mode"] == qgen.MODE_SCENARIOS
+    cards = qgen.generate_cards(text, cfg)
+    assert "_mode" not in cards[0]
+
+
 def test_generate_cards_focus_cards_overrides_count(monkeypatch):
     prompts = []
 

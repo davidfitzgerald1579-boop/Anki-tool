@@ -78,6 +78,63 @@ def _example_lines(cards: list) -> list:
     return lines
 
 
+# Card styles the student can ask for on demand (the buttons under the
+# suggestions title). The default - no mode - is the general prompt
+# below; a mode adds an instruction block after the rules AND a one-line
+# reminder at the very end, where small models pay most attention.
+MODE_SCENARIOS = "scenarios"
+MODE_PRINCIPLE = "principle"
+MODES = {
+    MODE_SCENARIOS: {
+        "title": "similar scenarios",
+        "instruction": (
+            "STYLE FOR THIS BATCH - SIMILAR SCENARIOS. Every question is a "
+            "NEW, short fact pattern: one or two sentences, with different "
+            "people, roles and details from any scenario in the source, "
+            "that raises the SAME point of law the source explains. End "
+            "it with a direct question, e.g. \"What must the solicitor "
+            "do?\", \"Is B bound?\", \"Which principle applies and what "
+            "is the outcome?\". The answer gives the outcome for THAT "
+            "scenario and names the rule or principle that decides it, "
+            "in the words the source uses. The scenario's facts may be "
+            "invented; the law in the answer may not - it must be exactly "
+            "the position the source text states, and every card must "
+            "still turn on a rule found in the source. If the source is "
+            "itself a practice question, do not reuse its facts, its "
+            "answer options or its wrong answers: write fresh scenarios "
+            "that test the principle its explanation relies on."
+        ),
+        "reminder": (
+            "Remember: fresh one-or-two-sentence scenarios, each ending "
+            "in a question, answered with the outcome plus the rule from "
+            "the source."
+        ),
+    },
+    MODE_PRINCIPLE: {
+        "title": "principle, test or ratio cards",
+        "instruction": (
+            "STYLE FOR THIS BATCH - NAME THE PRINCIPLE. Every card asks "
+            "the student to IDENTIFY the legal rule, test or ratio "
+            "decidendi the source relies on, and to state it correctly. "
+            "Ask in forms like \"What is the rule that governs ...?\", "
+            "\"Which test decides whether ...?\", \"What is the ratio of "
+            "the case in which ...?\" or \"A solicitor ... . What principle "
+            "stops them from ...?\". The answer names the rule, test or "
+            "ratio (by the name or authority the source uses, if it gives "
+            "one) and sets out its elements, steps or limbs precisely, "
+            "including any condition or exception the source mentions. "
+            "Do not test the outcome of a particular set of facts; test "
+            "whether the student can say what the rule IS, where it comes "
+            "from and when it applies."
+        ),
+        "reminder": (
+            "Remember: each card asks the student to name and state the "
+            "rule, test or ratio the source applies, with its elements."
+        ),
+    },
+}
+
+
 def build_prompt(
     text: str,
     max_cards: int,
@@ -85,11 +142,13 @@ def build_prompt(
     source: str = "slide",
     focus=None,
     emphasis=None,
+    mode=None,
 ) -> str:
     """`focus` passages are must-cover; max_cards then means EXACTLY
     that many cards about them (one per passage when the counts match).
     `emphasis` lists words the slide printed in an accent colour - the
-    model is told to work them into the cards.
+    model is told to work them into the cards. `mode` is a MODES key
+    (or None for the general style).
     """
     if source == "document":
         intro = "Extract from the student's course materials:"
@@ -143,21 +202,52 @@ def build_prompt(
         "- Prefer testable, legally significant material: rules, tests, "
         "time limits, procedures, exceptions. Skip headings and "
         "boilerplate. Fix obvious OCR typos silently.\n\n"
+        "%s"
         "Respond with ONLY a JSON array, no other text:\n"
         '[{"front": "...", "back": "...", "notes": "..."}, ...]\n'
         "\"notes\" is optional brief context (an authority, a caveat) "
         "shown small under the answer; omit it when there is nothing "
         "worth adding.\n\n"
         "%s (write cards about THIS and nothing else):\n"
-        "---\n%s\n---%s%s"
+        "---\n%s\n---%s%s%s"
     ) % (
         feedback_block,
         max_cards,
+        _mode_block(mode),
         intro.rstrip(":"),
         text.strip(),
         _emphasis_block(emphasis),
         _focus_block(focus, max_cards),
+        _mode_reminder(mode),
     )
+
+
+def _mode_spec(mode) -> dict | None:
+    if not mode:
+        return None
+    try:
+        return MODES[mode]
+    except KeyError:
+        raise QGenError(
+            "Unknown card style %r. Use one of: %s."
+            % (mode, ", ".join(sorted(MODES)))
+        )
+
+
+def _mode_block(mode) -> str:
+    """The style instructions, placed after the general rules."""
+    spec = _mode_spec(mode)
+    if spec is None:
+        return ""
+    return spec["instruction"] + "\n\n"
+
+
+def _mode_reminder(mode) -> str:
+    """One line at the very end: the last thing the model reads."""
+    spec = _mode_spec(mode)
+    if spec is None:
+        return ""
+    return "\n\n" + spec["reminder"]
 
 
 def _emphasis_block(emphasis) -> str:
@@ -241,15 +331,18 @@ def generate_cards(
     focus=None,
     focus_cards=None,
     emphasis=None,
+    mode=None,
 ) -> list:
     """Blocking call: source text -> [{front, back}, ...]. Raises QGenError.
 
     `focus` is an optional list of passages the user highlighted; the
     model is told to write exactly one card per passage - or exactly
     `focus_cards` cards in total about them, when that is given.
+    `mode` picks a card style from MODES (None = the general style).
     """
     if not text.strip():
         raise QGenError("There is no snip text to work from.")
+    _mode_spec(mode)  # reject an unknown style before any network call
     if focus:
         max_cards = int(focus_cards) if focus_cards else len(focus)
     else:
@@ -261,6 +354,7 @@ def generate_cards(
         source=source,
         focus=focus,
         emphasis=emphasis,
+        mode=mode,
     )
     cfg = dict(config)
     cfg[_REPLY_CARDS_KEY] = max_cards
@@ -282,6 +376,8 @@ def generate_cards(
         # kept locally so the 🔎 button can show where a card came from;
         # never sent anywhere and stripped before feedback storage
         card["_source"] = text
+        if mode:
+            card["_mode"] = mode  # informational; stripped like _source
     return cards
 
 
