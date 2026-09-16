@@ -18,6 +18,10 @@
   window. Default: `"Ctrl+Shift+O"`.
 - `shortcut_text_card`: shortcut for the simple front/back text card
   dialog. Default: `"Ctrl+Shift+T"`.
+- `text_card_stay_on_top`: keep that text card window above every
+  other program, so it can sit in a small box beside your notes while
+  you read. Toggled by the "📌 Stay on top" button in the window; the
+  window also remembers its size and position. Default: `true`.
 - `close_after_add`: close the dialog after adding cards instead of
   clearing it for the next snip. Default: `false`.
 - `default_mode`: `"hag1"` (Hide All, Guess One) or `"hog1"`

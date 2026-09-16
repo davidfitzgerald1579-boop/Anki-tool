@@ -123,6 +123,7 @@ class TextCardPanel(QWidget):
                 self.deck_box.setCurrentIndex(i)
         deck_row.addWidget(self.deck_box, 1)
         outer.addLayout(deck_row)
+        self.deck_row = deck_row  # host windows may add controls here
 
         if self.show_source:
             # source text on top, fields below, divider draggable
@@ -192,9 +193,10 @@ class TextCardPanel(QWidget):
         qconnect(self.size_box.textActivated, self._size)
         bar.addWidget(self.size_box)
         bar.addStretch(1)
-        snip_btn = QPushButton("📋 Copy text from previous snip", self)
+        snip_btn = QPushButton("📋 Snip text", self)
         snip_btn.setToolTip(
-            "Insert the OCR text of your most recent snip into the Front"
+            "Copy text from the previous snip: insert the OCR text of "
+            "your most recent snip into the Front"
         )
         qconnect(snip_btn.clicked, self._copy_previous_snip)
         bar.addWidget(snip_btn)
@@ -1711,8 +1713,31 @@ class PoppedTextEditor(QDialog):
         lay.addWidget(self.panel)
 
 
+_GEOM_KEY = "snipOcclusionTextCard"  # remembered size and position
+_DEFAULT_SIZE = (440, 520)  # a small box, first time only
+_STAY_ON_TOP_KEY = "text_card_stay_on_top"
+
+
+def _write_user_config(**changes) -> None:
+    """Persist a few keys into the add-on's user config, best-effort."""
+    try:
+        module = __name__.split(".")[0]
+        user_cfg = mw.addonManager.getConfig(module) or {}
+        user_cfg.update(changes)
+        mw.addonManager.writeConfig(module, user_cfg)
+    except Exception:
+        pass
+
+
 class TextCardDialog(QDialog):
-    """Standalone window with just the card fields (no suggestions)."""
+    """Standalone window with just the card fields (no suggestions).
+
+    Built to sit BESIDE your notes: it is its own top-level window
+    (not owned by Anki's main window, so it neither hides when Anki is
+    minimised nor has to stay above it), it can be shrunk to a small
+    box, it remembers its size and position, and 📌 keeps it above
+    every other application while you read.
+    """
 
     def __init__(
         self,
@@ -1723,10 +1748,13 @@ class TextCardDialog(QDialog):
         on_discard=None,
         original_card=None,
     ):
-        super().__init__(parent or mw)
+        # deliberately parentless: an owned window follows the owner
+        # (minimises with Anki on Windows, always floats above it) and
+        # cannot be parked next to another program's window
+        super().__init__(None)
         self._on_discard = on_discard
         self.setWindowTitle(ADDON_NAME + " — Text Card")
-        self.setMinimumSize(560, 560)
+        self.setMinimumSize(380, 360)
         self.setWindowFlags(
             self.windowFlags()
             | Qt.WindowType.WindowMinimizeButtonHint
@@ -1739,7 +1767,26 @@ class TextCardDialog(QDialog):
         self.panel = TextCardPanel(
             self, show_source=False, standalone_shortcuts=True
         )
+        # compact minimums so the box can be small next to the notes
+        self.panel.front.setMinimumHeight(48)
+        self.panel.back.setMinimumHeight(56)
+        self.panel.notes.setMinimumHeight(32)
         lay.addWidget(self.panel)
+        self.pin_btn = QToolButton(self)
+        self.pin_btn.setText("📌 Stay on top")
+        self.pin_btn.setCheckable(True)
+        self.pin_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.pin_btn.setToolTip(
+            "Keep this window above every other program, so it stays "
+            "visible beside your notes while you read. Remembered for "
+            "next time."
+        )
+        self.panel.deck_row.addWidget(self.pin_btn)
+        on_top = bool(get_config().get(_STAY_ON_TOP_KEY, True))
+        self.pin_btn.setChecked(on_top)
+        self._apply_stay_on_top(on_top)
+        qconnect(self.pin_btn.toggled, self._pin_toggled)
+        self._restore_geometry()
         if front_text:
             self.panel.front.insertPlainText(front_text)
         if back_text:
@@ -1783,6 +1830,45 @@ class TextCardDialog(QDialog):
                     pass
 
             self.panel.on_added = learn_corrected
+
+    # ------------------------------------------------- window behaviour
+
+    def _apply_stay_on_top(self, on: bool) -> None:
+        was_visible = self.isVisible()
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, on)
+        if was_visible:
+            self.show()  # changing flags recreates the native window
+
+    def _pin_toggled(self, on: bool) -> None:
+        self._apply_stay_on_top(on)
+        _write_user_config(**{_STAY_ON_TOP_KEY: bool(on)})
+
+    def _restore_geometry(self) -> None:
+        """Reopen where it was last parked (per Anki profile)."""
+        try:
+            from aqt.utils import restoreGeom
+
+            try:
+                restoreGeom(self, _GEOM_KEY, default_size=_DEFAULT_SIZE)
+            except TypeError:  # older Anki: no default_size parameter
+                self.resize(*_DEFAULT_SIZE)
+                restoreGeom(self, _GEOM_KEY)
+        except Exception:
+            self.resize(*_DEFAULT_SIZE)
+
+    def _save_geometry(self) -> None:
+        try:
+            from aqt.utils import saveGeom
+
+            saveGeom(self, _GEOM_KEY)
+        except Exception:
+            pass
+
+    def hideEvent(self, event) -> None:
+        # covers close, minimise-then-quit and Anki shutting the
+        # window itself - the last position always wins
+        self._save_geometry()
+        super().hideEvent(event)
 
     def closeEvent(self, event) -> None:
         if self.panel.has_unsaved_text():
