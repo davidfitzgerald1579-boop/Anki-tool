@@ -4,6 +4,19 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.29.1 — 2026-09-16
+
+- **The Ctrl+Shift+T text card window can live beside your notes.**
+  It is now its own top-level window rather than one owned by Anki's
+  main window, so it no longer minimises with Anki, no longer has to
+  float above it, and can be parked next to another program (or on
+  another screen). A **📌 Stay on top** button (on by default;
+  `text_card_stay_on_top`) keeps it above every other application
+  while you read; the window shrinks to a small box (about 400 × 380)
+  and remembers its size and position between openings, per profile.
+  The formatting bar's "Copy text from previous snip" button is now
+  "📋 Snip text" so the box can be narrow.
+
 ## v0.29.0 — 2026-09-15
 
 - **Ask the AI for a particular kind of card.** Two buttons under the

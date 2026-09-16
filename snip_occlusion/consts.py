@@ -117,6 +117,7 @@ DEFAULT_CONFIG = {
     # attach the full snip to text cards made from AI suggestions, shown
     # on the back behind a "Reveal source" button
     "text_card_attach_source": True,
+    "text_card_stay_on_top": True,
 }
 
 # Distinct colors used for group badges in the editor

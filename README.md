@@ -171,8 +171,11 @@ Studio, llama.cpp, Jan, vLLM) works too — see
 
 **Text cards in your own words:** press **Ctrl+Shift+T** (or the 📝
 button in the editor) for a minimal Front/Back/Notes card with
-bold/italic/underline and font size; "Copy text from previous snip"
-drops your last snip's OCR text onto the front to rephrase.
+bold/italic/underline and font size; "📋 Snip text" drops your last
+snip's OCR text onto the front to rephrase. The window is made to sit
+beside your notes: it is independent of Anki's main window, shrinks
+to a small box, remembers where you parked it, and **📌 Stay on top**
+(on by default) keeps it above every other program while you read.
 
 **During review:** press **Delete** (or right-click → "Delete this
 card") to remove a bad card instantly; **Shift+Delete** removes ALL
