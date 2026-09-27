@@ -102,8 +102,9 @@
   you write yourself — a "✍️ Your question" the AI answered and you
   kept, or a whole card added from the Write Card view or the
   Ctrl+Shift+T window — are stored in a list of their own that kept
-  suggestions never crowd out, take priority in every prompt, and are
-  labelled there as the style to imitate most closely (only new
+  suggestions never crowd out, take the larger share of the examples
+  in every prompt (kept suggestions always keep at least one slot),
+  and are labelled there as the style to imitate most closely (only new
   cards; a redeploy of an existing card teaches nothing, and the
   "Exclude from LLM teaching" box skips a one-off). Recent examples
   of each kind are folded into future prompts as form-to-copy /

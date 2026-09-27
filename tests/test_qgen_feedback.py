@@ -113,7 +113,8 @@ def test_own_cards_take_priority_over_kept_and_seed(_isolated_store):
     assert [c["front"] for c in kept] == ["kept2", "mine", "myQ"]
     assert kept[1]["own"] == "full" and kept[2]["own"] == "front"
     assert "own" not in kept[0]
-    # enough own cards -> they are the only positives
+    # plenty of own cards -> they take the larger share, but a kept
+    # suggestion always keeps one slot so Use →/★ verdicts still count
     for i in range(3):
         qgen_feedback.record(
             {"front": "own%d" % i, "back": "A"},
@@ -121,7 +122,41 @@ def test_own_cards_take_priority_over_kept_and_seed(_isolated_store):
             own=qgen_feedback.OWN_FULL,
         )
     kept, _ = qgen_feedback.examples({"qgen_feedback_examples": 3})
-    assert [c["front"] for c in kept] == ["own0", "own1", "own2"]
+    assert [c["front"] for c in kept] == ["kept2", "own1", "own2"]
+    kept, _ = qgen_feedback.examples({"qgen_feedback_examples": 4})
+    assert [c["front"] for c in kept] == ["kept2", "own0", "own1", "own2"]
+    # a single slot goes to the student's own card
+    kept, _ = qgen_feedback.examples({"qgen_feedback_examples": 1})
+    assert [c["front"] for c in kept] == ["own2"]
+
+
+def test_own_and_kept_take_over_each_others_unused_room(_isolated_store):
+    seed = [{"front": "S%d" % i, "back": "A"} for i in range(10)]
+    (_isolated_store / "seed.json").write_text(json.dumps(seed))
+    # no own cards at all: behaviour is exactly as before
+    for i in range(6):
+        qgen_feedback.record(
+            {"front": "kept%d" % i, "back": "A"}, qgen_feedback.KEPT
+        )
+    kept, _ = qgen_feedback.examples({"qgen_feedback_examples": 4})
+    assert [c["front"] for c in kept] == ["kept2", "kept3", "kept4", "kept5"]
+    # one own card: it takes one slot, kept fills the other three
+    qgen_feedback.record(
+        {"front": "mine", "back": "A"}, qgen_feedback.KEPT, own="full"
+    )
+    kept, _ = qgen_feedback.examples({"qgen_feedback_examples": 4})
+    assert [c["front"] for c in kept] == ["kept3", "kept4", "kept5", "mine"]
+    # no kept cards: own cards use every slot, seed only pads a shortfall
+    qgen_feedback.unrecord({"front": "mine", "back": "A"})
+    for i in range(6):
+        qgen_feedback.unrecord({"front": "kept%d" % i, "back": "A"})
+    for i in range(2):
+        qgen_feedback.record(
+            {"front": "own%d" % i, "back": "A"}, qgen_feedback.KEPT, own="full"
+        )
+    kept, _ = qgen_feedback.examples({"qgen_feedback_examples": 4})
+    assert [c["front"] for c in kept[2:]] == ["own0", "own1"]
+    assert all(c["front"].startswith("S") for c in kept[:2])
 
 
 def test_own_cards_have_their_own_list_and_cap():
@@ -153,13 +188,14 @@ def test_own_verdict_moves_between_lists_and_unrecords():
     qgen_feedback.unrecord(card)
     assert qgen_feedback.examples({}) == ([], [])
     # own marker is ignored for a BAD verdict, unknown markers count
-    # as hand-written, and a falsy one is a plain keep
+    # as hand-written, and any falsy one is a plain keep
     qgen_feedback.record(card, qgen_feedback.BAD, own="full")
     assert qgen_feedback.examples({})[1] == [card]
     qgen_feedback.record(card, qgen_feedback.KEPT, own=True)
     assert qgen_feedback.examples({})[0] == [dict(card, own="full")]
-    qgen_feedback.record(card, qgen_feedback.KEPT, own=None)
-    assert qgen_feedback.examples({})[0] == [card]
+    for falsy in (None, "", False, 0):
+        qgen_feedback.record(card, qgen_feedback.KEPT, own=falsy)
+        assert qgen_feedback.examples({})[0] == [card], repr(falsy)
 
 
 def test_own_examples_get_their_own_prompt_block():

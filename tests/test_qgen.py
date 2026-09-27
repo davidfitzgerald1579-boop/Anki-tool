@@ -140,6 +140,8 @@ def test_answer_question_keeps_the_students_front(monkeypatch):
 
     def fake_chat(config, prompt):
         prompts.append(prompt)
+        # one card, budgeted like two: a numbered procedure plus a note
+        assert config[qgen._REPLY_CARDS_KEY] == 2
         return (
             '[{"front": "A reworded question?", "back": "Withdraw from '
             'both clients.", "notes": "Conflict of interest"}]'
@@ -158,7 +160,6 @@ def test_answer_question_keeps_the_students_front(monkeypatch):
     assert card["_own"] == "front"
     assert card["_source"] == "The solicitor must withdraw from both clients."
     assert "What must the solicitor do?" in prompts[0]
-    # the reply cap is sized for one card
     assert cfg.get(qgen._REPLY_CARDS_KEY) is None  # caller's config untouched
 
 

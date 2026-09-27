@@ -103,7 +103,9 @@ def record(card: dict, verdict: str, own=None) -> None:
     """
     if verdict not in (KEPT, BAD):
         return
-    if own not in (None, OWN_FRONT, OWN_FULL):
+    if not own:
+        own = None  # "", False, 0: an ordinary kept suggestion
+    elif own not in (OWN_FRONT, OWN_FULL):
         own = OWN_FULL  # any other truthy marker: treat as hand-written
     entry = {
         "front": str(card.get("front") or "").strip()[:_MAX_FIELD_CHARS],
@@ -205,11 +207,19 @@ def examples(config: dict) -> tuple[list, list]:
         data = _load()
     # cap positives at n TOTAL: small models start writing cards about
     # the example topics when shown too many, and every example costs
-    # prompt-processing time. The student's own cards take priority,
-    # then live "Use →"/★ cards; a rotating seed sample fills whatever
-    # room is left.
-    own = data[OWN][-n:]
-    kept = data[KEPT][-max(0, n - len(own)):] if len(own) < n else []
+    # prompt-processing time. The student's own cards take the larger
+    # share (about two thirds), live "Use →"/★ cards keep at least one
+    # slot so those verdicts never stop mattering, either side takes
+    # over room the other cannot fill, and a rotating seed sample fills
+    # whatever is left.
+    own_all, kept_all = data[OWN], data[KEPT]
+    own_slots = max(1, n - max(1, n // 3)) if n > 1 else 1
+    kept_room = max(0, n - own_slots)
+    kept = kept_all[-kept_room:] if kept_room and kept_all else []
+    own_room = n - len(kept)
+    own = own_all[-own_room:] if own_room > 0 and own_all else []
+    if len(own) + len(kept) < n and len(kept_all) > len(kept):
+        kept = kept_all[-min(len(kept_all), n - len(own)):]
     positives = kept + own
     room = n - len(positives)
     if room > 0:

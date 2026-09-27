@@ -18,11 +18,13 @@ installed version is shown as `human_version` in
   learning loop keeps a separate list of your own cards — ones you
   wrote from scratch in the Write Card view or the Ctrl+Shift+T
   window, and ones whose question you wrote and the AI answered —
-  that kept suggestions can never crowd out. They take priority in
-  every prompt and appear in their own block, labelled as the best
-  evidence of the style you want and told to take precedence over
-  kept suggestions where they differ. Only new cards count: a
-  redeploy of an existing card teaches nothing.
+  that kept suggestions can never crowd out. They take the larger
+  share of the examples in every prompt (kept suggestions always keep
+  at least one slot, so Use → and ★ still count) and appear in their
+  own block, labelled as the best evidence of the style you want and
+  told to take precedence over kept suggestions where they differ.
+  Only new cards count: a redeploy of an existing card teaches
+  nothing.
 - **"Exclude from LLM teaching"** — a box next to Add Card, unticked
   by default, for one-off cards that should not become style
   examples. It unticks itself after each add. On a suggestion you are
