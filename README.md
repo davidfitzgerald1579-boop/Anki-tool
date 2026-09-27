@@ -154,7 +154,13 @@ fact patterns that turn on the same point of law (ideal for a snipped
 practice question and its explanation), and **⚖️ Principle, test or
 ratio** writes cards that ask you to identify and state the rule, test
 or ratio decidendi the text applies. Each adds a batch below the cards
-already shown.
+already shown. Know the question you want? Type it into **✍️ Your
+question** and press Enter: the AI writes the back from the source
+text, keeping your wording, and the card joins the list.
+Every card you write yourself — a question the AI answered, or a whole
+card from the Write Card view or Ctrl+Shift+T — teaches the AI with
+more weight than a kept suggestion; tick **Exclude from LLM teaching**
+next to Add Card for a one-off that shouldn't.
 Each "Use →" opens the draft in its own window; the list stays behind
 so you can pick several. Cards added this way carry their source with
 them: while reviewing, a **🔍 Reveal source** button on the card back

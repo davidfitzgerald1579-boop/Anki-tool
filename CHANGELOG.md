@@ -4,6 +4,32 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.30.0 — 2026-09-27
+
+- **Write the question, let the AI answer it.** A "✍️ Your question"
+  box under the Suggested Cards title: type the front of a card and
+  press Enter (or ✨ Answer it) and the AI writes the back — and a
+  note, if worth it — from the source text, or from your 🖍-picked
+  passages. It must keep your wording and answer only from the
+  source; if the source does not answer the question it says so
+  instead of guessing. The card joins the list tagged "✍️ your
+  question · AI answer", with the usual Use → / ★ / ✗ / Fix buttons.
+- **Cards you write yourself now teach the AI with more weight.** The
+  learning loop keeps a separate list of your own cards — ones you
+  wrote from scratch in the Write Card view or the Ctrl+Shift+T
+  window, and ones whose question you wrote and the AI answered —
+  that kept suggestions can never crowd out. They take the larger
+  share of the examples in every prompt (kept suggestions always keep
+  at least one slot, so Use → and ★ still count) and appear in their
+  own block, labelled as the best evidence of the style you want and
+  told to take precedence over kept suggestions where they differ.
+  Only new cards count: a redeploy of an existing card teaches
+  nothing.
+- **"Exclude from LLM teaching"** — a box next to Add Card, unticked
+  by default, for one-off cards that should not become style
+  examples. It unticks itself after each add. On a suggestion you are
+  using, ticking it also forgets what "Use →" recorded.
+
 ## v0.29.1 — 2026-09-16
 
 - **The Ctrl+Shift+T text card window can live beside your notes.**

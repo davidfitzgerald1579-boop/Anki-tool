@@ -68,6 +68,12 @@ class EmptyReplyError(QGenError):
     """
 
 
+class NoCardListError(EmptyReplyError):
+    """The reply held no JSON array at all - cut off at the token cap,
+    a bare object, or prose. Still "no cards" for batch callers, but
+    not evidence that the source had nothing to say."""
+
+
 def _example_lines(cards: list) -> list:
     lines = []
     for c in cards:
@@ -76,6 +82,47 @@ def _example_lines(cards: list) -> list:
             line += " | Notes: %s" % c["notes"]
         lines.append(line)
     return lines
+
+
+def _feedback_block(feedback) -> str:
+    """The style examples, placed FIRST in every prompt.
+
+    Three tiers, weakest to strongest: cards the student kept from
+    earlier suggestions, cards they WROTE THEMSELVES (own="front" for
+    a question they typed and the AI answered, own="full" for a whole
+    card), and cards they flagged as badly written. Own cards are the
+    best evidence of the style they want, so they are set apart and
+    the model is told to give them precedence.
+    """
+    kept, bad = feedback or ([], [])
+    own = [c for c in kept if c.get("own")]
+    kept = [c for c in kept if not c.get("own")]
+    block = ""
+    if kept:
+        block += (
+            "Style examples - cards this student kept, from OTHER, "
+            "UNRELATED topics. Copy their form, structure and depth "
+            "only; their subject matter is off-limits:\n"
+            + "\n".join(_example_lines(kept))
+            + "\n\n"
+        )
+    if own:
+        block += (
+            "Cards this student WROTE THEMSELVES, from OTHER, UNRELATED "
+            "topics - the best evidence of the style they want. Match "
+            "their wording, length, structure and depth as closely as "
+            "you can; where these differ from the kept cards above, "
+            "these take precedence. Their subject matter is off-limits:"
+            "\n" + "\n".join(_example_lines(own)) + "\n\n"
+        )
+    if bad:
+        block += (
+            "The student flagged these earlier suggestions as poorly "
+            "written. Identify what makes them weak and steer away from "
+            "those habits - they show failure modes to avoid, not banned "
+            "topics:\n" + "\n".join(_example_lines(bad)) + "\n\n"
+        )
+    return block
 
 
 # Card styles the student can ask for on demand (the buttons under the
@@ -154,26 +201,10 @@ def build_prompt(
         intro = "Extract from the student's course materials:"
     else:
         intro = "Slide text (from OCR, may contain small errors):"
-    kept, bad = feedback or ([], [])
     # examples go FIRST and the source text LAST: models anchor on the
     # most recent context, and small models otherwise start writing
     # cards about the example topics instead of the source
-    feedback_block = ""
-    if kept:
-        feedback_block += (
-            "Style examples - cards this student kept, from OTHER, "
-            "UNRELATED topics. Copy their form, structure and depth "
-            "only; their subject matter is off-limits:\n"
-            + "\n".join(_example_lines(kept))
-            + "\n\n"
-        )
-    if bad:
-        feedback_block += (
-            "The student flagged these earlier suggestions as poorly "
-            "written. Identify what makes them weak and steer away from "
-            "those habits - they show failure modes to avoid, not banned "
-            "topics:\n" + "\n".join(_example_lines(bad)) + "\n\n"
-        )
+    feedback_block = _feedback_block(feedback)
     return (
         "You are helping a UK law student prepare for the SQE by turning "
         "study text into Anki flashcards.\n\n"
@@ -220,6 +251,148 @@ def build_prompt(
         _focus_block(focus, max_cards),
         _mode_reminder(mode),
     )
+
+
+def build_answer_prompt(
+    question: str,
+    text: str,
+    feedback=None,
+    source: str = "slide",
+    focus=None,
+    emphasis=None,
+) -> str:
+    """The student wrote the FRONT; the model writes only the back.
+
+    Same style examples and rules as build_prompt, the source text
+    last, and the question - the thing to answer - at the very end.
+    """
+    if source == "document":
+        intro = "Extract from the student's course materials"
+    else:
+        intro = "Slide text (from OCR, may contain small errors)"
+    return (
+        "You are helping a UK law student prepare for the SQE by turning "
+        "study text into Anki flashcards.\n\n"
+        "%s"
+        "The student has written the FRONT of a flashcard themselves. "
+        "Write the BACK for it - and, if genuinely useful, a brief note "
+        "- from the source text below.\n"
+        "Rules:\n"
+        "- The answer must come from the source text below. If the "
+        "source text does not answer the question, return an empty "
+        "array rather than guessing or drawing on general knowledge.\n"
+        "- Give the legal position precisely: \"Yes, but...\" / "
+        "\"No, unless...\" where the law is conditional; numbered steps "
+        "for procedures. Answer exactly what was asked, no more.\n"
+        "- Cite a case, statute, section number or year ONLY if it "
+        "appears word-for-word in the source text. Never add citations "
+        "from memory; if the source names no authority, cite nothing.\n"
+        "- Keep the student's question EXACTLY as written - do not "
+        "reword, shorten or answer a different question.\n\n"
+        "Respond with ONLY a JSON array holding this one card, no other "
+        "text:\n"
+        '[{"front": "<the question, unchanged>", "back": "...", '
+        '"notes": "..."}]\n'
+        "\"notes\" is optional brief context (an authority, a caveat) "
+        "shown small under the answer; omit it when there is nothing "
+        "worth adding.\n\n"
+        "%s:\n"
+        "---\n%s\n---%s%s\n\n"
+        "The student's question (answer THIS, from the source text "
+        "above):\n%s"
+    ) % (
+        _feedback_block(feedback),
+        intro,
+        text.strip(),
+        _emphasis_block(emphasis),
+        _answer_focus_block(focus),
+        " ".join(question.split()),
+    )
+
+
+def _answer_focus_block(focus) -> str:
+    if not focus:
+        return ""
+    numbered = "\n".join(
+        "%d. %s" % (i, " ".join(p.split()))
+        for i, p in enumerate(focus, 1)
+    )
+    return (
+        "\n\nThe student highlighted these passages from the source "
+        "text as the ones the answer should come from; use the rest of "
+        "the source only as context:\n%s" % numbered
+    )
+
+
+def answer_question(
+    question: str,
+    text: str,
+    config: dict,
+    source: str = "slide",
+    focus=None,
+    emphasis=None,
+) -> dict:
+    """Blocking call: the student's question + source text -> one card
+    {front (the question, verbatim), back, notes?}. Raises QGenError;
+    EmptyReplyError when the source does not answer the question.
+    """
+    question = " ".join((question or "").split())
+    if not question:
+        raise QGenError("Type the front of the card first.")
+    if not text.strip():
+        raise QGenError("There is no snip text to work from.")
+    prompt = build_answer_prompt(
+        question,
+        text,
+        feedback=qgen_feedback.examples(config),
+        source=source,
+        focus=focus,
+        emphasis=emphasis,
+    )
+    cfg = dict(config)
+    # one card, but its back may be a full numbered procedure plus a
+    # note: budget it like two ordinary cards
+    cfg[_REPLY_CARDS_KEY] = 2
+    try:
+        target = qgen_providers.resolve(cfg)
+    except qgen_providers.UnknownProvider as exc:
+        raise QGenError(
+            'Unknown "qgen_provider" %r in the add-on config. '
+            "Use one of: %s."
+            % (str(exc), ", ".join(qgen_providers.valid_providers()))
+        )
+    if target.api == qgen_providers.API_OLLAMA:
+        reply = _chat_ollama(cfg, prompt)
+    else:
+        reply = _chat_openai_compatible(cfg, prompt)
+    try:
+        cards = parse_cards(reply)
+    except NoCardListError:
+        raise QGenError(
+            "The AI reply held no card (it may have been cut off) - "
+            "try again."
+        )
+    except EmptyReplyError:
+        # an actual [] - the model followed the rule for a question
+        # the source does not answer
+        raise EmptyReplyError(
+            "The source text does not seem to answer that question."
+        )
+    card = cards[0]
+    card["front"] = question  # the student's wording, whatever came back
+    # the student's own question is never "invented": verify only what
+    # the model wrote (the back and the note)
+    probe = {"front": "", "back": card["back"]}
+    if card.get("notes"):
+        probe["notes"] = card["notes"]
+    _verify_references([probe], text)
+    if "notes" not in probe:
+        card.pop("notes", None)
+    if probe.get("_warn"):
+        card["_warn"] = probe["_warn"]
+    card["_source"] = text
+    card["_own"] = qgen_feedback.OWN_FRONT  # the student wrote the front
+    return card
 
 
 def _mode_spec(mode) -> dict | None:
@@ -302,7 +475,7 @@ def parse_cards(raw: str) -> list:
     start = raw.find("[")
     end = raw.rfind("]")
     if start == -1 or end == -1 or end <= start:
-        raise EmptyReplyError("The AI reply contained no card list.")
+        raise NoCardListError("The AI reply contained no card list.")
     try:
         data = json.loads(raw[start : end + 1])
     except ValueError as exc:

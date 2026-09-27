@@ -8,10 +8,18 @@ Three verdicts exist on a suggestion, with different meanings:
                                        says nothing about card style)
   "👎"     the card is badly written -> saved as a negative style example
 
-Recent examples of both lists are folded into future generation prompts,
-framed as form-to-copy / habits-to-avoid rather than hard bans. The
-model's weights never change - this is prompt steering, the practical
-way to personalise a local model - but the effect compounds with use.
+Cards the student writes THEMSELVES are the strongest signal of what
+they want and live in a list of their own ("own"), never crowded out
+by kept suggestions: a card whose front they typed and the AI answered
+(own="front"), or one they wrote from scratch (own="full"). They take
+priority in the prompt and are labelled there as the style to imitate
+most closely.
+
+Recent examples of these lists are folded into future generation
+prompts, framed as form-to-copy / habits-to-avoid rather than hard
+bans. The model's weights never change - this is prompt steering, the
+practical way to personalise a local model - but the effect compounds
+with use.
 
 The positive list is seeded from qgen_seed.json (bundled, drawn from the
 user's real deck) so the very first generation already imitates their
@@ -36,6 +44,9 @@ _MAX_FIELD_CHARS = 300
 
 KEPT = "kept"
 BAD = "bad"
+OWN = "own"  # cards the student wrote (whole, or the front of)
+OWN_FRONT = "front"  # the student wrote the question, the AI the answer
+OWN_FULL = "full"  # the student wrote the whole card
 PHANTOMS = "phantom_refs"  # references the model has invented before
 _MAX_PHANTOMS = 200
 
@@ -57,10 +68,11 @@ def _load() -> dict:
         return {
             KEPT: list(data.get(KEPT) or []),
             BAD: list(data.get(BAD) or []),
+            OWN: list(data.get(OWN) or []),
             PHANTOMS: list(data.get(PHANTOMS) or []),
         }
     except Exception:
-        return {KEPT: [], BAD: [], PHANTOMS: []}
+        return {KEPT: [], BAD: [], OWN: [], PHANTOMS: []}
 
 
 def _save(data: dict) -> None:
@@ -81,13 +93,20 @@ def _load_seed() -> list:
         return []
 
 
-def record(card: dict, verdict: str) -> None:
+def record(card: dict, verdict: str, own=None) -> None:
     """Remember a kept ("Use →") or bad ("👎") suggestion.
 
-    Neutral discards must simply not call this.
+    Neutral discards must simply not call this. `own` marks a kept
+    card the student wrote themselves - OWN_FULL for the whole card,
+    OWN_FRONT when they wrote the question and the AI the answer -
+    which goes to the higher-priority "own" list instead of "kept".
     """
     if verdict not in (KEPT, BAD):
         return
+    if not own:
+        own = None  # "", False, 0: an ordinary kept suggestion
+    elif own not in (OWN_FRONT, OWN_FULL):
+        own = OWN_FULL  # any other truthy marker: treat as hand-written
     entry = {
         "front": str(card.get("front") or "").strip()[:_MAX_FIELD_CHARS],
         "back": str(card.get("back") or "").strip()[:_MAX_FIELD_CHARS],
@@ -96,18 +115,22 @@ def record(card: dict, verdict: str) -> None:
         entry["notes"] = str(card["notes"]).strip()[:_MAX_FIELD_CHARS]
     if not entry["front"] or not entry["back"]:
         return
+    target = verdict
+    if verdict == KEPT and own:
+        entry["own"] = own
+        target = OWN
     with _lock:
         data = _load()
         # a card lives in at most one list, once (latest verdict wins)
-        for lst in (data[KEPT], data[BAD]):
+        for lst in (data[KEPT], data[BAD], data[OWN]):
             lst[:] = [
                 c
                 for c in lst
                 if (c.get("front"), c.get("back"))
                 != (entry["front"], entry["back"])
             ]
-        data[verdict].append(entry)
-        data[verdict] = data[verdict][-_MAX_STORED:]
+        data[target].append(entry)
+        data[target] = data[target][-_MAX_STORED:]
         _save(data)
 
 
@@ -124,7 +147,7 @@ def unrecord(card: dict) -> None:
     with _lock:
         data = _load()
         changed = False
-        for lst in (data[KEPT], data[BAD]):
+        for lst in (data[KEPT], data[BAD], data[OWN]):
             before = len(lst)
             lst[:] = [
                 c
@@ -165,9 +188,12 @@ def phantom_refs() -> list:
 def examples(config: dict) -> tuple[list, list]:
     """(positive style examples, negative style examples) for the prompt.
 
-    Positives are a rotating random sample of the bundled seed plus the
-    most recent live "Use →" cards; negatives are the most recent "👎"
-    cards. Both empty when the feature is off.
+    Positives, in ascending priority (the prompt lists them in this
+    order, the most important last): a rotating random sample of the
+    bundled seed, the most recent live "Use →" cards, and the most
+    recent cards the student wrote themselves (each carrying an "own"
+    key). Negatives are the most recent "👎" cards. Both empty when
+    the feature is off.
     """
     if not config.get("qgen_feedback", True):
         return [], []
@@ -181,12 +207,23 @@ def examples(config: dict) -> tuple[list, list]:
         data = _load()
     # cap positives at n TOTAL: small models start writing cards about
     # the example topics when shown too many, and every example costs
-    # prompt-processing time. Live "Use →"/★ cards take priority; a
-    # rotating seed sample fills whatever room is left.
-    kept = data[KEPT][-n:]
-    room = n - len(kept)
+    # prompt-processing time. The student's own cards take the larger
+    # share (about two thirds), live "Use →"/★ cards keep at least one
+    # slot so those verdicts never stop mattering, either side takes
+    # over room the other cannot fill, and a rotating seed sample fills
+    # whatever is left.
+    own_all, kept_all = data[OWN], data[KEPT]
+    own_slots = max(1, n - max(1, n // 3)) if n > 1 else 1
+    kept_room = max(0, n - own_slots)
+    kept = kept_all[-kept_room:] if kept_room and kept_all else []
+    own_room = n - len(kept)
+    own = own_all[-own_room:] if own_room > 0 and own_all else []
+    if len(own) + len(kept) < n and len(kept_all) > len(kept):
+        kept = kept_all[-min(len(kept_all), n - len(own)):]
+    positives = kept + own
+    room = n - len(positives)
     if room > 0:
         seed = _load_seed()
         if seed:
-            kept = random.sample(seed, min(room, len(seed))) + kept
-    return kept, data[BAD][-n:]
+            positives = random.sample(seed, min(room, len(seed))) + positives
+    return positives, data[BAD][-n:]

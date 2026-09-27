@@ -229,6 +229,26 @@ def test_mode_forwarded_only_when_set(alternate, monkeypatch):
     assert calls[-1] == (None, None, None)
 
 
+def test_answer_goes_through_the_bakeoff(alternate, monkeypatch):
+    seen = []
+
+    def fake_answer(question, text, config, focus=None):
+        seen.append((question, config.get("qgen_model"), focus))
+        return {"front": question, "back": "A"}
+
+    monkeypatch.setattr(qgen_bakeoff.qgen, "answer_question", fake_answer)
+    card = qgen_bakeoff.answer("Q?", "text", CFG, focus=["p"])
+    assert card["_model"] == "llama3.1:8b"
+    assert seen[-1] == ("Q?", "llama3.1:8b", ["p"])
+    # timing and card count credited to that model
+    data = qgen_bakeoff._load()
+    assert data["models"]["llama3.1:8b"]["gens"] == 1
+    assert data["models"]["llama3.1:8b"]["cards"] == 1
+    # off: plain pass-through, no stamp
+    card = qgen_bakeoff.answer("Q?", "text", {"qgen_bakeoff": False})
+    assert "_model" not in card and seen[-1] == ("Q?", None, None)
+
+
 def test_timings_recorded(fake_generate, alternate):
     qgen_bakeoff.generate("text", CFG)
     s = qgen_bakeoff._load()["models"]["llama3.1:8b"]

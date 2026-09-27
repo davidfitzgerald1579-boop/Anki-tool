@@ -120,6 +120,106 @@ def test_generate_cards_mode_reaches_prompt_and_stamps_cards(monkeypatch):
     assert "_mode" not in cards[0]
 
 
+def test_answer_prompt_shape():
+    p = qgen.build_answer_prompt(
+        "What  must the solicitor do?",
+        "The solicitor must withdraw.",
+        focus=["must withdraw"],
+        emphasis=["withdraw"],
+    )
+    assert "written the FRONT" in p
+    assert "return an empty array" in p
+    # source last, then the picked passages, then the question itself
+    assert p.index("The solicitor must withdraw.") < p.index("1. must withdraw")
+    assert p.rstrip().endswith("What must the solicitor do?")  # whitespace folded
+    assert "DIFFERENT COLOUR" in p
+
+
+def test_answer_question_keeps_the_students_front(monkeypatch):
+    prompts = []
+
+    def fake_chat(config, prompt):
+        prompts.append(prompt)
+        # one card, budgeted like two: a numbered procedure plus a note
+        assert config[qgen._REPLY_CARDS_KEY] == 2
+        return (
+            '[{"front": "A reworded question?", "back": "Withdraw from '
+            'both clients.", "notes": "Conflict of interest"}]'
+        )
+
+    monkeypatch.setattr(qgen, "_chat_ollama", fake_chat)
+    cfg = {"qgen_provider": "ollama", "qgen_feedback": False}
+    card = qgen.answer_question(
+        " What must  the solicitor do? ",
+        "The solicitor must withdraw from both clients.",
+        cfg,
+    )
+    assert card["front"] == "What must the solicitor do?"  # not reworded
+    assert card["back"] == "Withdraw from both clients."
+    assert card["notes"] == "Conflict of interest"
+    assert card["_own"] == "front"
+    assert card["_source"] == "The solicitor must withdraw from both clients."
+    assert "What must the solicitor do?" in prompts[0]
+    assert cfg.get(qgen._REPLY_CARDS_KEY) is None  # caller's config untouched
+
+
+def test_answer_question_empty_and_invented_reference(monkeypatch):
+    replies = iter([
+        "[]",
+        '[{"front": "Q", "back": "See Smith v Jones [1999]", '
+        '"notes": "Brown v Board [1954]"}]',
+        '[{"front": "Q", "back": "1. Issue the cl',  # cut off mid-card
+        '{"front": "Q", "back": "A"}',  # bare object, no array
+    ])
+    monkeypatch.setattr(qgen, "_chat_ollama", lambda c, p: next(replies))
+    monkeypatch.setattr(qgen.qgen_feedback, "phantom_refs", lambda: [])
+    cfg = {"qgen_provider": "ollama", "qgen_feedback": False}
+    # an actual [] means "the source does not answer this"
+    with pytest.raises(qgen.EmptyReplyError, match="does not seem to answer"):
+        qgen.answer_question("Q?", "source text", cfg)
+    # invented references in the back are flagged, in the notes dropped
+    card = qgen.answer_question("Q?", "source text with no cases", cfg)
+    assert "Smith v Jones" in card["_warn"]
+    assert "notes" not in card
+    # a truncated or array-less reply is a failure to retry, never
+    # relabelled as "the source has nothing to say"
+    for _ in range(2):
+        with pytest.raises(qgen.QGenError, match="cut off") as info:
+            qgen.answer_question("Q?", "source text", cfg)
+        assert not isinstance(info.value, qgen.EmptyReplyError)
+    with pytest.raises(qgen.QGenError, match="front of the card"):
+        qgen.answer_question("   ", "source", cfg)
+    with pytest.raises(qgen.QGenError):
+        qgen.answer_question("Q?", "  ", cfg)
+
+
+def test_answer_question_never_flags_the_students_own_citation(monkeypatch):
+    monkeypatch.setattr(
+        qgen,
+        "_chat_ollama",
+        lambda c, p: '[{"front": "Q", "back": "A duty of care is owed."}]',
+    )
+    monkeypatch.setattr(qgen.qgen_feedback, "phantom_refs", lambda: [])
+    cfg = {"qgen_provider": "ollama", "qgen_feedback": False}
+    card = qgen.answer_question(
+        "What did Donoghue v Stevenson [1932] decide?",
+        "A manufacturer owes a duty of care to the end consumer.",
+        cfg,
+    )
+    assert card["front"] == "What did Donoghue v Stevenson [1932] decide?"
+    assert "_warn" not in card  # the citation is the student's, not invented
+
+
+def test_parse_cards_distinguishes_no_list_from_empty_list():
+    with pytest.raises(qgen.NoCardListError):
+        qgen.parse_cards("no json here")
+    with pytest.raises(qgen.EmptyReplyError) as info:
+        qgen.parse_cards("[]")
+    assert not isinstance(info.value, qgen.NoCardListError)
+    # both are still EmptyReplyError for batch callers
+    assert issubclass(qgen.NoCardListError, qgen.EmptyReplyError)
+
+
 def test_generate_cards_focus_cards_overrides_count(monkeypatch):
     prompts = []
 

@@ -94,6 +94,12 @@ class TextCardPanel(QWidget):
         self.added_any = False  # did add_card() succeed at least once
         self.on_added = None  # callback(front, back, notes) after an add
         self.replaces_note_id = None  # set for a redeploy of this note
+        # how a NEW card added here teaches the AI: qgen_feedback.OWN_FULL
+        # (the student wrote it - the default), or None when the host
+        # window handles learning itself (a suggestion being used) or
+        # the card is not new (a redeploy). The "Exclude from LLM
+        # teaching" box below overrides either for one card.
+        self.teach_own = qgen_feedback.OWN_FULL
         # where the card came from, saved into the note's Source field:
         # a SourceImage (the snip; media-written on first add), ready
         # HTML (a redeploy keeping the original), or None
@@ -224,6 +230,15 @@ class TextCardPanel(QWidget):
         lay.addWidget(self.notes, 1)
 
         bottom = QHBoxLayout()
+        self.exclude_box = QCheckBox("Exclude from LLM teaching", self)
+        self.exclude_box.setToolTip(
+            "Normally every card you add here is remembered as an "
+            "example of the style you like, and future AI suggestions "
+            "imitate it. Tick this for a one-off card that should NOT "
+            "teach the AI. Unticks itself after each add."
+        )
+        self.exclude_box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        bottom.addWidget(self.exclude_box)
         bottom.addStretch(1)
         self.add_btn = QPushButton("Add Card", self)
         self.add_btn.setObjectName("addBtn")
@@ -477,6 +492,19 @@ class TextCardPanel(QWidget):
             pass  # the note was added; tracking it is best-effort
         mw.reset()
         self.added_any = True
+        excluded = self.exclude_from_teaching()
+        if replaces is None and self.teach_own and not excluded:
+            # a card the student wrote themselves: the strongest style
+            # signal there is (only NEW cards; a redeploy is an edit)
+            try:
+                lesson = {"front": plain[0], "back": plain[1]}
+                if plain[2]:
+                    lesson["notes"] = plain[2]
+                qgen_feedback.record(
+                    lesson, qgen_feedback.KEPT, own=self.teach_own
+                )
+            except Exception:
+                pass
         if self.on_added is not None:
             try:
                 self.on_added(*plain)
@@ -489,7 +517,32 @@ class TextCardPanel(QWidget):
         self.front.clear()
         self.back.clear()
         self.notes.clear()
+        self.exclude_box.setChecked(False)  # one-off: back to teaching
         self.front.setFocus()
+
+    def exclude_from_teaching(self) -> bool:
+        """Is the "Exclude from LLM teaching" box ticked right now?"""
+        try:
+            return bool(self.exclude_box.isChecked())
+        except Exception:
+            return False
+
+
+class _QuestionEdit(QLineEdit):
+    """A line edit whose Return key goes nowhere else.
+
+    QLineEdit emits returnPressed but leaves the key event unaccepted,
+    so it climbs to the host QDialog, which clicks its default push
+    button ("Load new snip" in the main window). Here Enter means
+    "answer it" and nothing more.
+    """
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.returnPressed.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
 class SuggestionsPage(QWidget):
@@ -608,6 +661,32 @@ class SuggestionsPage(QWidget):
             self.mode_btns[mode] = btn
         mode_row.addStretch(1)
         panel_lay.addLayout(mode_row)
+
+        # the student writes the front; the AI answers it from the source
+        ask_row = QHBoxLayout()
+        ask_row.setSpacing(6)
+        q_lbl = QLabel("✍️ Your question:", self)
+        q_lbl.setStyleSheet("color:#8a8171;")
+        ask_row.addWidget(q_lbl)
+        self.question_edit = _QuestionEdit(self)
+        self.question_edit.setPlaceholderText(
+            "Type the front of a card — the AI writes the back from "
+            "the source text (Enter)"
+        )
+        self.question_edit.setClearButtonEnabled(True)
+        qconnect(self.question_edit.returnPressed, self._answer_question)
+        ask_row.addWidget(self.question_edit, 1)
+        self.answer_btn = QPushButton("✨ Answer it", self)
+        self.answer_btn.setToolTip(
+            "Write the back of the card for the question you typed, "
+            "from the source text (or from 🖍 picked passages). The "
+            "card joins the list; Use → or ★ Great teaches the AI that "
+            "questions like yours are what you want."
+        )
+        self.answer_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        qconnect(self.answer_btn.clicked, self._answer_question)
+        ask_row.addWidget(self.answer_btn)
+        panel_lay.addLayout(ask_row)
         self.suggest_scroll = QScrollArea(self)
         self.suggest_scroll.setWidgetResizable(True)
         self.suggest_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -987,26 +1066,68 @@ class SuggestionsPage(QWidget):
             **kwargs,
         )
 
+    def _answer_question(self) -> None:
+        """✍️: the student's own front, answered by the AI from the
+        source (or the 🖍-picked passages), appended as a suggestion.
+
+        The card is marked as the student's own question, so keeping
+        it teaches the AI with the weight of a hand-written card.
+        """
+        question = " ".join(self.question_edit.text().split())
+        if not question:
+            tooltip("Type the front of the card first.", parent=self)
+            self.question_edit.setFocus()
+            return
+        passages = [t for _, _, t in self._picked if t.strip()]
+        kwargs = {}
+        if passages:
+            kwargs["focus"] = passages
+
+        def work(source, config):
+            return [qgen_bakeoff.answer(question, source, config, **kwargs)]
+
+        def answered(cards) -> None:
+            # the question is cleared only once its card is in the
+            # list; on any failure it stays put, ready to retry or
+            # rephrase
+            if self.question_edit.text().strip() == question:
+                self.question_edit.clear()
+
+        self._append_batch(
+            status="answering your question…",
+            label="Your question",
+            empty_hint=(
+                "The source text does not seem to answer that question "
+                "— rephrase it, or pick the passage the answer is in."
+            ),
+            work=work,
+            on_success=answered,
+        )
+
     def _append_batch(
         self,
         status: str,
         label: str,
         empty_hint: str,
         config=None,
+        work=None,
+        on_success=None,
         **kwargs,
-    ) -> None:
+    ) -> bool:
         """Generate extra cards from the current source in the
         background and append them to the list (the rows already shown
-        stay). `kwargs` go to qgen_bakeoff.generate."""
+        stay). `kwargs` go to qgen_bakeoff.generate - or `work(source,
+        config)` replaces that call entirely; `on_success(cards)` runs
+        after the new rows are in. Returns whether a run started."""
         if self._busy or self._doc_running:
             tooltip("Still generating — one moment.", parent=self)
-            return
+            return False
         source = self._current_source.strip()
         if not source:
             tooltip(
                 "No source text yet — snip a slide first.", parent=self
             )
-            return
+            return False
         if config is None:
             config = self._config_with_count()
         self._busy = True
@@ -1016,8 +1137,11 @@ class SuggestionsPage(QWidget):
         # new snip landing mid-run moves _shown_image, and stamping at
         # completion time would cite the new slide for old-slide cards
         image = self._shown_image
+        run = work
 
         def work():
+            if run is not None:
+                return run(source, config)
             return qgen_bakeoff.generate(source, config, **kwargs)
 
         def done(fut) -> None:
@@ -1028,6 +1152,9 @@ class SuggestionsPage(QWidget):
             self._busy = False
             try:
                 cards = fut.result()
+            except qgen.EmptyReplyError:
+                # the model answered "nothing here" - not a failure
+                cards = []
             except Exception as exc:
                 self._set_suggest_status("%s failed — retry" % label.lower())
                 tooltip(
@@ -1036,14 +1163,20 @@ class SuggestionsPage(QWidget):
                 return
             self._set_suggest_status("")
             if not cards:
-                tooltip(empty_hint, parent=self)
+                tooltip(empty_hint, parent=self, period=6000)
                 return
             for card in cards:
                 card["_image"] = image
                 self._add_card_row(card)
             QTimer.singleShot(0, self._fit_suggestions_if_auto)
+            if on_success is not None:
+                try:
+                    on_success(cards)
+                except Exception:
+                    pass
 
         mw.taskman.run_in_background(work, done)
+        return True
 
     def _count_changed(self, value: str) -> None:
         """Persist the Cards: selector; the next generation uses it."""
@@ -1360,7 +1493,9 @@ class SuggestionsPage(QWidget):
         against the generating model in the bake-off.
         """
         try:
-            qgen_feedback.record(corrected, qgen_feedback.KEPT)
+            qgen_feedback.record(
+                corrected, qgen_feedback.KEPT, own=card.get("_own")
+            )
             qgen_bakeoff.tally(card, "fixed")
         except Exception:
             pass
@@ -1482,6 +1617,11 @@ class SuggestionsPage(QWidget):
             _escape(front),
             _escape(back),
         )
+        if card.get("_own"):
+            body = (
+                "<span style='color:#8a8171;font-size:11px;'>✍️ your "
+                "question · AI answer</span><br>" + body
+            )
         if notes:
             body += (
                 "<br><span style='color:#8a8272;font-size:11px;'>%s</span>"
@@ -1512,7 +1652,9 @@ class SuggestionsPage(QWidget):
 
         def use() -> None:
             try:
-                qgen_feedback.record(card, qgen_feedback.KEPT)
+                qgen_feedback.record(
+                    card, qgen_feedback.KEPT, own=card.get("_own")
+                )
                 qgen_bakeoff.tally(card, "use")
             except Exception:
                 pass
@@ -1556,7 +1698,9 @@ class SuggestionsPage(QWidget):
 
         def great() -> None:
             try:
-                qgen_feedback.record(card, qgen_feedback.KEPT)
+                qgen_feedback.record(
+                    card, qgen_feedback.KEPT, own=card.get("_own")
+                )
                 qgen_bakeoff.tally(card, "great")
             except Exception:
                 pass
@@ -1807,11 +1951,24 @@ class TextCardDialog(QDialog):
             # the learning loop should remember the card AS ADDED, not
             # as suggested: if the user corrects wrong content before
             # adding, the corrected version replaces the original in
-            # the kept-examples store
+            # the kept-examples store. "Use →" already recorded the
+            # original, so the panel's own learning stays off here.
+            self.panel.teach_own = None
             orig = dict(original_card)
 
             def learn_corrected(front, back, notes) -> None:
                 self.panel.on_added = None  # first add only
+                # the window stays open after the add: any further
+                # card typed into it is the student's own, from scratch
+                self.panel.teach_own = qgen_feedback.OWN_FULL
+                if self.panel.exclude_from_teaching():
+                    # a one-off: forget what "Use →" recorded, learn
+                    # nothing from the added card
+                    try:
+                        qgen_feedback.unrecord(orig)
+                    except Exception:
+                        pass
+                    return
                 edited = {"front": front, "back": back}
                 if notes:
                     edited["notes"] = notes
@@ -1822,10 +1979,10 @@ class TextCardDialog(QDialog):
                 ):
                     return  # unchanged - the original example stands
                 try:
-                    from . import qgen_feedback
-
                     qgen_feedback.unrecord(orig)
-                    qgen_feedback.record(edited, qgen_feedback.KEPT)
+                    qgen_feedback.record(
+                        edited, qgen_feedback.KEPT, own=orig.get("_own")
+                    )
                 except Exception:
                     pass
 
@@ -1974,6 +2131,8 @@ class AddedCardDialog(QDialog):
         if i >= 0:
             self.panel.deck_box.setCurrentIndex(i)
         self.panel.replaces_note_id = entry["note_id"]
+        self.panel.teach_own = None  # an edit of an existing card
+        self.panel.exclude_box.setVisible(False)
         self.panel.add_btn.setText("Redeploy")
         self.panel.add_btn.setToolTip(
             "Replace the card in your deck with this corrected version "
