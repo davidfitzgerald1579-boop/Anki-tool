@@ -125,14 +125,28 @@ def generate(
         kwargs["emphasis"] = emphasis
     if mode:
         kwargs["mode"] = mode
+    return _timed(config, lambda cfg: qgen.generate_cards(text, cfg, **kwargs))
+
+
+def answer(question: str, text: str, config: dict, **kwargs) -> dict:
+    """qgen.answer_question through the same bake-off machinery, so a
+    verdict on an answered card credits the model that answered it."""
+    return _timed(
+        config, lambda cfg: [qgen.answer_question(question, text, cfg, **kwargs)]
+    )[0]
+
+
+def _timed(config: dict, run) -> list:
+    """Run `run(config)` -> cards; when the bake-off is on, pick a
+    random contender first and record its time and card count."""
     if not enabled(config):
-        return qgen.generate_cards(text, config, **kwargs)
+        return run(config)
     # random choice, so verdicts can't be biased by a predictable order
     model = random.choice(contenders(config))
     cfg = dict(config)
     cfg["qgen_model"] = model
     start = time.monotonic()
-    cards = qgen.generate_cards(text, cfg, **kwargs)
+    cards = run(cfg)
     elapsed = time.monotonic() - start
     with _lock:
         data = _load()

@@ -90,6 +90,109 @@ def test_examples_flow_into_prompt():
     assert "NEVER" not in prompt
 
 
+def test_own_cards_take_priority_over_kept_and_seed(_isolated_store):
+    seed = [{"front": "S%d" % i, "back": "A"} for i in range(10)]
+    (_isolated_store / "seed.json").write_text(json.dumps(seed))
+    for i in range(3):
+        qgen_feedback.record(
+            {"front": "kept%d" % i, "back": "A"}, qgen_feedback.KEPT
+        )
+    qgen_feedback.record(
+        {"front": "mine", "back": "A"},
+        qgen_feedback.KEPT,
+        own=qgen_feedback.OWN_FULL,
+    )
+    qgen_feedback.record(
+        {"front": "myQ", "back": "AI answer", "notes": "n"},
+        qgen_feedback.KEPT,
+        own=qgen_feedback.OWN_FRONT,
+    )
+    kept, _ = qgen_feedback.examples({"qgen_feedback_examples": 3})
+    # 3 total: both own cards, most important LAST, then one kept card
+    # fills the remaining room; no seed needed
+    assert [c["front"] for c in kept] == ["kept2", "mine", "myQ"]
+    assert kept[1]["own"] == "full" and kept[2]["own"] == "front"
+    assert "own" not in kept[0]
+    # enough own cards -> they are the only positives
+    for i in range(3):
+        qgen_feedback.record(
+            {"front": "own%d" % i, "back": "A"},
+            qgen_feedback.KEPT,
+            own=qgen_feedback.OWN_FULL,
+        )
+    kept, _ = qgen_feedback.examples({"qgen_feedback_examples": 3})
+    assert [c["front"] for c in kept] == ["own0", "own1", "own2"]
+
+
+def test_own_cards_have_their_own_list_and_cap():
+    for i in range(qgen_feedback._MAX_STORED + 5):
+        qgen_feedback.record(
+            {"front": "K%d" % i, "back": "A"}, qgen_feedback.KEPT
+        )
+    qgen_feedback.record(
+        {"front": "mine", "back": "A"}, qgen_feedback.KEPT, own="full"
+    )
+    with open(qgen_feedback._path(), encoding="utf-8") as fh:
+        data = json.load(fh)
+    # a flood of kept suggestions never evicts a hand-written card
+    assert [c["front"] for c in data[qgen_feedback.OWN]] == ["mine"]
+    assert len(data[qgen_feedback.KEPT]) == qgen_feedback._MAX_STORED
+    assert not any(c.get("own") for c in data[qgen_feedback.KEPT])
+
+
+def test_own_verdict_moves_between_lists_and_unrecords():
+    card = {"front": "Q", "back": "A"}
+    qgen_feedback.record(card, qgen_feedback.KEPT, own="front")
+    # a later plain verdict on the same card replaces the own entry
+    qgen_feedback.record(card, qgen_feedback.BAD)
+    kept, bad = qgen_feedback.examples({})
+    assert kept == [] and bad == [card]
+    qgen_feedback.record(card, qgen_feedback.KEPT, own="full")
+    kept, bad = qgen_feedback.examples({})
+    assert kept == [dict(card, own="full")] and bad == []
+    qgen_feedback.unrecord(card)
+    assert qgen_feedback.examples({}) == ([], [])
+    # own marker is ignored for a BAD verdict, unknown markers count
+    # as hand-written, and a falsy one is a plain keep
+    qgen_feedback.record(card, qgen_feedback.BAD, own="full")
+    assert qgen_feedback.examples({})[1] == [card]
+    qgen_feedback.record(card, qgen_feedback.KEPT, own=True)
+    assert qgen_feedback.examples({})[0] == [dict(card, own="full")]
+    qgen_feedback.record(card, qgen_feedback.KEPT, own=None)
+    assert qgen_feedback.examples({})[0] == [card]
+
+
+def test_own_examples_get_their_own_prompt_block():
+    qgen_feedback.record({"front": "KeptQ", "back": "A"}, qgen_feedback.KEPT)
+    qgen_feedback.record(
+        {"front": "MyQ", "back": "MyA"}, qgen_feedback.KEPT, own="full"
+    )
+    qgen_feedback.record({"front": "BadQ", "back": "BadA"}, qgen_feedback.BAD)
+    prompt = qgen.build_prompt("slide", 4, feedback=qgen_feedback.examples({}))
+    assert "WROTE THEMSELVES" in prompt and "MyQ" in prompt
+    # own block sits after the kept block and before the bad block,
+    # and it is the own block that says it takes precedence
+    assert prompt.index("KeptQ") < prompt.index("MyQ") < prompt.index("BadQ")
+    # the precedence instruction heads the own block, after the kept
+    # examples and before the own examples it refers to
+    assert (
+        prompt.index("KeptQ")
+        < prompt.index("these take precedence")
+        < prompt.index("MyQ")
+    )
+    assert "MyQ" not in prompt[: prompt.index("WROTE THEMSELVES")]
+    # the same block feeds the answer prompt
+    answer = qgen.build_answer_prompt(
+        "Q?", "slide", feedback=qgen_feedback.examples({})
+    )
+    assert "WROTE THEMSELVES" in answer and "BadQ" in answer
+    # no own cards -> no own block at all
+    qgen_feedback.unrecord({"front": "MyQ", "back": "MyA"})
+    assert "WROTE THEMSELVES" not in qgen.build_prompt(
+        "slide", 4, feedback=qgen_feedback.examples({})
+    )
+
+
 def test_bundled_seed_file_is_valid():
     # the real seed shipped with the add-on (not the tmp one)
     import os

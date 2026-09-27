@@ -98,8 +98,15 @@
   with filler.
 - `qgen_feedback`: learn your card taste from the suggestion buttons.
   "Use →" saves a card as a positive style example, "👎" as a negative
-  one, and "✕" (a neutral discard) deliberately saves nothing. Recent
-  examples of both are folded into future prompts as form-to-copy /
+  one, and "✕" (a neutral discard) deliberately saves nothing. Cards
+  you write yourself — a "✍️ Your question" the AI answered and you
+  kept, or a whole card added from the Write Card view or the
+  Ctrl+Shift+T window — are stored in a list of their own that kept
+  suggestions never crowd out, take priority in every prompt, and are
+  labelled there as the style to imitate most closely (only new
+  cards; a redeploy of an existing card teaches nothing, and the
+  "Exclude from LLM teaching" box skips a one-off). Recent examples
+  of each kind are folded into future prompts as form-to-copy /
   habits-to-avoid, alongside a rotating sample of a bundled seed drawn
   from the author's real deck. All data stays on your machine in
   `user_files/qgen_feedback.json` (survives add-on updates). Default:
