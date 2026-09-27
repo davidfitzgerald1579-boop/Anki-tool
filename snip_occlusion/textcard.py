@@ -1069,7 +1069,14 @@ class SuggestionsPage(QWidget):
         def work(source, config):
             return [qgen_bakeoff.answer(question, source, config, **kwargs)]
 
-        started = self._append_batch(
+        def answered(cards) -> None:
+            # the question is cleared only once its card is in the
+            # list; on any failure it stays put, ready to retry or
+            # rephrase
+            if self.question_edit.text().strip() == question:
+                self.question_edit.clear()
+
+        self._append_batch(
             status="answering your question…",
             label="Your question",
             empty_hint=(
@@ -1077,9 +1084,8 @@ class SuggestionsPage(QWidget):
                 "— rephrase it, or pick the passage the answer is in."
             ),
             work=work,
+            on_success=answered,
         )
-        if started:
-            self.question_edit.clear()
 
     def _append_batch(
         self,
@@ -1088,13 +1094,14 @@ class SuggestionsPage(QWidget):
         empty_hint: str,
         config=None,
         work=None,
+        on_success=None,
         **kwargs,
     ) -> bool:
         """Generate extra cards from the current source in the
         background and append them to the list (the rows already shown
         stay). `kwargs` go to qgen_bakeoff.generate - or `work(source,
-        config)` replaces that call entirely. Returns whether a run
-        started."""
+        config)` replaces that call entirely; `on_success(cards)` runs
+        after the new rows are in. Returns whether a run started."""
         if self._busy or self._doc_running:
             tooltip("Still generating — one moment.", parent=self)
             return False
@@ -1128,6 +1135,9 @@ class SuggestionsPage(QWidget):
             self._busy = False
             try:
                 cards = fut.result()
+            except qgen.EmptyReplyError:
+                # the model answered "nothing here" - not a failure
+                cards = []
             except Exception as exc:
                 self._set_suggest_status("%s failed — retry" % label.lower())
                 tooltip(
@@ -1136,12 +1146,17 @@ class SuggestionsPage(QWidget):
                 return
             self._set_suggest_status("")
             if not cards:
-                tooltip(empty_hint, parent=self)
+                tooltip(empty_hint, parent=self, period=6000)
                 return
             for card in cards:
                 card["_image"] = image
                 self._add_card_row(card)
             QTimer.singleShot(0, self._fit_suggestions_if_auto)
+            if on_success is not None:
+                try:
+                    on_success(cards)
+                except Exception:
+                    pass
 
         mw.taskman.run_in_background(work, done)
         return True
@@ -1926,6 +1941,9 @@ class TextCardDialog(QDialog):
 
             def learn_corrected(front, back, notes) -> None:
                 self.panel.on_added = None  # first add only
+                # the window stays open after the add: any further
+                # card typed into it is the student's own, from scratch
+                self.panel.teach_own = qgen_feedback.OWN_FULL
                 if self.panel.exclude_from_teaching():
                     # a one-off: forget what "Use →" recorded, learn
                     # nothing from the added card

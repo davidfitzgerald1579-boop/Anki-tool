@@ -68,6 +68,12 @@ class EmptyReplyError(QGenError):
     """
 
 
+class NoCardListError(EmptyReplyError):
+    """The reply held no JSON array at all - cut off at the token cap,
+    a bare object, or prose. Still "no cards" for batch callers, but
+    not evidence that the source had nothing to say."""
+
+
 def _example_lines(cards: list) -> list:
     lines = []
     for c in cards:
@@ -344,7 +350,9 @@ def answer_question(
         emphasis=emphasis,
     )
     cfg = dict(config)
-    cfg[_REPLY_CARDS_KEY] = 1
+    # one card, but its back may be a full numbered procedure plus a
+    # note: budget it like two ordinary cards
+    cfg[_REPLY_CARDS_KEY] = 2
     try:
         target = qgen_providers.resolve(cfg)
     except qgen_providers.UnknownProvider as exc:
@@ -359,13 +367,29 @@ def answer_question(
         reply = _chat_openai_compatible(cfg, prompt)
     try:
         cards = parse_cards(reply)
+    except NoCardListError:
+        raise QGenError(
+            "The AI reply held no card (it may have been cut off) - "
+            "try again."
+        )
     except EmptyReplyError:
+        # an actual [] - the model followed the rule for a question
+        # the source does not answer
         raise EmptyReplyError(
             "The source text does not seem to answer that question."
         )
     card = cards[0]
     card["front"] = question  # the student's wording, whatever came back
-    _verify_references([card], text)
+    # the student's own question is never "invented": verify only what
+    # the model wrote (the back and the note)
+    probe = {"front": "", "back": card["back"]}
+    if card.get("notes"):
+        probe["notes"] = card["notes"]
+    _verify_references([probe], text)
+    if "notes" not in probe:
+        card.pop("notes", None)
+    if probe.get("_warn"):
+        card["_warn"] = probe["_warn"]
     card["_source"] = text
     card["_own"] = qgen_feedback.OWN_FRONT  # the student wrote the front
     return card
@@ -451,7 +475,7 @@ def parse_cards(raw: str) -> list:
     start = raw.find("[")
     end = raw.rfind("]")
     if start == -1 or end == -1 or end <= start:
-        raise EmptyReplyError("The AI reply contained no card list.")
+        raise NoCardListError("The AI reply contained no card list.")
     try:
         data = json.loads(raw[start : end + 1])
     except ValueError as exc:

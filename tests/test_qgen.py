@@ -163,18 +163,60 @@ def test_answer_question_keeps_the_students_front(monkeypatch):
 
 
 def test_answer_question_empty_and_invented_reference(monkeypatch):
-    replies = iter(["[]", '[{"front": "Q", "back": "See Smith v Jones [1999]"}]'])
+    replies = iter([
+        "[]",
+        '[{"front": "Q", "back": "See Smith v Jones [1999]", '
+        '"notes": "Brown v Board [1954]"}]',
+        '[{"front": "Q", "back": "1. Issue the cl',  # cut off mid-card
+        '{"front": "Q", "back": "A"}',  # bare object, no array
+    ])
     monkeypatch.setattr(qgen, "_chat_ollama", lambda c, p: next(replies))
     monkeypatch.setattr(qgen.qgen_feedback, "phantom_refs", lambda: [])
     cfg = {"qgen_provider": "ollama", "qgen_feedback": False}
+    # an actual [] means "the source does not answer this"
     with pytest.raises(qgen.EmptyReplyError, match="does not seem to answer"):
         qgen.answer_question("Q?", "source text", cfg)
+    # invented references in the back are flagged, in the notes dropped
     card = qgen.answer_question("Q?", "source text with no cases", cfg)
-    assert "Smith v Jones" in card["_warn"]  # flagged, like generated cards
+    assert "Smith v Jones" in card["_warn"]
+    assert "notes" not in card
+    # a truncated or array-less reply is a failure to retry, never
+    # relabelled as "the source has nothing to say"
+    for _ in range(2):
+        with pytest.raises(qgen.QGenError, match="cut off") as info:
+            qgen.answer_question("Q?", "source text", cfg)
+        assert not isinstance(info.value, qgen.EmptyReplyError)
     with pytest.raises(qgen.QGenError, match="front of the card"):
         qgen.answer_question("   ", "source", cfg)
     with pytest.raises(qgen.QGenError):
         qgen.answer_question("Q?", "  ", cfg)
+
+
+def test_answer_question_never_flags_the_students_own_citation(monkeypatch):
+    monkeypatch.setattr(
+        qgen,
+        "_chat_ollama",
+        lambda c, p: '[{"front": "Q", "back": "A duty of care is owed."}]',
+    )
+    monkeypatch.setattr(qgen.qgen_feedback, "phantom_refs", lambda: [])
+    cfg = {"qgen_provider": "ollama", "qgen_feedback": False}
+    card = qgen.answer_question(
+        "What did Donoghue v Stevenson [1932] decide?",
+        "A manufacturer owes a duty of care to the end consumer.",
+        cfg,
+    )
+    assert card["front"] == "What did Donoghue v Stevenson [1932] decide?"
+    assert "_warn" not in card  # the citation is the student's, not invented
+
+
+def test_parse_cards_distinguishes_no_list_from_empty_list():
+    with pytest.raises(qgen.NoCardListError):
+        qgen.parse_cards("no json here")
+    with pytest.raises(qgen.EmptyReplyError) as info:
+        qgen.parse_cards("[]")
+    assert not isinstance(info.value, qgen.NoCardListError)
+    # both are still EmptyReplyError for batch callers
+    assert issubclass(qgen.NoCardListError, qgen.EmptyReplyError)
 
 
 def test_generate_cards_focus_cards_overrides_count(monkeypatch):
