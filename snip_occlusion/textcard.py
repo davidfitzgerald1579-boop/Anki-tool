@@ -528,6 +528,23 @@ class TextCardPanel(QWidget):
             return False
 
 
+class _QuestionEdit(QLineEdit):
+    """A line edit whose Return key goes nowhere else.
+
+    QLineEdit emits returnPressed but leaves the key event unaccepted,
+    so it climbs to the host QDialog, which clicks its default push
+    button ("Load new snip" in the main window). Here Enter means
+    "answer it" and nothing more.
+    """
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.returnPressed.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 class SuggestionsPage(QWidget):
     """AI suggestions on top; the source text underneath.
 
@@ -651,7 +668,7 @@ class SuggestionsPage(QWidget):
         q_lbl = QLabel("✍️ Your question:", self)
         q_lbl.setStyleSheet("color:#8a8171;")
         ask_row.addWidget(q_lbl)
-        self.question_edit = QLineEdit(self)
+        self.question_edit = _QuestionEdit(self)
         self.question_edit.setPlaceholderText(
             "Type the front of a card — the AI writes the back from "
             "the source text (Enter)"
