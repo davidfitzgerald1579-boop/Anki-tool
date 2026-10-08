@@ -4,6 +4,18 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.30.1 — 2026-10-08
+
+- **A Use → window can close itself once the card is added.** The
+  📌 Stay on top button in the text card window now also decides what
+  happens after Add Card in a window opened from a suggestion: pinned
+  (the default), the window stays beside your notes with cleared
+  fields, as before; unpinned, it closes the moment the card is in,
+  and only the "Card added" notice remains. The pin state was already
+  remembered (`text_card_stay_on_top`), so unticking it once makes
+  every later Use → window close itself too. The blank Ctrl+Shift+T
+  window, meant for writing card after card, always stays open.
+
 ## v0.30.0 — 2026-09-27
 
 - **Write the question, let the AI answer it.** A "✍️ Your question"

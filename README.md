@@ -182,6 +182,11 @@ snip's OCR text onto the front to rephrase. The window is made to sit
 beside your notes: it is independent of Anki's main window, shrinks
 to a small box, remembers where you parked it, and **📌 Stay on top**
 (on by default) keeps it above every other program while you read.
+The same window opens when you press **Use →** on a suggested card.
+There the pin also decides what happens after you add the card: pinned,
+the window stays for the next one; unpinned, it closes itself as soon
+as the card is in (the "Card added" notice still shows). Untick it once
+and every Use → window after that behaves the same way.
 
 **During review:** press **Delete** (or right-click → "Delete this
 card") to remove a bad card instantly; **Shift+Delete** removes ALL
