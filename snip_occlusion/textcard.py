@@ -1881,6 +1881,14 @@ class TextCardDialog(QDialog):
     minimised nor has to stay above it), it can be shrunk to a small
     box, it remembers its size and position, and 📌 keeps it above
     every other application while you read.
+
+    📌 also decides what happens once a card is added from a window
+    that "Use →" opened for an AI suggestion: pinned, the window stays
+    put with cleared fields, ready for the next card; unpinned, it
+    closes itself the moment the card is in, leaving only the "Card
+    added" notice. The setting is remembered either way. The blank
+    Ctrl+Shift+T window is for writing card after card, so it always
+    stays open.
     """
 
     def __init__(
@@ -1897,6 +1905,10 @@ class TextCardDialog(QDialog):
         # cannot be parked next to another program's window
         super().__init__(None)
         self._on_discard = on_discard
+        # opened by "Use →" for an AI suggestion (rather than the blank
+        # Ctrl+Shift+T window): may close itself after the add, below
+        self._from_suggestion = bool(original_card)
+        self._learn_corrected = None  # one-shot learning hook, see below
         self.setWindowTitle(ADDON_NAME + " — Text Card")
         self.setMinimumSize(380, 360)
         self.setWindowFlags(
@@ -1922,8 +1934,9 @@ class TextCardDialog(QDialog):
         self.pin_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.pin_btn.setToolTip(
             "Keep this window above every other program, so it stays "
-            "visible beside your notes while you read. Remembered for "
-            "next time."
+            "visible beside your notes while you read. Unticked, a "
+            "window opened with Use → closes itself as soon as the card "
+            "is added. Remembered for next time."
         )
         self.panel.deck_row.addWidget(self.pin_btn)
         on_top = bool(get_config().get(_STAY_ON_TOP_KEY, True))
@@ -1957,8 +1970,7 @@ class TextCardDialog(QDialog):
             orig = dict(original_card)
 
             def learn_corrected(front, back, notes) -> None:
-                self.panel.on_added = None  # first add only
-                # the window stays open after the add: any further
+                # if the window stays open after the add, any further
                 # card typed into it is the student's own, from scratch
                 self.panel.teach_own = qgen_feedback.OWN_FULL
                 if self.panel.exclude_from_teaching():
@@ -1986,9 +1998,34 @@ class TextCardDialog(QDialog):
                 except Exception:
                     pass
 
-            self.panel.on_added = learn_corrected
+            self._learn_corrected = learn_corrected
+        self.panel.on_added = self._card_added
 
     # ------------------------------------------------- window behaviour
+
+    def auto_closes(self) -> bool:
+        """Will this window close itself once a card has been added?
+
+        Only a window "Use →" opened for a suggestion, and only while
+        📌 Stay on top is unticked: pinned, it stays beside the notes
+        for the next card, like the hand-written one always does.
+        """
+        return self._from_suggestion and not self.pin_btn.isChecked()
+
+    def _card_added(self, front: str, back: str, notes: str) -> None:
+        """After add_card() succeeded: teach the AI, then maybe leave."""
+        learn, self._learn_corrected = self._learn_corrected, None
+        if learn is not None:  # first add only
+            try:
+                learn(front, back, notes)
+            except Exception:
+                pass
+        if self.auto_closes():
+            # not this instant: add_card() has still to show its "Card
+            # added" notice and clear the fields (closing before the
+            # clear would ask "discard the unsaved card?"). The notice
+            # is its own little window, so it outlives this one.
+            QTimer.singleShot(0, self.close)
 
     def _apply_stay_on_top(self, on: bool) -> None:
         was_visible = self.isVisible()
