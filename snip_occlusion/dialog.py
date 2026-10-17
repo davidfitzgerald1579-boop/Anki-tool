@@ -124,6 +124,11 @@ QToolButton:checked {
     background: #f7ddc9;
     border: 2px solid #d97757;
 }
+QToolButton#formatBtn:checked {
+    background: #d97757;
+    border: 2px solid #b5573a;
+    color: #ffffff;
+}
 QPushButton#addBtn {
     background: #d97757;
     color: #ffffff;

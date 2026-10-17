@@ -27,6 +27,11 @@
   card; unpinned, it closes itself straight away, leaving just the
   "Card added" notice. The blank Ctrl+Shift+T window always stays open.
   Default: `true`.
+- `text_card_show_added`: show the cards added this session down the
+  right of the text card window (click one to fix and redeploy it, or
+  delete it). The thin ⟩ / ⟨ handle beside the fields tucks the list
+  away and brings it back, narrowing or widening the window by its
+  width; the choice is remembered here. Default: `true`.
 - `close_after_add`: close the dialog after adding cards instead of
   clearing it for the next snip. Default: `false`.
 - `default_mode`: `"hag1"` (Hide All, Guess One) or `"hog1"`

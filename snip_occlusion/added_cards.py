@@ -23,6 +23,13 @@ def add_listener(fn) -> None:
         _listeners.append(fn)
 
 
+def remove_listener(fn) -> None:
+    try:
+        _listeners.remove(fn)
+    except ValueError:
+        pass
+
+
 def _fire() -> None:
     for fn in list(_listeners):
         try:

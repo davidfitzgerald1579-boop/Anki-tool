@@ -394,7 +394,12 @@ class AddedCardsList(QWidget):
         )
         self.hint.setWordWrap(True)
         self.hint.setStyleSheet("color:#8a8171;font-size:9pt;")
-        lay.addWidget(self.hint)
+        # while the list is empty the hint takes the spare height, so it
+        # sits right under the title instead of both floating apart
+        self.hint.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        )
+        lay.addWidget(self.hint, 1)
 
         self.scroll = QScrollArea(self)
         self.scroll.setWidgetResizable(True)
