@@ -8,8 +8,8 @@ Two widgets, matching the main window's three-view layout:
   the sentences the card most likely came from - no popups.
 - TextCardPanel ("Write Card" view, and the Use →/Ctrl+Shift+T window):
   Front/Back/Notes with simple formatting. In the main window it shows
-  the source text at the top for reference; the standalone window is
-  just the fields.
+  the source text at the top for reference; the standalone window has
+  just the fields, with the session's added cards on its right.
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ from .dialog import (
     get_previous_snip,
     get_previous_snip_text,
 )
+from .newcard_panel import AddedCardsList
 from .uitools import cream_tooltips, notify as tooltip
 
 _SIZES = ["10", "12", "14", "16", "18", "20", "24", "28", "32"]
@@ -46,6 +47,18 @@ def _body_html(edit: QTextEdit) -> str:
 
 def _escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;")
+
+
+def _is_bold(fmt: QTextCharFormat) -> bool:
+    return fmt.fontWeight() > QFont.Weight.Normal
+
+
+def _is_italic(fmt: QTextCharFormat) -> bool:
+    return fmt.fontItalic()
+
+
+def _is_underline(fmt: QTextCharFormat) -> bool:
+    return fmt.fontUnderline()
 
 
 def _state_source_image(state):
@@ -169,16 +182,20 @@ class TextCardPanel(QWidget):
             lay = outer
             min_front, min_back, min_notes = 110, 130, 70
 
-        # --- formatting bar (applies to whichever box you're typing in)
+        # --- formatting bar (applies to whichever box you're typing in);
+        # B / I / U light up while the text at the cursor has that style
         bar = QHBoxLayout()
-        for label, tip, cb in [
-            ("B", "Bold (Ctrl+B)", self._bold),
-            ("I", "Italic (Ctrl+I)", self._italic),
-            ("U", "Underline (Ctrl+U)", self._underline),
+        self._format_buttons = []  # (button, is_on) for _sync_format_buttons
+        for label, tip, cb, is_on in [
+            ("B", "Bold (Ctrl+B)", self._bold, _is_bold),
+            ("I", "Italic (Ctrl+I)", self._italic, _is_italic),
+            ("U", "Underline (Ctrl+U)", self._underline, _is_underline),
         ]:
             btn = QToolButton(self)
             btn.setText(label)
             btn.setToolTip(tip)
+            btn.setObjectName("formatBtn")
+            btn.setCheckable(True)
             btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # keep typing focus
             f = btn.font()
             if label == "B":
@@ -190,6 +207,7 @@ class TextCardPanel(QWidget):
             btn.setFont(f)
             qconnect(btn.clicked, lambda _=False, c=cb: c())
             bar.addWidget(btn)
+            self._format_buttons.append((btn, is_on))
         bar.addSpacing(8)
         bar.addWidget(QLabel("Size:", self))
         self.size_box = QComboBox(self)
@@ -216,6 +234,15 @@ class TextCardPanel(QWidget):
             font = edit.font()
             font.setPointSize(12)
             edit.setFont(font)
+            for signal in (
+                edit.currentCharFormatChanged,
+                edit.cursorPositionChanged,
+                edit.selectionChanged,
+            ):
+                qconnect(
+                    signal,
+                    lambda *_a, e=edit: self._edit_format_changed(e),
+                )
             return edit
 
         lay.addWidget(QLabel("<b>Front</b>", self))
@@ -252,6 +279,8 @@ class TextCardPanel(QWidget):
             ("Ctrl+B", self._bold),
             ("Ctrl+I", self._italic),
             ("Ctrl+U", self._underline),
+            ("Ctrl+Tab", lambda: self._jump_box(1)),
+            ("Ctrl+Shift+Tab", lambda: self._jump_box(-1)),
         ]
         if standalone_shortcuts:
             # embedded, the main window routes Ctrl+Return by active view
@@ -260,6 +289,7 @@ class TextCardPanel(QWidget):
             sc = QShortcut(QKeySequence(seq), self)
             sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
             qconnect(sc.activated, cb)
+        self._sync_format_buttons()
 
     def set_source_text(self, text: str) -> None:
         if not self.show_source:
@@ -320,6 +350,34 @@ class TextCardPanel(QWidget):
     def focus_front(self) -> None:
         self.front.setFocus()
 
+    def _jump_box(self, step: int) -> None:
+        """Ctrl+Tab: move the typing cursor down a box (Front → Back →
+        Notes, then round to the Front again); Ctrl+Shift+Tab goes up.
+        Plain Tab still types a tab inside the box."""
+        boxes = [self.front, self.back, self.notes]
+        current = self._target()
+        if current not in boxes:
+            self.front.setFocus()
+            return
+        boxes[(boxes.index(current) + step) % len(boxes)].setFocus()
+
+    def _refocus_front(self) -> None:
+        """Back to the Front box once an add has fully settled.
+
+        add_card() already focuses it, but Anki redraws its own window
+        after the add (mw.reset()), which can pull the keyboard away
+        from this one; this runs after that, from the event loop."""
+        try:
+            window = self.window()
+            if not window.isVisible():
+                return  # a Use → window that closed itself after the add
+            if not window.isActiveWindow():
+                window.activateWindow()
+            self.front.setFocus()
+            self._sync_format_buttons(self.front)
+        except RuntimeError:
+            pass  # the window was deleted in the meantime
+
     def has_unsaved_text(self) -> bool:
         return any(
             e.toPlainText().strip()
@@ -331,6 +389,7 @@ class TextCardPanel(QWidget):
     def eventFilter(self, obj, event):
         if event.type() == QEvent.Type.FocusIn and isinstance(obj, QTextEdit):
             self._active_edit = obj
+            self._sync_format_buttons(obj)
         return super().eventFilter(obj, event)
 
     def _target(self) -> QTextEdit:
@@ -339,31 +398,49 @@ class TextCardPanel(QWidget):
             return w
         return self._active_edit or self.front
 
-    def _toggle_format(self, is_on, make_fmt) -> None:
-        """Toggle a char format: on if it's off, OFF if it's already on.
+    @staticmethod
+    def _format_at_cursor(edit: QTextEdit) -> QTextCharFormat:
+        """The format B / I / U act on: the first selected character's,
+        or, with no selection, what typing at the cursor would get.
 
-        The on/off state is read from the document text itself (the
-        first selected character), not from the cursor's current
-        format - the cursor's format lags after an apply and reads the
-        wrong side on a right-to-left selection, which made the second
-        click fail to undo the first.
+        Read from the document text itself, not from the cursor's
+        current format - the cursor's format lags after an apply and
+        reads the wrong side on a right-to-left selection, which made
+        the second click fail to undo the first.
         """
-        e = self._target()
-        cursor = e.textCursor()
+        cursor = edit.textCursor()
         if cursor.hasSelection():
             probe = QTextCursor(cursor)
             probe.setPosition(
                 min(cursor.anchor(), cursor.position()) + 1
             )
-            active = is_on(probe.charFormat())
-        else:
-            active = is_on(e.currentCharFormat())
-        fmt = make_fmt(not active)
+            return probe.charFormat()
+        return edit.currentCharFormat()
+
+    def _toggle_format(self, is_on, make_fmt) -> None:
+        """Toggle a char format: on if it's off, OFF if it's already on."""
+        e = self._target()
+        cursor = e.textCursor()
+        fmt = make_fmt(not is_on(self._format_at_cursor(e)))
         if cursor.hasSelection():
             cursor.mergeCharFormat(fmt)
         else:
             e.mergeCurrentCharFormat(fmt)
         e.setFocus()
+        self._sync_format_buttons(e)
+
+    def _edit_format_changed(self, edit: QTextEdit) -> None:
+        # only the box being typed in drives the buttons (clearing the
+        # other boxes after an add must not repaint them)
+        if edit is (self._active_edit or self.front):
+            self._sync_format_buttons(edit)
+
+    def _sync_format_buttons(self, edit: QTextEdit | None = None) -> None:
+        """Light up B / I / U for the styles in use at the cursor, so it
+        is plain which ones the next keystroke (or a click) gets."""
+        fmt = self._format_at_cursor(edit or self._active_edit or self.front)
+        for btn, is_on in self._format_buttons:
+            btn.setChecked(bool(is_on(fmt)))
 
     def _bold(self) -> None:
         def make(on: bool) -> QTextCharFormat:
@@ -373,9 +450,7 @@ class TextCardPanel(QWidget):
             )
             return fmt
 
-        self._toggle_format(
-            lambda f: f.fontWeight() > QFont.Weight.Normal, make
-        )
+        self._toggle_format(_is_bold, make)
 
     def _italic(self) -> None:
         def make(on: bool) -> QTextCharFormat:
@@ -383,7 +458,7 @@ class TextCardPanel(QWidget):
             fmt.setFontItalic(on)
             return fmt
 
-        self._toggle_format(lambda f: f.fontItalic(), make)
+        self._toggle_format(_is_italic, make)
 
     def _underline(self) -> None:
         def make(on: bool) -> QTextCharFormat:
@@ -391,7 +466,7 @@ class TextCardPanel(QWidget):
             fmt.setFontUnderline(on)
             return fmt
 
-        self._toggle_format(lambda f: f.fontUnderline(), make)
+        self._toggle_format(_is_underline, make)
 
     def _size(self, value: str) -> None:
         e = self._target()
@@ -519,6 +594,7 @@ class TextCardPanel(QWidget):
         self.notes.clear()
         self.exclude_box.setChecked(False)  # one-off: back to teaching
         self.front.setFocus()
+        QTimer.singleShot(0, self._refocus_front)
 
     def exclude_from_teaching(self) -> bool:
         """Is the "Exclude from LLM teaching" box ticked right now?"""
@@ -1858,8 +1934,10 @@ class PoppedTextEditor(QDialog):
 
 
 _GEOM_KEY = "snipOcclusionTextCard"  # remembered size and position
-_DEFAULT_SIZE = (440, 520)  # a small box, first time only
+_DEFAULT_SIZE = (660, 520)  # the fields + added cards, first time only
 _STAY_ON_TOP_KEY = "text_card_stay_on_top"
+_SHOW_ADDED_KEY = "text_card_show_added"
+_ADDED_WIDTH = 210  # the added-cards column until you drag it
 
 
 def _write_user_config(**changes) -> None:
@@ -1889,6 +1967,11 @@ class TextCardDialog(QDialog):
     added" notice. The setting is remembered either way. The blank
     Ctrl+Shift+T window is for writing card after card, so it always
     stays open.
+
+    On the right, the session's added cards (the same tray as the main
+    window's sidebar): click one to fix and redeploy it, or delete it.
+    The ⟩ handle tucks the list away - the window narrows by its width,
+    back to the small box - and ⟨ brings it back; remembered.
     """
 
     def __init__(
@@ -1910,7 +1993,9 @@ class TextCardDialog(QDialog):
         self._from_suggestion = bool(original_card)
         self._learn_corrected = None  # one-shot learning hook, see below
         self.setWindowTitle(ADDON_NAME + " — Text Card")
-        self.setMinimumSize(380, 360)
+        # the width minimum comes from the layout, so it follows the
+        # added-cards list in and out (about 410 px without it)
+        self.setMinimumHeight(360)
         self.setWindowFlags(
             self.windowFlags()
             | Qt.WindowType.WindowMinimizeButtonHint
@@ -1918,8 +2003,19 @@ class TextCardDialog(QDialog):
         )
         self.setStyleSheet(_STYLE)
         cream_tooltips(self)
-        lay = QVBoxLayout(self)
+        lay = QHBoxLayout(self)
         lay.setContentsMargins(12, 12, 12, 12)
+
+        # fields on the left, added cards on the right; the divider
+        # drags, and the thin handle beside it tucks the list away
+        self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self.splitter.setHandleWidth(7)
+        self.splitter.setChildrenCollapsible(False)
+        lay.addWidget(self.splitter)
+        fields_host = QWidget(self)
+        fields_lay = QHBoxLayout(fields_host)
+        fields_lay.setContentsMargins(0, 0, 0, 0)
+        fields_lay.setSpacing(4)
         self.panel = TextCardPanel(
             self, show_source=False, standalone_shortcuts=True
         )
@@ -1927,7 +2023,33 @@ class TextCardDialog(QDialog):
         self.panel.front.setMinimumHeight(48)
         self.panel.back.setMinimumHeight(56)
         self.panel.notes.setMinimumHeight(32)
-        lay.addWidget(self.panel)
+        fields_lay.addWidget(self.panel, 1)
+        self.added_btn = QToolButton(self)
+        self.added_btn.setToolTip(
+            "Hide / show the cards added this session (drag the divider "
+            "to resize them)"
+        )
+        self.added_btn.setFixedWidth(18)
+        self.added_btn.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding
+        )
+        self.added_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.added_btn.setStyleSheet(
+            "QToolButton{border:none;background:#f2ece1;border-radius:4px;"
+            "padding:0;}QToolButton:hover{background:#e8dfd0;}"
+        )
+        qconnect(self.added_btn.clicked, self._toggle_added_list)
+        fields_lay.addWidget(self.added_btn)
+        self.splitter.addWidget(fields_host)
+        self.added_list = AddedCardsList(self)
+        self.added_list.setMinimumWidth(150)
+        self.added_list.open_added_handler = self._open_added_card
+        self.splitter.addWidget(self.added_list)
+        # a wider window goes to the fields; the list keeps its width
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 0)
+        self._added_width = _ADDED_WIDTH
+        self._shown_once = False
         self.pin_btn = QToolButton(self)
         self.pin_btn.setText("📌 Stay on top")
         self.pin_btn.setCheckable(True)
@@ -1944,6 +2066,15 @@ class TextCardDialog(QDialog):
         self._apply_stay_on_top(on_top)
         qconnect(self.pin_btn.toggled, self._pin_toggled)
         self._restore_geometry()
+        show_added = bool(get_config().get(_SHOW_ADDED_KEY, True))
+        self.added_list.setVisible(show_added)
+        self.added_btn.setText("⟩" if show_added else "⟨")
+        self.layout().activate()
+        self.splitter.setSizes([
+            self.splitter.width() - self.splitter.handleWidth()
+            - _ADDED_WIDTH,
+            _ADDED_WIDTH,
+        ])
         if front_text:
             self.panel.front.insertPlainText(front_text)
         if back_text:
@@ -2027,6 +2158,59 @@ class TextCardDialog(QDialog):
             # is its own little window, so it outlives this one.
             QTimer.singleShot(0, self.close)
 
+    def _open_added_card(self, note_id: int) -> None:
+        # owned by this window, so it opens above it even when 📌 keeps
+        # this one on top of everything
+        open_added_card_editor(note_id, parent=self)
+
+    def _toggle_added_list(self) -> None:
+        show = self.added_list.isHidden()
+        self._show_added_list(show)
+        _write_user_config(**{_SHOW_ADDED_KEY: show})
+
+    def _show_added_list(self, show: bool) -> None:
+        """Show or tuck away the added cards, widening or narrowing the
+        window by the list's width so the fields keep theirs."""
+        if show == (not self.added_list.isHidden()):
+            return
+        geo = self.geometry()
+        if not show:
+            self._added_width = self.added_list.width()  # as dragged
+        delta = self._added_width + self.splitter.handleWidth()
+        self.added_btn.setText("⟩" if show else "⟨")
+        self.added_list.setVisible(show)
+        # take the change in now rather than from the event queue, so
+        # the window's minimum width is already right for the resize
+        QApplication.sendPostedEvents(
+            self.splitter, QEvent.Type.LayoutRequest
+        )
+        self.layout().activate()
+        if self.isMaximized() or self.isFullScreen():
+            return  # the splitter re-divides the fixed width itself
+        # the list comes back at its last width (the splitter keeps it
+        # and gives any extra window width to the fields)
+        new_w = geo.width() + (delta if show else -delta)
+        x = self._on_screen_x(geo.x(), new_w)
+        self.setGeometry(x, geo.y(), new_w, geo.height())
+
+    def _on_screen_x(self, x: int, width: int) -> int:
+        """x, moved left as far as `width` needs to stay on screen."""
+        screen = self.screen()
+        if screen is None:
+            return x
+        avail = screen.availableGeometry()
+        right = avail.x() + avail.width()
+        return max(avail.x(), right - width) if x + width > right else x
+
+    def _settle_on_screen(self) -> None:
+        # a size saved before the list existed opens widened to fit it
+        # (the layout's minimum), which may hang off a screen edge the
+        # window was parked against
+        geo = self.geometry()
+        x = self._on_screen_x(geo.x(), geo.width())
+        if x != geo.x():
+            self.setGeometry(x, geo.y(), geo.width(), geo.height())
+
     def _apply_stay_on_top(self, on: bool) -> None:
         was_visible = self.isVisible()
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, on)
@@ -2058,6 +2242,12 @@ class TextCardDialog(QDialog):
         except Exception:
             pass
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not self._shown_once:
+            self._shown_once = True
+            QTimer.singleShot(0, self._settle_on_screen)
+
     def hideEvent(self, event) -> None:
         # covers close, minimise-then-quit and Anki shutting the
         # window itself - the last position always wins
@@ -2076,6 +2266,10 @@ class TextCardDialog(QDialog):
                 event.ignore()
                 return
         event.accept()
+        # a closed window is never reopened (a new one is made), so its
+        # list stops listening - else every closed window lives on,
+        # rebuilding its hidden list on each add
+        added_cards.remove_listener(self.added_list.refresh)
         # closed without ever adding: hand the card back to the caller
         # (the suggestions panel restores it and forgets the verdict)
         if self._on_discard is not None and not self.panel.added_any:

@@ -4,6 +4,33 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.31.0 — 2026-10-17
+
+- **Added cards in the Ctrl+Shift+T window.** The text card window now
+  lists the cards added this session down its right-hand side — the
+  same tray as the main window's sidebar: click one to fix it and
+  redeploy, or delete it. A thin ⟩ handle beside the fields tucks the
+  list away (the window narrows by its width, back to the small box)
+  and ⟨ brings it back at the width you last dragged it to; the
+  choice is remembered (`text_card_show_added`). The window's first
+  size is now about 660 × 520 to fit both, and it is no longer
+  allowed to shrink below what its fields need.
+- **B / I / U show which styles are in use.** In every card editor
+  (Ctrl+Shift+T, Use →, Write Card, and fixing an added card) the
+  bold, italic and underline buttons fill with the accent colour while
+  the text at the cursor — or the start of the selection — has that
+  style, so it is plain what you are typing in and what a click will
+  switch off. They follow the cursor as it moves and Ctrl+B / I / U.
+- **Ctrl+Tab moves to the next box.** Front → Back → Notes, then
+  round to the Front again; Ctrl+Shift+Tab goes back up. Plain Tab
+  still types a tab inside a box.
+- **The cursor is back in the Front after every add,** even when
+  Anki's own window redraws after the card goes in (which could leave
+  the keyboard elsewhere), and B / I / U reset with the cleared
+  fields.
+- The empty "Added cards" hint sits right under its title instead of
+  drifting down the sidebar.
+
 ## v0.30.1 — 2026-10-08
 
 - **A Use → window can close itself once the card is added.** The

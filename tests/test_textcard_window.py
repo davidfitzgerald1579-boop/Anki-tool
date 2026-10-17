@@ -264,3 +264,185 @@ def test_suggestion_learning_runs_once_then_window_may_close(qapp, mw):
     ]
     assert dlg._learn_corrected is None  # consumed: first add only
     assert not dlg.isVisible()
+
+
+# --- the added-cards list on the right
+
+
+def _record(note_id, front="Q?", back="A."):
+    added_cards.record(note_id, 1, front, back, "", front)
+
+
+def test_added_cards_list_sits_right_of_the_fields(qapp, mw):
+    _record(7, "What is mens rea?", "The guilty mind.")
+    dlg = _open(mw)
+
+    assert dlg.splitter.widget(1) is dlg.added_list  # right-hand side
+    assert dlg.added_list.isVisible()
+    assert dlg.added_list.x() > dlg.panel.x()
+    assert dlg.added_list.title.text() == "Added cards (1)"
+
+    dlg.panel.front.insertPlainText("Q2")
+    dlg.panel.add_card()  # a card added here joins the list at once
+    assert dlg.added_list.title.text() == "Added cards (2)"
+    dlg.close()
+
+
+def test_clicking_an_added_card_opens_it_above_this_window(
+    qapp, mw, monkeypatch
+):
+    opened = []
+    monkeypatch.setattr(
+        textcard,
+        "open_added_card_editor",
+        lambda note_id, parent=None: opened.append((note_id, parent)),
+    )
+    _record(7)
+    dlg = _open(mw)
+    card = dlg.added_list.cards_lay.itemAt(0).widget()
+
+    QTest.mouseClick(card, textcard.Qt.MouseButton.LeftButton)
+
+    assert opened == [(7, dlg)]
+    dlg.close()
+
+
+def test_tucking_the_list_away_narrows_the_window_and_is_remembered(
+    qapp, mw
+):
+    dlg = _open(mw)
+    wide = dlg.width()
+    fields = dlg.panel.width()
+
+    dlg.added_btn.click()
+    QTest.qWait(20)
+
+    assert not dlg.added_list.isVisible()
+    assert dlg.width() < wide
+    assert abs(dlg.panel.width() - fields) <= 4  # the fields keep theirs
+    assert mw.addonManager.config.get("text_card_show_added") is False
+
+    dlg.added_btn.click()
+    QTest.qWait(20)
+
+    assert dlg.added_list.isVisible()
+    assert abs(dlg.width() - wide) <= 4
+    assert mw.addonManager.config.get("text_card_show_added") is True
+    dlg.close()
+
+
+def test_the_next_window_opens_with_the_list_as_left(qapp, mw):
+    mw.addonManager.config["text_card_show_added"] = False
+    dlg = _open(mw)
+    assert not dlg.added_list.isVisible()
+    assert dlg.added_btn.text() == "⟨"
+    dlg.close()
+
+
+def test_a_closed_window_stops_listening_for_added_cards(qapp, mw):
+    dlg = _open(mw)
+    assert dlg.added_list.refresh in added_cards._listeners
+    dlg.close()
+    assert dlg.added_list.refresh not in added_cards._listeners
+
+
+# --- typing: B / I / U state, Ctrl+Tab, back to the Front after an add
+
+
+def _focused(mw):
+    dlg = _open(mw)
+    dlg.activateWindow()
+    QTest.qWaitForWindowActive(dlg)
+    return dlg
+
+
+def _lit(panel):
+    return [btn.isChecked() for btn, _ in panel._format_buttons]
+
+
+def test_format_buttons_light_up_for_the_styles_in_use(qapp, mw):
+    dlg = _focused(mw)
+    p = dlg.panel
+    ctrl = textcard.Qt.KeyboardModifier.ControlModifier
+    QTest.keyClicks(p.front, "plain ")
+    assert _lit(p) == [False, False, False]
+
+    QTest.keyClick(p.front, textcard.Qt.Key.Key_B, ctrl)
+    assert _lit(p) == [True, False, False]  # before typing a letter
+    QTest.keyClicks(p.front, "bold")
+    QTest.keyClick(p.front, textcard.Qt.Key.Key_U, ctrl)
+    QTest.keyClicks(p.front, "both")
+    assert _lit(p) == [True, False, True]
+
+    cursor = p.front.textCursor()
+    cursor.setPosition(2)  # back inside "plain"
+    p.front.setTextCursor(cursor)
+    assert _lit(p) == [False, False, False]
+
+    # a right-to-left selection of "bold" reads its own format
+    cursor.setPosition(10)
+    cursor.setPosition(6, textcard.QTextCursor.MoveMode.KeepAnchor)
+    p.front.setTextCursor(cursor)
+    assert _lit(p) == [True, False, False]
+    p._format_buttons[0][0].click()  # B: switches the bold off...
+    assert _lit(p) == [False, False, False]  # ...and goes dark
+    dlg.close()
+
+
+def test_ctrl_tab_moves_down_the_boxes_and_round(qapp, mw):
+    dlg = _focused(mw)
+    p = dlg.panel
+    ctrl = textcard.Qt.KeyboardModifier.ControlModifier
+    shift = textcard.Qt.KeyboardModifier.ShiftModifier
+    tab = textcard.Qt.Key.Key_Tab
+
+    QTest.keyClicks(p.front, "Question")
+    QTest.keyClick(p.front, tab, ctrl)
+    assert textcard.QApplication.focusWidget() is p.back
+    assert p.front.toPlainText() == "Question"  # no tab typed
+    QTest.keyClick(p.back, tab, ctrl)
+    assert textcard.QApplication.focusWidget() is p.notes
+    QTest.keyClick(p.notes, tab, ctrl)
+    assert textcard.QApplication.focusWidget() is p.front
+
+    # Ctrl+Shift+Tab goes back up (Qt reports Shift+Tab as Backtab)
+    QTest.keyClick(p.front, textcard.Qt.Key.Key_Backtab, ctrl | shift)
+    assert textcard.QApplication.focusWidget() is p.notes
+    dlg.close()
+
+
+def test_typing_cursor_goes_back_to_the_front_after_an_add(qapp, mw):
+    dlg = _focused(mw)
+    p = dlg.panel
+    ctrl = textcard.Qt.KeyboardModifier.ControlModifier
+    QTest.keyClicks(p.front, "Q")
+    QTest.keyClick(p.front, textcard.Qt.Key.Key_Tab, ctrl)
+    QTest.keyClick(p.back, textcard.Qt.Key.Key_B, ctrl)
+    QTest.keyClicks(p.back, "A")
+
+    QTest.keyClick(p.back, textcard.Qt.Key.Key_Return, ctrl)  # add
+    _settle()
+
+    assert len(mw.added) == 1
+    assert textcard.QApplication.focusWidget() is p.front
+    assert not p.has_unsaved_text()
+    assert _lit(p) == [False, False, False]  # the bold stayed behind
+    dlg.close()
+
+
+def test_a_window_parked_at_the_screen_edge_stays_on_screen(qapp, mw):
+    dlg = _open(mw)
+    avail = dlg.screen().availableGeometry()
+    right = avail.x() + avail.width()
+    dlg.added_btn.click()  # tucked away: the narrow box...
+    QTest.qWait(20)
+    geo = dlg.geometry()
+    dlg.setGeometry(right - geo.width(), geo.y(), geo.width(), geo.height())
+    QTest.qWait(20)  # ...parked flush against the right edge
+
+    dlg.added_btn.click()  # the list comes back
+    QTest.qWait(20)
+
+    assert dlg.added_list.isVisible()
+    assert dlg.geometry().x() + dlg.width() <= right
+    dlg.close()

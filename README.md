@@ -178,10 +178,17 @@ Studio, llama.cpp, Jan, vLLM) works too — see
 **Text cards in your own words:** press **Ctrl+Shift+T** (or the 📝
 button in the editor) for a minimal Front/Back/Notes card with
 bold/italic/underline and font size; "📋 Snip text" drops your last
-snip's OCR text onto the front to rephrase. The window is made to sit
-beside your notes: it is independent of Anki's main window, shrinks
-to a small box, remembers where you parked it, and **📌 Stay on top**
-(on by default) keeps it above every other program while you read.
+snip's OCR text onto the front to rephrase. B / I / U light up while
+the text at the cursor uses that style. **Ctrl+Tab** moves the typing
+cursor down to the next box (Front → Back → Notes, then round to the
+Front; **Ctrl+Shift+Tab** goes up), and after **Add Card** it is back
+in the Front, ready for the next card. The cards you have added this
+session are listed down the right: click one to fix and redeploy it,
+or delete it; the thin ⟩ handle tucks the list away. The window is
+made to sit beside your notes: it is independent of Anki's main
+window, shrinks to a small box, remembers where you parked it, and
+**📌 Stay on top** (on by default) keeps it above every other program
+while you read.
 The same window opens when you press **Use →** on a suggested card.
 There the pin also decides what happens after you add the card: pinned,
 the window stays for the next one; unpinned, it closes itself as soon

@@ -118,6 +118,8 @@ DEFAULT_CONFIG = {
     # on the back behind a "Reveal source" button
     "text_card_attach_source": True,
     "text_card_stay_on_top": True,
+    # the added-cards list on the right of the text card window
+    "text_card_show_added": True,
 }
 
 # Distinct colors used for group badges in the editor
