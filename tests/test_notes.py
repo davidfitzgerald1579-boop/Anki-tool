@@ -405,6 +405,9 @@ def test_old_basic_note_type_upgraded_with_source(col):
     assert mm.by_name("Snip Occlusion Basic 2") is None
     names = {f["name"] for f in nt["flds"]}
     assert "Source" in names and "Source Text" in names
+    # Heading rode along with that one full sync, block on the front
+    assert "Heading" in names
+    assert nt["tmpls"][0]["qfmt"] == template.BASIC_HEADING_BLOCK + "{{Front}}"
     # the reveal block was appended; the customisation survived
     afmt = nt["tmpls"][0]["afmt"]
     assert "<!-- my custom footer -->" in afmt
@@ -691,6 +694,114 @@ def test_user_removed_reveal_block_stays_removed(col):
     )
     nt = mm.by_name(nt["name"])
     assert "{{Source}}" not in nt["tmpls"][0]["afmt"]
+
+
+def test_heading_shows_above_question_and_answer(col):
+    deck_id = col.decks.id("Default")
+    note = notes_mod.add_text_note(
+        col, deck_id, "What is consideration?", "Something of value.", "",
+        heading="Contract — Consideration",
+    )
+    assert note["Heading"] == "Contract — Consideration"
+    q = note.cards()[0].question()
+    a = note.cards()[0].answer()
+    strip = '<div class="sn-heading">Contract — Consideration</div>'
+    assert strip in q and strip in a
+    assert q.index(strip) < q.index("What is consideration?")
+    assert ".sn-heading" in note.note_type()["css"]
+    # no heading: no empty strip above the question
+    note2 = notes_mod.add_text_note(col, deck_id, "F", "B", "")
+    assert note2["Heading"] == ""
+    assert 'class="sn-heading"' not in note2.cards()[0].question()
+
+
+def _make_v031_basic_model(col):
+    """The note type as v0.27-v0.31 made it (every field but Heading),
+    with a customised front template and CSS."""
+    mm = col.models
+    old = mm.new("Snip Occlusion Basic")
+    for fname in ("Front", "Back", "Notes", "Source", "Source Text"):
+        mm.add_field(old, mm.new_field(fname))
+    t = mm.new_template("Card 1")
+    t["qfmt"] = "<!-- my front -->{{Front}}"
+    t["afmt"] = "{{FrontSide}}\n<hr id=answer>\n{{Back}}"
+    mm.add_template(old, t)
+    old["css"] = ".card { color: olive; }"
+    mm.add(old)
+    return mm.by_name("Snip Occlusion Basic")
+
+
+def test_heading_field_added_only_once_a_card_has_one(col, monkeypatch):
+    from snip_occlusion import template
+
+    old = _make_v031_basic_model(col)
+    asked = []
+    real = col.mod_schema
+
+    def counting(check):
+        asked.append(check)
+        return real(check)
+
+    monkeypatch.setattr(col, "mod_schema", counting)
+    deck_id = col.decks.id("Default")
+
+    # no heading: no full-sync prompt, the note type is left alone
+    note = notes_mod.add_text_note(col, deck_id, "F", "B", "")
+    assert note.id and asked == []
+    nt = col.models.by_name("Snip Occlusion Basic")
+    assert "Heading" not in {f["name"] for f in nt["flds"]}
+
+    # the first heading: one prompt, then the field and its block
+    note2 = notes_mod.add_text_note(
+        col, deck_id, "F2", "B2", "", heading="Tort"
+    )
+    assert len(asked) == 1
+    nt = col.models.by_name("Snip Occlusion Basic")
+    assert nt["id"] == old["id"]
+    assert "Heading" in {f["name"] for f in nt["flds"]}
+    qfmt = nt["tmpls"][0]["qfmt"]
+    assert qfmt == template.BASIC_HEADING_BLOCK + "<!-- my front -->{{Front}}"
+    assert ".card { color: olive; }" in nt["css"]
+    assert nt["css"].count(template.BASIC_HEADING_CSS) == 1
+    assert note2["Heading"] == "Tort"
+    assert '<div class="sn-heading">Tort</div>' in note2.cards()[0].answer()
+    # the earlier card simply has an empty heading
+    assert col.get_note(note.id)["Heading"] == ""
+
+    # later headings need no further prompt
+    notes_mod.add_text_note(col, deck_id, "F3", "B3", "", heading="Tort")
+    assert len(asked) == 1
+
+
+def test_declined_heading_field_puts_the_heading_on_the_front(
+    col, monkeypatch
+):
+    _make_v031_basic_model(col)
+
+    def refuse(check):
+        raise Exception("declined")
+
+    monkeypatch.setattr(col, "mod_schema", refuse)
+    note = notes_mod.add_text_note(
+        col, col.decks.id("Default"), "What is duress?", "B", "",
+        heading="Contract — Vitiating factors",
+    )
+    assert note.id
+    assert "Heading" not in note.keys()
+    q = note.cards()[0].question()
+    assert "Contract — Vitiating factors" in q
+    assert q.index("Vitiating factors") < q.index("What is duress?")
+
+
+def test_user_removed_heading_block_stays_removed(col):
+    nt = notes_mod.ensure_basic_note_type(col)
+    nt["tmpls"][0]["qfmt"] = "{{Front}}"
+    col.models.update_dict(nt)
+    notes_mod.add_text_note(
+        col, col.decks.id("Default"), "F", "B", "", heading="H"
+    )
+    nt = col.models.by_name(nt["name"])
+    assert "{{Heading}}" not in nt["tmpls"][0]["qfmt"]
 
 
 def test_incompatible_existing_model_gets_suffixed_name(col):

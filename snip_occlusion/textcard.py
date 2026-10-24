@@ -7,6 +7,7 @@ Two widgets, matching the main window's three-view layout:
   underneath. Clicking 🔎 on a card highlights, inline in that text,
   the sentences the card most likely came from - no popups.
 - TextCardPanel ("Write Card" view, and the Use →/Ctrl+Shift+T window):
+  an optional Heading (kept for the next cards on request), then
   Front/Back/Notes with simple formatting. In the main window it shows
   the source text at the top for reference; the standalone window has
   just the fields, with the session's added cards on its right.
@@ -35,6 +36,11 @@ from .newcard_panel import AddedCardsList
 from .uitools import cream_tooltips, notify as tooltip
 
 _SIZES = ["10", "12", "14", "16", "18", "20", "24", "28", "32"]
+
+# the heading "Keep heading" holds on to, shared by every card editor
+# opened this Anki session - a reopened Ctrl+Shift+T window or a Use →
+# window starts with it (and the box ticked); None while none is kept
+_kept_heading: str | None = None
 
 
 def _body_html(edit: QTextEdit) -> str:
@@ -92,17 +98,41 @@ class _CardEdit(QTextEdit):
             super().insertFromMimeData(source)
 
 
+class _ReturnLineEdit(QLineEdit):
+    """A line edit whose Return key goes nowhere else.
+
+    QLineEdit emits returnPressed but leaves the key event unaccepted,
+    so it climbs to the host QDialog, which clicks its default push
+    button ("Load new snip" in the main window, "📋 Snip text" in the
+    text card window). Here Enter does what returnPressed is connected
+    to ("answer it", "on to the Front") and nothing more.
+    """
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.returnPressed.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 class TextCardPanel(QWidget):
-    """Front/Back/Notes editor; optionally with the source text on top."""
+    """Heading/Front/Back/Notes editor; optionally with the source text
+    on top.
+
+    share_heading False (fixing an added card) hides "Keep heading"
+    and leaves the session's kept heading alone."""
 
     def __init__(
         self,
         parent=None,
         show_source: bool = False,
         standalone_shortcuts: bool = False,
+        share_heading: bool = True,
     ):
         super().__init__(parent)
         self.show_source = show_source
+        self._share_heading = share_heading
         self._active_edit: QTextEdit | None = None
         self.added_any = False  # did add_card() succeed at least once
         self.on_added = None  # callback(front, back, notes) after an add
@@ -182,6 +212,46 @@ class TextCardPanel(QWidget):
             lay = outer
             min_front, min_back, min_notes = 110, 130, 70
 
+        # --- the card's topic heading, shown above the question; "Keep
+        # heading" holds it for the next cards instead of clearing it
+        heading_row = QHBoxLayout()
+        heading_row.addWidget(QLabel("<b>Heading</b>", self))
+        self.heading_edit = _ReturnLineEdit(self)
+        self.heading_edit.setPlaceholderText(
+            "Optional — shown above the question"
+        )
+        self.heading_edit.setToolTip(
+            "A topic heading for the card (e.g. Contract — "
+            "Consideration), shown at the top of the question and the "
+            "answer. Enter moves on to the Front."
+        )
+        self.heading_edit.setClearButtonEnabled(True)
+        qconnect(self.heading_edit.returnPressed, self.focus_front)
+        heading_row.addWidget(self.heading_edit, 1)
+        self.keep_heading_box = QCheckBox("Keep heading", self)
+        self.keep_heading_box.setToolTip(
+            "Ticked, the heading stays after Add Card, so the next "
+            "cards on the same topic get it too — and card windows you "
+            "open later this session start with it. Unticked, it is "
+            "cleared with the rest of the card."
+        )
+        self.keep_heading_box.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.keep_heading_box.setVisible(self._share_heading)
+        heading_row.addWidget(self.keep_heading_box)
+        lay.addLayout(heading_row)
+        if self._share_heading:
+            if _kept_heading is not None:
+                self.heading_edit.setText(_kept_heading)
+                self.heading_edit.setCursorPosition(0)  # show its start
+                self.keep_heading_box.setChecked(True)
+            # connected only now: the restore above must not count as
+            # an edit (with the box still unticked it would drop the
+            # kept heading)
+            qconnect(
+                self.keep_heading_box.toggled, self._keep_heading_toggled
+            )
+            qconnect(self.heading_edit.textChanged, self._heading_edited)
+
         # --- formatting bar (applies to whichever box you're typing in);
         # B / I / U light up while the text at the cursor has that style
         bar = QHBoxLayout()
@@ -248,6 +318,8 @@ class TextCardPanel(QWidget):
         lay.addWidget(QLabel("<b>Front</b>", self))
         self.front = make_edit(min_front)
         lay.addWidget(self.front, 2)
+        # Tab from the heading lands in the Front, not on "Snip text"
+        QWidget.setTabOrder(self.heading_edit, self.front)
         lay.addWidget(QLabel("<b>Back</b>", self))
         self.back = make_edit(min_back)
         lay.addWidget(self.back, 3)
@@ -351,11 +423,13 @@ class TextCardPanel(QWidget):
         self.front.setFocus()
 
     def _jump_box(self, step: int) -> None:
-        """Ctrl+Tab: move the typing cursor down a box (Front → Back →
-        Notes, then round to the Front again); Ctrl+Shift+Tab goes up.
-        Plain Tab still types a tab inside the box."""
-        boxes = [self.front, self.back, self.notes]
-        current = self._target()
+        """Ctrl+Tab: move the typing cursor down a box (Heading → Front
+        → Back → Notes, then round to the Heading again);
+        Ctrl+Shift+Tab goes up. Plain Tab still types a tab inside the
+        Front, Back and Notes boxes."""
+        boxes = [self.heading_edit, self.front, self.back, self.notes]
+        focused = QApplication.focusWidget()
+        current = focused if focused is self.heading_edit else self._target()
         if current not in boxes:
             self.front.setFocus()
             return
@@ -379,10 +453,25 @@ class TextCardPanel(QWidget):
             pass  # the window was deleted in the meantime
 
     def has_unsaved_text(self) -> bool:
+        # the heading alone is no card (and a kept one is always there)
         return any(
             e.toPlainText().strip()
             for e in (self.front, self.back, self.notes)
         )
+
+    def _keep_heading_toggled(self, on: bool) -> None:
+        """Keep heading ticked: card windows opened later this session
+        start with this heading; unticked, they start without one."""
+        global _kept_heading
+        _kept_heading = self.heading_edit.text() if on else None
+
+    def _heading_edited(self, text: str) -> None:
+        # only a window that keeps its heading updates the kept one -
+        # another window's unkept heading (typed, or cleared after an
+        # add) must not replace or drop it
+        global _kept_heading
+        if self.keep_heading_box.isChecked():
+            _kept_heading = text
 
     # ---------------------------------------------------------- formatting
 
@@ -515,6 +604,7 @@ class TextCardPanel(QWidget):
         )
         back_html = _body_html(self.back)
         notes_html = _body_html(self.notes)
+        heading = " ".join(self.heading_edit.text().split())
         deck_id = self.deck_box.currentData()
         attach = bool(get_config().get("text_card_attach_source", True))
         src = self.source
@@ -539,6 +629,7 @@ class TextCardPanel(QWidget):
         note = notes_mod.add_text_note(
             mw.col, deck_id, front, back_html, notes_html, src,
             source_text=source_text_html, attach_source=attach,
+            heading=_escape(heading),
         )
         source_html = note["Source"] if "Source" in note.keys() else ""
         replaces = getattr(self, "replaces_note_id", None)
@@ -556,12 +647,14 @@ class TextCardPanel(QWidget):
                     plain[0],
                     source=source_html,
                     source_text=src_text,
+                    heading=heading,
                 )
                 self.replaces_note_id = int(note.id)
             else:
                 added_cards.record(
                     int(note.id), deck_id, front, back_html, notes_html,
                     plain[0], source=source_html, source_text=src_text,
+                    heading=heading,
                 )
         except Exception:
             pass  # the note was added; tracking it is best-effort
@@ -592,6 +685,8 @@ class TextCardPanel(QWidget):
         self.front.clear()
         self.back.clear()
         self.notes.clear()
+        if not self.keep_heading_box.isChecked():
+            self.heading_edit.clear()
         self.exclude_box.setChecked(False)  # one-off: back to teaching
         self.front.setFocus()
         QTimer.singleShot(0, self._refocus_front)
@@ -602,23 +697,6 @@ class TextCardPanel(QWidget):
             return bool(self.exclude_box.isChecked())
         except Exception:
             return False
-
-
-class _QuestionEdit(QLineEdit):
-    """A line edit whose Return key goes nowhere else.
-
-    QLineEdit emits returnPressed but leaves the key event unaccepted,
-    so it climbs to the host QDialog, which clicks its default push
-    button ("Load new snip" in the main window). Here Enter means
-    "answer it" and nothing more.
-    """
-
-    def keyPressEvent(self, event) -> None:
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            self.returnPressed.emit()
-            event.accept()
-            return
-        super().keyPressEvent(event)
 
 
 class SuggestionsPage(QWidget):
@@ -744,7 +822,7 @@ class SuggestionsPage(QWidget):
         q_lbl = QLabel("✍️ Your question:", self)
         q_lbl.setStyleSheet("color:#8a8171;")
         ask_row.addWidget(q_lbl)
-        self.question_edit = _QuestionEdit(self)
+        self.question_edit = _ReturnLineEdit(self)
         self.question_edit.setPlaceholderText(
             "Type the front of a card — the AI writes the back from "
             "the source text (Enter)"
@@ -2347,9 +2425,13 @@ class AddedCardDialog(QDialog):
         info.setStyleSheet("color:#8a8171;")
         lay.addWidget(info)
         self.panel = TextCardPanel(
-            self, show_source=False, standalone_shortcuts=True
+            self,
+            show_source=False,
+            standalone_shortcuts=True,
+            share_heading=False,
         )
         lay.addWidget(self.panel)
+        self.panel.heading_edit.setText(entry.get("heading", ""))
         self.panel.front.setHtml(entry.get("front", ""))
         self.panel.back.setHtml(entry.get("back", ""))
         self.panel.notes.setHtml(entry.get("notes", ""))

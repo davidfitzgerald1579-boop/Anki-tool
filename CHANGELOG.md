@@ -4,6 +4,31 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.32.0 — 2026-10-24
+
+- **A Heading for text cards.** The Ctrl+Shift+T window (and Use →,
+  Write Card, and fixing an added card) has a one-line **Heading** box
+  above the Front for the card's topic — e.g. "Contract —
+  Consideration". It shows as a small bold strip at the top of the
+  question and the answer, and is optional: leave it empty and the
+  card looks exactly as before. Enter or Tab in the box moves on to
+  the Front, and Ctrl+Tab now runs Heading → Front → Back → Notes.
+- **Keep heading.** Tick the box beside the heading and it stays put
+  after Add Card, so a run of cards on the same topic needs it typed
+  once; untick it and it is cleared with the rest of the card. While
+  ticked, card windows you open later in the same Anki session
+  (Ctrl+Shift+T reopened, Use → windows) start with that heading too.
+  A kept heading on its own never counts as an unsaved card when you
+  close the window.
+- Headings are saved in a new **Heading** field of the "Snip
+  Occlusion Basic" note type. An existing note type gains it the
+  first time you add a card with a heading (Anki asks once to allow
+  the full sync that adding a field needs); decline, and the heading
+  is put at the top of the Front instead so it is never lost. Cards
+  without a heading never trigger the prompt.
+- The added-cards list shows each card's heading next to its number,
+  and fixing an added card keeps (or lets you correct) its heading.
+
 ## v0.31.0 — 2026-10-17
 
 - **Added cards in the Ctrl+Shift+T window.** The text card window now

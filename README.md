@@ -178,11 +178,15 @@ Studio, llama.cpp, Jan, vLLM) works too — see
 **Text cards in your own words:** press **Ctrl+Shift+T** (or the 📝
 button in the editor) for a minimal Front/Back/Notes card with
 bold/italic/underline and font size; "📋 Snip text" drops your last
-snip's OCR text onto the front to rephrase. B / I / U light up while
+snip's OCR text onto the front to rephrase. An optional **Heading**
+(the card's topic, e.g. "Contract — Consideration") shows as a small
+strip at the top of the question and answer; tick **Keep heading** and
+it stays for the next cards instead of clearing, so a run of cards on
+one topic needs it typed once. B / I / U light up while
 the text at the cursor uses that style. **Ctrl+Tab** moves the typing
-cursor down to the next box (Front → Back → Notes, then round to the
-Front; **Ctrl+Shift+Tab** goes up), and after **Add Card** it is back
-in the Front, ready for the next card. The cards you have added this
+cursor down to the next box (Heading → Front → Back → Notes, then
+round to the Heading; **Ctrl+Shift+Tab** goes up), and after **Add
+Card** it is back in the Front, ready for the next card. The cards you have added this
 session are listed down the right: click one to fix and redeploy it,
 or delete it; the thin ⟩ handle tucks the list away. The window is
 made to sit beside your notes: it is independent of Anki's main

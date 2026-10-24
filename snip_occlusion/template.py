@@ -161,7 +161,26 @@ def build_css(mask_fill: str, target_fill: str) -> str:
 
 # ------------------------------------------------ simple text card ("Basic")
 
-BASIC_FRONT = "{{Front}}"
+# The optional topic heading, above the question - and so above the
+# answer too, which repeats the front via {{FrontSide}}. Put at the top
+# of pre-existing front templates by notes.ensure_basic_note_type in
+# the pass that adds the Heading field.
+BASIC_HEADING_BLOCK = (
+    '{{#Heading}}<div class="sn-heading">{{Heading}}</div>{{/Heading}}\n'
+)
+
+BASIC_HEADING_CSS = """.sn-heading {
+  margin-bottom: 14px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #ddd;
+  font-size: 0.75em;
+  font-weight: bold;
+  color: #666;
+}
+.night_mode .sn-heading { color: #aaa; border-bottom-color: #555; }
+"""
+
+BASIC_FRONT = BASIC_HEADING_BLOCK + "{{Front}}"
 
 # v0.26 shipped an image-only reveal block; kept verbatim so
 # notes.ensure_basic_note_type can find and replace it in place.
@@ -340,5 +359,6 @@ BASIC_CSS = (
 }
 .night_mode .sn-notes { color: #aaa; border-top-color: #555; }
 """
+    + BASIC_HEADING_CSS
     + BASIC_SOURCE_CSS
 )

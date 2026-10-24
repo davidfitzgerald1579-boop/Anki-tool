@@ -167,7 +167,21 @@ def _upgrade_basic_templates(mm, nt, install: bool) -> None:
         nt["css"] = nt.get("css", "") + "\n" + template.BASIC_SOURCE_CSS
 
 
-def ensure_basic_note_type(col, attach_source: bool = True):
+def _install_basic_heading(nt) -> None:
+    """Show the just-added Heading field above the question: its block
+    goes at the top of every front template (the back repeats the
+    front) and its rules join the CSS. Called only in the pass that
+    adds the field, so a block the user later deletes stays deleted."""
+    for tmpl in nt["tmpls"]:
+        if "{{Heading}}" not in tmpl["qfmt"]:
+            tmpl["qfmt"] = template.BASIC_HEADING_BLOCK + tmpl["qfmt"]
+    if ".sn-heading" not in nt.get("css", ""):
+        nt["css"] = nt.get("css", "") + "\n" + template.BASIC_HEADING_CSS
+
+
+def ensure_basic_note_type(
+    col, attach_source: bool = True, with_heading: bool = False
+):
     """Find or create the simple Front/Back/Notes/Source note type.
 
     An existing note type of ours is upgraded in place with any
@@ -176,7 +190,9 @@ def ensure_basic_note_type(col, attach_source: bool = True):
     still get added, just without the new fields) and the upgrade is
     offered again another time. attach_source False skips the Source
     upgrade entirely: the feature is off, so an untouched note type
-    must stay untouched.
+    must stay untouched. A missing Heading field alone is only worth
+    that full sync once a card has a heading to store (with_heading);
+    otherwise it just rides along with any other upgrade.
     """
     mm = col.models
     name = BASIC_MODEL_NAME
@@ -189,7 +205,7 @@ def ensure_basic_note_type(col, attach_source: bool = True):
             missing = [f for f in BASIC_FIELDS if f not in existing]
             if not attach_source:
                 missing = [f for f in missing if f not in SOURCE_FIELDS]
-            if not missing:
+            if not missing or (missing == ["Heading"] and not with_heading):
                 return nt
             try:
                 _mod_schema(col)
@@ -201,6 +217,8 @@ def ensure_basic_note_type(col, attach_source: bool = True):
                 _upgrade_basic_templates(
                     mm, nt, install="Source" in missing
                 )
+            if "Heading" in missing:
+                _install_basic_heading(nt)
             _save(mm, nt)
             return _by_name(mm, name)
         name = "%s %d" % (BASIC_MODEL_NAME, attempt + 2)
@@ -246,6 +264,7 @@ def add_text_note(
     source=None,
     source_text: str = "",
     attach_source: bool = True,
+    heading: str = "",
 ):
     """`source` is where the card came from: None, ready field HTML
     (a redeploy keeping the original note's source), or a
@@ -254,10 +273,23 @@ def add_text_note(
     declined upgrade (or the feature switched off) leaves no orphaned
     media file - the card is simply added without a source.
     `source_text` is ready field HTML for the highlighted source text
-    (see source_trace_html); stored only when the field exists."""
-    nt = ensure_basic_note_type(col, attach_source=attach_source)
+    (see source_trace_html); stored only when the field exists.
+    `heading` is ready field HTML for the topic heading above the
+    question."""
+    nt = ensure_basic_note_type(
+        col, attach_source=attach_source, with_heading=bool(heading)
+    )
     note = col.new_note(nt)
     fields = set(note.keys())
+    if heading and "Heading" not in fields:
+        # the Heading field is missing (upgrade declined): the heading
+        # must not vanish - put it at the top of the front instead,
+        # styled inline as the note type's CSS has no rule for it
+        front = (
+            '<div class="sn-heading" style="font-size:0.75em;'
+            'font-weight:bold;margin-bottom:14px;">%s</div>%s'
+            % (heading, front)
+        )
     source_html = ""
     if source is not None and "Source" in fields:
         try:
@@ -280,6 +312,8 @@ def add_text_note(
         note["Source"] = source_html
     if "Source Text" in fields:
         note["Source Text"] = source_text
+    if "Heading" in fields:
+        note["Heading"] = heading
     col.add_note(note, deck_id)
     return note
 

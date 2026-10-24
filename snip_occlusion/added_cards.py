@@ -50,13 +50,16 @@ def record(
     label: str,
     source: str = "",
     source_text: str = "",
+    heading: str = "",
 ) -> None:
     """Remember a just-added note. Fields are HTML; label is plain.
 
     `source` is the note's Source field (the snip it came from), kept
     so a redeploy carries it over to the replacement note.
     `source_text` is the PLAIN source text behind the card, kept raw
-    so a redeploy can re-highlight it against the corrected card."""
+    so a redeploy can re-highlight it against the corrected card.
+    `heading` is the card's topic heading, PLAIN (it goes back into a
+    one-line box)."""
     _entries.append(
         {
             "note_id": int(note_id),
@@ -67,6 +70,7 @@ def record(
             "label": " ".join((label or "").split()) or "(untitled card)",
             "source": source,
             "source_text": source_text,
+            "heading": heading,
         }
     )
     _fire()
@@ -97,6 +101,7 @@ def replace(
     label: str,
     source: str = "",
     source_text: str = "",
+    heading: str = "",
 ) -> None:
     """A redeploy: the entry now tracks the replacement note."""
     for entry in _entries:
@@ -110,13 +115,14 @@ def replace(
                 label=" ".join((label or "").split()) or "(untitled card)",
                 source=source,
                 source_text=source_text,
+                heading=heading,
             )
             _fire()
             return
     # unknown original (e.g. registry cleared) - track the new note
     record(
         new_note_id, deck_id, front, back, notes, label,
-        source=source, source_text=source_text,
+        source=source, source_text=source_text, heading=heading,
     )
 
 

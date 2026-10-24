@@ -13,6 +13,8 @@ BASIC_FIELDS = [
     # the source text with the card's origin sentences highlighted,
     # baked at add time; the other half of the "Reveal source" view
     "Source Text",
+    # an optional topic heading, shown above the question
+    "Heading",
 ]
 
 # The reveal-source fields, upgraded (and switched off) together
