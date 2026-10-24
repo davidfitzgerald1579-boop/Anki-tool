@@ -342,11 +342,15 @@ class AddedCardWidget(QFrame):
         lay.setSpacing(2)
         front = _clip(_html_to_text(entry.get("front", "")), 160)
         back = _clip(_html_to_text(entry.get("back", "")), 140)
+        heading = _clip(" ".join(entry.get("heading", "").split()), 60)
         body = QLabel(
-            "<span style='color:#8a8171;font-size:8.5pt;'>Card %d</span>"
+            "<span style='color:#8a8171;font-size:8.5pt;'>Card %d%s</span>"
             "<br><b>Q:</b> %s<br><b>A:</b> %s"
             % (
                 index,
+                " · " + heading.replace("&", "&amp;").replace("<", "&lt;")
+                if heading
+                else "",
                 front.replace("&", "&amp;").replace("<", "&lt;"),
                 back.replace("&", "&amp;").replace("<", "&lt;"),
             ),

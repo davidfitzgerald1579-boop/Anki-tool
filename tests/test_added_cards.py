@@ -26,12 +26,16 @@ def test_record_get_forget():
 
 
 def test_replace_swaps_note_and_content():
-    added_cards.record(1, 5, "F", "B", "", "old label")
-    added_cards.replace(1, 2, 6, "F2", "B2", "N2", "new label")
+    added_cards.record(1, 5, "F", "B", "", "old label", heading="Tort")
+    assert added_cards.get(1)["heading"] == "Tort"
+    added_cards.replace(
+        1, 2, 6, "F2", "B2", "N2", "new label", heading="Tort — Nuisance"
+    )
     assert added_cards.get(1) is None
     entry = added_cards.get(2)
     assert entry["front"] == "F2" and entry["deck_id"] == 6
     assert entry["label"] == "new label"
+    assert entry["heading"] == "Tort — Nuisance"
     assert len(added_cards.entries()) == 1
     # replacing an unknown id still tracks the new note
     added_cards.replace(99, 3, 7, "F3", "B3", "", "x")

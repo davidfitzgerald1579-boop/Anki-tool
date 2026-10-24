@@ -110,10 +110,11 @@ def mw(monkeypatch):
     added = []
 
     def add_text_note(col, deck_id, front, back, notes, src, **kw):
-        added.append((deck_id, front, back, notes))
+        added.append((deck_id, front, back, notes, kw.get("heading", "")))
         return _FakeNote()
 
     monkeypatch.setattr(textcard.notes_mod, "add_text_note", add_text_note)
+    monkeypatch.setattr(textcard, "_kept_heading", None)  # per session
     monkeypatch.setattr(textcard.qgen_feedback, "record", lambda *a, **k: None)
     monkeypatch.setattr(
         textcard.qgen_feedback, "unrecord", lambda *a, **k: None
@@ -402,11 +403,15 @@ def test_ctrl_tab_moves_down_the_boxes_and_round(qapp, mw):
     assert p.front.toPlainText() == "Question"  # no tab typed
     QTest.keyClick(p.back, tab, ctrl)
     assert textcard.QApplication.focusWidget() is p.notes
-    QTest.keyClick(p.notes, tab, ctrl)
+    QTest.keyClick(p.notes, tab, ctrl)  # round to the top box
+    assert textcard.QApplication.focusWidget() is p.heading_edit
+    QTest.keyClick(p.heading_edit, tab, ctrl)
     assert textcard.QApplication.focusWidget() is p.front
 
     # Ctrl+Shift+Tab goes back up (Qt reports Shift+Tab as Backtab)
     QTest.keyClick(p.front, textcard.Qt.Key.Key_Backtab, ctrl | shift)
+    assert textcard.QApplication.focusWidget() is p.heading_edit
+    QTest.keyClick(p.heading_edit, textcard.Qt.Key.Key_Backtab, ctrl | shift)
     assert textcard.QApplication.focusWidget() is p.notes
     dlg.close()
 
@@ -446,3 +451,135 @@ def test_a_window_parked_at_the_screen_edge_stays_on_screen(qapp, mw):
     assert dlg.added_list.isVisible()
     assert dlg.geometry().x() + dlg.width() <= right
     dlg.close()
+
+
+# --- the heading, and Keep heading
+
+
+def test_heading_goes_on_the_card_and_clears_after_the_add(qapp, mw):
+    dlg = _open(mw)
+    p = dlg.panel
+    assert p.keep_heading_box.isVisible()
+    assert not p.keep_heading_box.isChecked()  # off by default
+
+    p.heading_edit.setText("  Contract <law>   — consideration ")
+    p.front.insertPlainText("What is consideration?")
+    p.add_card()
+
+    # spaces tidied, and escaped for the field
+    assert mw.added[-1][4] == "Contract &lt;law> — consideration"
+    entry = added_cards.entries()[-1]
+    assert entry["heading"] == "Contract <law> — consideration"  # plain
+    assert p.heading_edit.text() == ""  # not kept: cleared with the card
+    dlg.close()
+
+
+def test_keep_heading_holds_it_for_card_after_card(qapp, mw):
+    dlg = _open(mw)
+    p = dlg.panel
+    p.heading_edit.setText("Tort — Negligence")
+    p.keep_heading_box.setChecked(True)
+
+    for question in ("Duty?", "Breach?"):
+        p.front.insertPlainText(question)
+        p.add_card()
+        assert p.heading_edit.text() == "Tort — Negligence"
+        assert not p.has_unsaved_text()  # a kept heading is no card
+
+    assert [a[4] for a in mw.added] == ["Tort — Negligence"] * 2
+    dlg.close()
+    assert _AutoYes.asked == []  # closing never asks about the heading
+
+
+def test_a_kept_heading_carries_into_windows_opened_later(qapp, mw):
+    first = _open(mw)
+    first.panel.heading_edit.setText("Crime — Mens rea")
+    first.panel.keep_heading_box.setChecked(True)
+    first.panel.heading_edit.setText("Crime — Actus reus")  # edited later
+    first.close()
+
+    again = _open(mw)  # Ctrl+Shift+T reopened...
+    assert again.panel.heading_edit.text() == "Crime — Actus reus"
+    assert again.panel.keep_heading_box.isChecked()
+    use = _use_window(mw)  # ...and a Use → window
+    assert use.panel.heading_edit.text() == "Crime — Actus reus"
+    assert use.panel.keep_heading_box.isChecked()
+
+    use.panel.keep_heading_box.setChecked(False)  # unticked: let go
+    use.close()
+    later = _open(mw)
+    assert later.panel.heading_edit.text() == ""
+    assert not later.panel.keep_heading_box.isChecked()
+    later.close()
+    again.close()
+
+
+def test_an_unkept_heading_elsewhere_leaves_the_kept_one_alone(qapp, mw):
+    keeper = _open(mw)
+    keeper.panel.heading_edit.setText("Land — Easements")
+    keeper.panel.keep_heading_box.setChecked(True)
+    other = _use_window(mw)  # opened with it, then unticked by hand
+    other.panel.keep_heading_box.setChecked(False)
+    keeper.panel.keep_heading_box.setChecked(False)
+    keeper.panel.keep_heading_box.setChecked(True)  # the keeper re-ticks
+
+    other.panel.heading_edit.setText("Something else")  # typed, unkept...
+    other.panel.add_card()  # ...and cleared after the add
+
+    assert mw.added[-1][4] == "Something else"
+    assert other.panel.heading_edit.text() == ""
+    assert textcard._kept_heading == "Land — Easements"
+    other.close()
+    keeper.close()
+
+
+def test_enter_and_tab_in_the_heading_move_on_to_the_front(
+    qapp, mw, monkeypatch
+):
+    snips = []
+    monkeypatch.setattr(
+        textcard, "get_previous_snip_text", lambda: snips.append(1) or "X"
+    )
+    dlg = _focused(mw)
+    p = dlg.panel
+    p.heading_edit.setFocus()
+    QTest.keyClicks(p.heading_edit, "Land law")
+
+    QTest.keyClick(p.heading_edit, textcard.Qt.Key.Key_Return)
+
+    assert textcard.QApplication.focusWidget() is p.front
+    assert snips == [] and mw.added == []  # no button was clicked
+    assert p.heading_edit.text() == "Land law"
+
+    p.heading_edit.setFocus()
+    QTest.keyClick(p.heading_edit, textcard.Qt.Key.Key_Tab)
+    assert textcard.QApplication.focusWidget() is p.front
+    dlg.close()
+
+
+def test_fixing_an_added_card_keeps_its_own_heading(qapp, mw, monkeypatch):
+    removed = []
+    monkeypatch.setattr(
+        textcard.notes_mod,
+        "remove_note",
+        lambda col, note_id: removed.append(note_id),
+    )
+    host = _open(mw)
+    monkeypatch.setattr(textcard, "_kept_heading", "Something kept")
+    added_cards.record(7, 1, "Q?", "A.", "", "Q?", heading="Equity — Trusts")
+    fix = textcard.AddedCardDialog(added_cards.get(7), parent=host)
+    mw.dialogs.append(fix)
+    fix.show()
+    QTest.qWait(20)
+    p = fix.panel
+    assert p.heading_edit.text() == "Equity — Trusts"  # not the kept one
+    assert not p.keep_heading_box.isVisible()
+
+    p.heading_edit.setText("Equity — Express trusts")
+    p.add_card()  # Redeploy
+
+    assert mw.added[-1][4] == "Equity — Express trusts"
+    assert removed == [7]
+    assert added_cards.get(_FakeNote.id)["heading"] == "Equity — Express trusts"
+    assert textcard._kept_heading == "Something kept"  # left alone
+    host.close()
