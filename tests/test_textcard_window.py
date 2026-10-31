@@ -160,6 +160,12 @@ def mw(monkeypatch):
     for label in list(uitools._active):
         label.hide()
     QTest.qWait(20)
+    # a window held only by a reference cycle (e.g. a closed text card
+    # window its fix window held on to) is freed by the next garbage
+    # collection: make that happen now, not at interpreter exit after
+    # the QApplication has gone (a segfault)
+    gc.collect()
+    QTest.qWait(20)
 
 
 def _open(mw, **kw):
