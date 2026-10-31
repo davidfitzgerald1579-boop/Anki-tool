@@ -19,6 +19,19 @@ installed version is shown as `human_version` in
   Ctrl+Shift+T or Use → opened again) an open fix window used to
   vanish, taking your unsaved corrections with it. It now stays open
   until you close it yourself.
+- **Fix: the same kind of error after ⚠ Ref or ✎ Fix on a
+  suggestion** ("wrapped C/C++ object of type QFrame has been
+  deleted"). Taking a new snip while either box was open replaced the
+  suggestions underneath it, and confirming the box then tripped over
+  the card that had gone. The reference is still blocklisted and the
+  correction still learned. ↶ on the new list no longer brings back a
+  card from the old slide.
+- **Esc on a text card window now closes it like the ✕ button.** It
+  used to skip the window's closing steps, so a half-typed card
+  vanished without the "Close and discard the unsaved card?" question,
+  a Use → card was not handed back to the suggestions (and stayed
+  counted as kept), and the closed window stayed in memory for the
+  rest of the session.
 
 ## v0.32.0 — 2026-10-24
 

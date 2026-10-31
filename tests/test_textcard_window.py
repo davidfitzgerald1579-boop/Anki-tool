@@ -721,3 +721,176 @@ def test_is_showing_is_false_for_a_deleted_or_missing_window(qapp):
     sip.delete(w)
     assert not uitools.is_showing(w)  # w.isVisible() would raise
     assert not uitools.is_showing(None)
+
+
+# --- Esc closes a text card window the same way the X button does
+#
+# QDialog turns Esc into reject(), and since Qt 6.3 reject() hides the
+# window without a close event, so closeEvent never ran: no "discard
+# the unsaved card?" prompt, a Use → card not handed back, and the
+# window kept listening for added cards (so it was never freed).
+
+
+class _AutoNo(_AutoYes):
+    @classmethod
+    def question(cls, *a, **k):
+        cls.asked.append(a[2] if len(a) > 2 else k.get("text"))
+        return cls.StandardButton.No
+
+
+def _esc(dlg):
+    QTest.keyClick(dlg.panel.front, textcard.Qt.Key.Key_Escape)
+    _settle(20)
+
+
+def test_esc_asks_before_throwing_a_typed_card_away(qapp, mw, monkeypatch):
+    dlg = _open(mw)
+    dlg.panel.front.setFocus()
+    dlg.panel.front.insertPlainText("half-typed card")
+    monkeypatch.setattr(textcard, "QMessageBox", _AutoNo)
+    _AutoNo.asked = []
+
+    _esc(dlg)
+
+    assert _AutoNo.asked == ["Close and discard the unsaved card?"]
+    assert dlg.isVisible()  # answered No: the card is still there
+    assert dlg.panel.front.toPlainText() == "half-typed card"
+
+    monkeypatch.setattr(textcard, "QMessageBox", _AutoYes)
+    _esc(dlg)
+
+    assert _AutoYes.asked == ["Close and discard the unsaved card?"]
+    assert not dlg.isVisible()
+    assert dlg.added_list.refresh not in added_cards._listeners
+
+
+def test_esc_on_an_empty_window_just_closes_it(qapp, mw):
+    dlg = _open(mw)
+    _esc(dlg)
+    assert not dlg.isVisible()
+    assert _AutoYes.asked == []  # nothing to lose: no question
+    assert dlg.added_list.refresh not in added_cards._listeners
+
+
+def test_esc_on_a_use_window_hands_the_card_back(qapp, mw):
+    dlg = _use_window(mw)
+    _esc(dlg)
+    assert not dlg.isVisible()
+    assert dlg._discards == [1]  # the suggestion returns to the list
+
+
+# --- a new snip while a suggestion's ⚠ Ref / ✎ Fix box is open
+#
+# Both boxes are modal, but the clipboard still reaches the Snip
+# Occlusion window: a snip taken meanwhile replaces the suggestions
+# and the box's own event loop deletes their rows, this one included.
+# Removing the row once the box closed crashed with "wrapped C/C++
+# object of type QFrame has been deleted".
+
+
+@pytest.fixture
+def page(qapp, mw, monkeypatch):
+    """A Suggested Cards page with one suggestion on it."""
+    errors = []
+    # an exception in a button's slot goes to sys.excepthook once it is
+    # replaced (with the default hook PyQt aborts the whole test run)
+    monkeypatch.setattr(sys, "excepthook", lambda t, v, tb: errors.append(v))
+    monkeypatch.setattr(textcard.qgen_bakeoff, "tally", lambda *a, **k: None)
+    lessons, phantoms = [], []
+    monkeypatch.setattr(
+        textcard.qgen_feedback,
+        "record",
+        lambda card, verdict, **k: lessons.append((card, verdict)),
+    )
+    monkeypatch.setattr(
+        textcard.qgen_feedback, "record_phantom", phantoms.append
+    )
+    p = textcard.SuggestionsPage()
+    mw.dialogs.append(p)
+    p._add_card_row({"front": "Q?", "back": "A."})
+    p.show()
+    QTest.qWait(20)
+    p.errors, p.lessons, p.phantoms = errors, lessons, phantoms
+    return p
+
+
+def _rows(page) -> list:
+    lay = page.suggest_lay
+    return [lay.itemAt(i).widget() for i in range(lay.count() - 1)]
+
+
+def _new_snip_replaces_the_rows(page) -> None:
+    """What a snip taken while a box is open does: refresh_suggestions()
+    clears the rows, and the box's event loop runs their deleteLater()
+    before the box closes."""
+    rows = _rows(page)
+    page._clear_rows()
+    for row in rows:
+        sip.delete(row)
+
+
+def _click(page, label: str) -> None:
+    row = _rows(page)[0]
+    btn = next(
+        b for b in row.findChildren(textcard.QPushButton) if b.text() == label
+    )
+    btn.click()
+
+
+class _RefBox:
+    """Stands in for the ⚠ Ref prompt (QInputDialog.getText)."""
+
+    answer = "R v Made Up [2099]"
+    meanwhile = None  # called while the box is "open"
+
+    @classmethod
+    def getText(cls, *a, **k):
+        if cls.meanwhile is not None:
+            cls.meanwhile()
+        return cls.answer, True
+
+
+def test_ref_still_clears_the_row_and_can_be_undone(page, monkeypatch):
+    _RefBox.meanwhile = None
+    monkeypatch.setattr(textcard, "QInputDialog", _RefBox)
+
+    _click(page, "⚠ Ref")
+    _settle(20)
+
+    assert page.errors == []
+    assert page.phantoms == [_RefBox.answer]
+    assert _rows(page) == []
+    assert len(page._undo_stack) == 1 and page.undo_btn.isEnabled()
+
+
+def test_a_snip_during_the_ref_prompt_does_not_crash(page, monkeypatch):
+    _RefBox.meanwhile = lambda: _new_snip_replaces_the_rows(page)
+    monkeypatch.setattr(textcard, "QInputDialog", _RefBox)
+
+    _click(page, "⚠ Ref")
+    _settle(20)
+
+    assert page.errors == []  # was: RuntimeError ... QFrame ... deleted
+    assert page.phantoms == [_RefBox.answer]  # still blocklisted
+    # ↶ on the new list must not bring back the old slide's card
+    assert page._undo_stack == [] and not page.undo_btn.isEnabled()
+
+
+def test_a_snip_during_the_fix_box_does_not_crash(page, monkeypatch):
+    class _FixBox(textcard.QDialog):
+        def exec(self):
+            front = self.findChildren(textcard.QPlainTextEdit)[0]
+            front.setPlainText("Q, corrected")
+            _new_snip_replaces_the_rows(page)
+            return textcard.QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(textcard, "QDialog", _FixBox)
+
+    _click(page, "✎ Fix")
+    _settle(20)
+
+    assert page.errors == []  # was: RuntimeError ... QFrame ... deleted
+    # the correction is still learned...
+    assert [c["front"] for c, _ in page.lessons] == ["Q, corrected"]
+    # ...but ↶ on the new list must not bring back the old slide's card
+    assert page._undo_stack == [] and not page.undo_btn.isEnabled()
