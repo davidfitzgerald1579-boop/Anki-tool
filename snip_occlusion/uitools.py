@@ -156,4 +156,10 @@ def notify(message: str, parent=None, period: int = 3000, **_ignored) -> None:
             if label in _active:
                 _active.remove(label)
 
-    QTimer.singleShot(max(800, int(period)), _close)
+    # the timer belongs to the label, so it goes with it: a notice
+    # deleted early (or by Qt at shutdown) leaves no timer behind to
+    # fire on - or outlive - a label that is gone
+    timer = QTimer(label)
+    timer.setSingleShot(True)
+    qconnect(timer.timeout, _close)
+    timer.start(max(800, int(period)))
