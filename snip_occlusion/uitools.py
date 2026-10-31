@@ -32,6 +32,21 @@ _tip_timer: QTimer | None = None
 _tip_filter = None
 
 
+def is_showing(widget) -> bool:
+    """widget.isVisible(), but False - not an error - once it is gone.
+
+    A window kept in a Python list can be deleted underneath it (e.g.
+    together with the parentless window that owned it, once that one
+    was garbage-collected); its leftover wrapper then raises
+    RuntimeError on any call, even isVisible()."""
+    if widget is None:
+        return False
+    try:
+        return widget.isVisible()
+    except RuntimeError:
+        return False
+
+
 def _hide_tip() -> None:
     if _tip_label is not None and _tip_label.isVisible():
         _tip_label.hide()

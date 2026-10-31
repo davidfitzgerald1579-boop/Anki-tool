@@ -33,7 +33,7 @@ from .dialog import (
     get_previous_snip_text,
 )
 from .newcard_panel import AddedCardsList
-from .uitools import cream_tooltips, notify as tooltip
+from .uitools import cream_tooltips, is_showing, notify as tooltip
 
 _SIZES = ["10", "12", "14", "16", "18", "20", "24", "28", "32"]
 
@@ -2371,7 +2371,7 @@ def open_text_card_dialog(
         # the plain dialog is a singleton; prefilled ones (from AI
         # suggestions) each open their own window
         existing = getattr(mw, "_snip_occlusion_text_dialog", None)
-        if existing is not None and existing.isVisible():
+        if is_showing(existing):
             existing.raise_()
             existing.activateWindow()
             return
@@ -2389,7 +2389,7 @@ def open_text_card_dialog(
         refs = getattr(mw, "_snip_occlusion_text_dialogs", None)
         if refs is None:
             refs = mw._snip_occlusion_text_dialogs = []
-        refs[:] = [d for d in refs if d.isVisible()]
+        refs[:] = [d for d in refs if is_showing(d)]
         refs.append(dlg)
     dlg.show()
 
@@ -2404,6 +2404,13 @@ class AddedCardDialog(QDialog):
 
     def __init__(self, entry: dict, parent=None):
         super().__init__(parent or mw)
+        # Qt deletes this window along with its owner. A text card
+        # window is parentless, so it lasts only while Python holds
+        # it, and a closed one is let go when the next one opens.
+        # Holding it here keeps it, and so this window, alive for as
+        # long as this one is open. Otherwise reopening Ctrl+Shift+T
+        # would wipe out a half-done fix.
+        self._opener = parent
         self.entry = entry
         self.setWindowTitle(ADDON_NAME + " — Added card")
         self.setMinimumSize(560, 600)
@@ -2496,6 +2503,8 @@ def open_added_card_editor(note_id: int, parent=None) -> None:
     refs = getattr(mw, "_snip_occlusion_added_dialogs", None)
     if refs is None:
         refs = mw._snip_occlusion_added_dialogs = []
-    refs[:] = [d for d in refs if d.isVisible()]
+    # a closed fix window may already be gone (deleted along with the
+    # window it was opened from), so ask safely
+    refs[:] = [d for d in refs if is_showing(d)]
     refs.append(dlg)
     dlg.show()

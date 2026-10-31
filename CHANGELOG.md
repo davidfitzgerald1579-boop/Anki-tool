@@ -4,6 +4,22 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.32.1 — 2026-10-31
+
+- **Fix: clicking a card in the added-cards list could fail with
+  "wrapped C/C++ object of type AddedCardDialog has been deleted".**
+  The Ctrl+Shift+T and Use → windows are their own top-level windows,
+  so once one was closed and a new one opened, the old one was
+  cleared away, and with it every fix-a-card window opened from it.
+  The add-on still kept those gone windows on its list, and the next
+  click on an added card tripped over them. Gone windows are now
+  skipped.
+- **A fix-a-card window you are still working in is no longer wiped
+  out.** In the same situation (its text card window closed, then
+  Ctrl+Shift+T or Use → opened again) an open fix window used to
+  vanish, taking your unsaved corrections with it. It now stays open
+  until you close it yourself.
+
 ## v0.32.0 — 2026-10-24
 
 - **A Heading for text cards.** The Ctrl+Shift+T window (and Use →,

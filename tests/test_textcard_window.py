@@ -8,8 +8,10 @@ touches (the deck list, the add-on config store, reset()), and the
 back to PyQt6 as in every other test.
 """
 
+import gc
 import sys
 import types
+import weakref
 
 import pytest
 
@@ -74,6 +76,7 @@ if "aqt" not in sys.modules:
     sys.modules["aqt"] = aqt
     sys.modules["aqt.utils"] = utils
 
+from PyQt6 import sip  # noqa: E402
 from PyQt6.QtTest import QTest  # noqa: E402
 
 from snip_occlusion import added_cards, textcard, uitools  # noqa: E402
@@ -102,6 +105,26 @@ class _AutoYes:
         return cls.StandardButton.Yes
 
 
+_OPENED_WINDOW_KEYS = (
+    "_snip_occlusion_text_dialog",  # the blank Ctrl+Shift+T window
+    "_snip_occlusion_text_dialogs",  # Use → windows
+    "_snip_occlusion_added_dialogs",  # fix-an-added-card windows
+)
+
+
+def _take_opened_windows(mw) -> list:
+    """Forget (and return) the windows the open_*() functions keep
+    on mw."""
+    windows = []
+    for key in _OPENED_WINDOW_KEYS:
+        held = mw.__dict__.pop(key, None)
+        if isinstance(held, list):
+            windows.extend(held)
+        elif held is not None:
+            windows.append(held)
+    return windows
+
+
 @pytest.fixture
 def mw(monkeypatch):
     """A fresh config store and a stubbed note writer for each test."""
@@ -123,12 +146,15 @@ def mw(monkeypatch):
     _AutoYes.asked = []
     _mw.added = added
     _mw.dialogs = []  # every window _open() made, for teardown
+    _take_opened_windows(_mw)  # none left over from an earlier test
     yield _mw
     added_cards.clear()
     # let Qt delete the windows now, while the application is still
     # up, rather than leaving it to Python's garbage collector (a
     # top-level QDialog freed from a dead test frame can crash Qt)
-    for dlg in _mw.dialogs:
+    for dlg in _mw.dialogs + _take_opened_windows(_mw):
+        if sip.isdeleted(dlg):
+            continue  # already went with the window that owned it
         dlg.hide()
         dlg.deleteLater()
     for label in list(uitools._active):
@@ -583,3 +609,115 @@ def test_fixing_an_added_card_keeps_its_own_heading(qapp, mw, monkeypatch):
     assert added_cards.get(_FakeNote.id)["heading"] == "Equity — Express trusts"
     assert textcard._kept_heading == "Something kept"  # left alone
     host.close()
+
+
+# --- fixing an added card after the window it came from has gone
+#
+# A text card window is parentless, so only Python keeps it alive: a
+# closed one is let go when the next one opens, and Qt deletes the
+# fix-a-card windows it owned along with it. The list of fix windows
+# then held a dead one, and the next click on an added card crashed
+# with "wrapped C/C++ object of type AddedCardDialog has been deleted".
+
+
+def _open_window(kind: str):
+    """Open a text card window the way the add-on does: the blank
+    Ctrl+Shift+T one, or a Use → one for an AI suggestion."""
+    if kind == "blank":
+        textcard.open_text_card_dialog()
+        dlg = textcard.mw._snip_occlusion_text_dialog
+    else:
+        textcard.open_text_card_dialog(
+            front_text=_SUGGESTION["front"],
+            back_text=_SUGGESTION["back"],
+            original_card=dict(_SUGGESTION),
+        )
+        dlg = textcard.mw._snip_occlusion_text_dialogs[-1]
+    QTest.qWait(20)
+    assert dlg.isVisible()
+    return dlg
+
+
+def _fix_windows(mw) -> list:
+    return list(getattr(mw, "_snip_occlusion_added_dialogs", []))
+
+
+@pytest.mark.parametrize("kind", ["blank", "use"])
+def test_fixing_a_card_after_the_window_is_reopened_does_not_crash(
+    qapp, mw, kind
+):
+    _record(7)
+    first = _open_window(kind)
+    first.added_list.open(7)  # fix a card...
+    fix = _fix_windows(mw)[-1]
+    fix.reject()  # ...close the fix...
+    first.close()  # ...and the window
+    _settle()
+    old_window = weakref.ref(first)
+    del first, fix
+
+    second = _open_window(kind)  # the old window is let go here
+    gc.collect()  # Anki collects garbage on a timer
+
+    second.added_list.open(7)  # crashed here
+
+    fixes = _fix_windows(mw)
+    assert len(fixes) == 1  # the closed fix window was dropped
+    assert fixes[0].isVisible() and fixes[0].parentWidget() is second
+    # and nothing is kept alive for nothing: with its fix window
+    # closed and dropped, the old window is freed
+    gc.collect()
+    assert old_window() is None
+
+
+@pytest.mark.parametrize("kind", ["blank", "use"])
+def test_an_open_fix_survives_the_window_being_reopened(qapp, mw, kind):
+    _record(7)
+    first = _open_window(kind)
+    first.added_list.open(7)
+    fix = _fix_windows(mw)[-1]
+    QTest.qWait(20)
+    fix.panel.front.setPlainText("Q, corrected")
+    first.close()  # the fix window stays up
+    _settle()
+    del first
+
+    _open_window(kind)  # the old window is let go here
+    gc.collect()
+
+    # used to vanish, taking the half-done fix with it
+    assert not sip.isdeleted(fix)
+    assert fix.isVisible()
+    assert fix.panel.front.toPlainText() == "Q, corrected"
+
+
+def test_dead_windows_left_on_mw_are_skipped_not_crashed_on(qapp, mw):
+    _record(7)
+    host = _open(mw)
+    dead_fix = textcard.AddedCardDialog(added_cards.get(7), parent=host)
+    dead_blank = textcard.TextCardDialog()
+    dead_use = textcard.TextCardDialog()
+    for dead in (dead_fix, dead_blank, dead_use):
+        sip.delete(dead)
+    mw._snip_occlusion_added_dialogs = [dead_fix]
+    mw._snip_occlusion_text_dialog = dead_blank
+    mw._snip_occlusion_text_dialogs = [dead_use]
+
+    textcard.open_added_card_editor(7, parent=host)
+    blank = _open_window("blank")
+    use = _open_window("use")
+
+    assert _fix_windows(mw)[0].isVisible()
+    assert len(_fix_windows(mw)) == 1
+    assert blank is not dead_blank
+    assert mw._snip_occlusion_text_dialogs == [use]
+
+
+def test_is_showing_is_false_for_a_deleted_or_missing_window(qapp):
+    w = textcard.QWidget()
+    assert not uitools.is_showing(w)  # never shown
+    w.show()
+    assert uitools.is_showing(w)
+    sip.delete(w)
+    assert not uitools.is_showing(w)  # w.isVisible() would raise
+    assert not uitools.is_showing(None)
