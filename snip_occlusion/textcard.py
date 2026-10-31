@@ -33,7 +33,7 @@ from .dialog import (
     get_previous_snip_text,
 )
 from .newcard_panel import AddedCardsList
-from .uitools import cream_tooltips, notify as tooltip
+from .uitools import cream_tooltips, is_showing, notify as tooltip
 
 _SIZES = ["10", "12", "14", "16", "18", "20", "24", "28", "32"]
 
@@ -1616,9 +1616,16 @@ class SuggestionsPage(QWidget):
         index: int,
         unrecord_card=None,
         tally: str | None = None,
+        batch: int | None = None,
     ) -> None:
         """Remember how to reverse a verdict: which card comes back to
-        the list, which feedback entry to forget, which tally to undo."""
+        the list, which feedback entry to forget, which tally to undo.
+
+        `batch` is the list the verdict was given on. If a new snip has
+        replaced that list since, nothing is remembered: ↶ on the new
+        list must not bring back a card from the old one."""
+        if batch is not None and batch != self._batch_id:
+            return
         self._undo_stack.append((row_card, index, unrecord_card, tally))
         self.undo_btn.setEnabled(True)
 
@@ -1638,7 +1645,7 @@ class SuggestionsPage(QWidget):
         QTimer.singleShot(0, self._fit_suggestions_if_auto)
 
     def _teach_correction(
-        self, card: dict, corrected: dict, index: int
+        self, card: dict, corrected: dict, index: int, batch=None
     ) -> None:
         """Record the user's corrected card as the lesson (no card added).
 
@@ -1653,16 +1660,19 @@ class SuggestionsPage(QWidget):
             qgen_bakeoff.tally(card, "fixed")
         except Exception:
             pass
-        self._push_undo(card, index, unrecord_card=corrected, tally="fixed")
+        self._push_undo(
+            card, index, unrecord_card=corrected, tally="fixed", batch=batch
+        )
         tooltip(
             "Corrected version learned — future cards imitate yours.",
             parent=self,
         )
 
-    def _open_fix_dialog(self, card: dict, index: int) -> bool:
+    def _open_fix_dialog(self, card: dict, index: int, batch=None) -> bool:
         """✎ Fix: edit the card's content purely to teach the AI.
 
         Returns True when a correction was saved (the row then clears).
+        `batch` is the list the card was on (see _push_undo).
         """
         dlg = QDialog(self)
         dlg.setWindowTitle(ADDON_NAME + " — Correct this card")
@@ -1725,7 +1735,7 @@ class SuggestionsPage(QWidget):
                 parent=self,
             )
             return False
-        self._teach_correction(card, corrected, index)
+        self._teach_correction(card, corrected, index, batch=batch)
         return True
 
     def _add_suggestion_row(
@@ -1874,11 +1884,21 @@ class SuggestionsPage(QWidget):
             )
             remove_row()
 
+        # ⚠ Ref and ✎ Fix wait on a modal box, but the clipboard still
+        # reaches the Snip Occlusion window: a snip taken meanwhile
+        # replaces the list and deletes its rows, this one included.
+        # The verdict still counts; the gone row is left alone, and no
+        # undo is kept for the old list (see _push_undo).
+
         def fix() -> None:
-            if self._open_fix_dialog(card, row_index()):
-                remove_row()
+            batch = self._batch_id
+            if self._open_fix_dialog(card, row_index(), batch=batch):
+                if self._batch_id == batch:
+                    remove_row()
 
         def fake_ref() -> None:
+            batch = self._batch_id
+            index = row_index()
             detected = qgen._citations(
                 " ".join([notes or "", back, front])
             )
@@ -1897,10 +1917,11 @@ class SuggestionsPage(QWidget):
                 qgen_bakeoff.tally(card, "bad")
             except Exception:
                 pass
-            self._push_undo(
-                card, row_index(), unrecord_card=card, tally="bad"
-            )
-            remove_row()
+            if self._batch_id == batch:
+                self._push_undo(
+                    card, index, unrecord_card=card, tally="bad"
+                )
+                remove_row()
             tooltip(
                 "Noted — that reference is now blocklisted and will be "
                 "stripped from future suggestions.",
@@ -2332,6 +2353,15 @@ class TextCardDialog(QDialog):
         self._save_geometry()
         super().hideEvent(event)
 
+    def reject(self) -> None:
+        # Esc ends up here. Since Qt 6.3 reject() hides a dialog without
+        # a close event, which would skip closeEvent below: no "discard
+        # the unsaved card?" prompt, a Use → card never handed back, and
+        # the closed window left listening (and so never freed). Close
+        # it like the X button instead; closeEvent can still say no.
+        # (No return value: PyQt rejects one from reject().)
+        self.close()
+
     def closeEvent(self, event) -> None:
         if self.panel.has_unsaved_text():
             resp = QMessageBox.question(
@@ -2371,7 +2401,7 @@ def open_text_card_dialog(
         # the plain dialog is a singleton; prefilled ones (from AI
         # suggestions) each open their own window
         existing = getattr(mw, "_snip_occlusion_text_dialog", None)
-        if existing is not None and existing.isVisible():
+        if is_showing(existing):
             existing.raise_()
             existing.activateWindow()
             return
@@ -2389,7 +2419,7 @@ def open_text_card_dialog(
         refs = getattr(mw, "_snip_occlusion_text_dialogs", None)
         if refs is None:
             refs = mw._snip_occlusion_text_dialogs = []
-        refs[:] = [d for d in refs if d.isVisible()]
+        refs[:] = [d for d in refs if is_showing(d)]
         refs.append(dlg)
     dlg.show()
 
@@ -2404,6 +2434,13 @@ class AddedCardDialog(QDialog):
 
     def __init__(self, entry: dict, parent=None):
         super().__init__(parent or mw)
+        # Qt deletes this window along with its owner. A text card
+        # window is parentless, so it lasts only while Python holds
+        # it, and a closed one is let go when the next one opens.
+        # Holding it here keeps it, and so this window, alive for as
+        # long as this one is open. Otherwise reopening Ctrl+Shift+T
+        # would wipe out a half-done fix.
+        self._opener = parent
         self.entry = entry
         self.setWindowTitle(ADDON_NAME + " — Added card")
         self.setMinimumSize(560, 600)
@@ -2496,6 +2533,8 @@ def open_added_card_editor(note_id: int, parent=None) -> None:
     refs = getattr(mw, "_snip_occlusion_added_dialogs", None)
     if refs is None:
         refs = mw._snip_occlusion_added_dialogs = []
-    refs[:] = [d for d in refs if d.isVisible()]
+    # a closed fix window may already be gone (deleted along with the
+    # window it was opened from), so ask safely
+    refs[:] = [d for d in refs if is_showing(d)]
     refs.append(dlg)
     dlg.show()

@@ -4,6 +4,35 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.32.1 — 2026-10-31
+
+- **Fix: clicking a card in the added-cards list could fail with
+  "wrapped C/C++ object of type AddedCardDialog has been deleted".**
+  The Ctrl+Shift+T and Use → windows are their own top-level windows,
+  so once one was closed and a new one opened, the old one was
+  cleared away, and with it every fix-a-card window opened from it.
+  The add-on still kept those gone windows on its list, and the next
+  click on an added card tripped over them. Gone windows are now
+  skipped.
+- **A fix-a-card window you are still working in is no longer wiped
+  out.** In the same situation (its text card window closed, then
+  Ctrl+Shift+T or Use → opened again) an open fix window used to
+  vanish, taking your unsaved corrections with it. It now stays open
+  until you close it yourself.
+- **Fix: the same kind of error after ⚠ Ref or ✎ Fix on a
+  suggestion** ("wrapped C/C++ object of type QFrame has been
+  deleted"). Taking a new snip while either box was open replaced the
+  suggestions underneath it, and confirming the box then tripped over
+  the card that had gone. The reference is still blocklisted and the
+  correction still learned. ↶ on the new list no longer brings back a
+  card from the old slide.
+- **Esc on a text card window now closes it like the ✕ button.** It
+  used to skip the window's closing steps, so a half-typed card
+  vanished without the "Close and discard the unsaved card?" question,
+  a Use → card was not handed back to the suggestions (and stayed
+  counted as kept), and the closed window stayed in memory for the
+  rest of the session.
+
 ## v0.32.0 — 2026-10-24
 
 - **A Heading for text cards.** The Ctrl+Shift+T window (and Use →,
