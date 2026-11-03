@@ -403,3 +403,56 @@ def test_widget_fits_a_small_screen(qapp, monkeypatch):
             assert len(radio.text()) <= 30, radio.text()
     assert "On this computer" in w.local_radio.text()
     assert w.hosted_radio.text() == "A hosted service"
+
+
+def test_claude_controls_show_load_and_save(qapp, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    w = ProviderSettings(
+        {
+            "qgen_provider": "anthropic",
+            "qgen_model": "claude-sonnet-5-5",
+            "qgen_api_key": "sk-ant-1",
+            "qgen_claude_effort": "low",
+            "qgen_claude_max_tokens": 4000,
+            "qgen_monthly_budget_usd": 12.5,
+        }
+    )
+    assert w.mode() == "hosted" and w.is_claude()
+    assert w.claude_pane.isVisibleTo(w)
+    assert w.model_box.currentText() == "claude-sonnet-5-5"
+    assert w.effort_box.currentData() == "low"
+    assert w.max_tokens_box.value() == 4000
+    assert w.budget_box.value() == pytest.approx(12.5)
+    assert "platform.claude.com" in w.key_link.text()
+    assert "Anthropic" in w.privacy.text()
+    w.effort_box.setCurrentIndex(w.effort_box.findData("high"))
+    w.max_tokens_box.setValue(16000)
+    w.budget_box.setValue(0)
+    v = w.values()
+    assert v["qgen_provider"] == "anthropic"
+    assert v["qgen_api_keys"] == {"anthropic": "sk-ant-1"}
+    assert v["qgen_claude_effort"] == "high"
+    assert v["qgen_claude_max_tokens"] == 16000
+    assert v["qgen_monthly_budget_usd"] == 0
+    assert w.problem() == ""
+    # the Claude-only controls hide for every other provider
+    w.service_box.setCurrentIndex(w.service_box.findData("groq"))
+    assert not w.claude_pane.isVisibleTo(w)
+    w.local_radio.setChecked(True)
+    assert not w.claude_pane.isVisibleTo(w)
+
+
+def test_usage_line_shows_this_months_spend(qapp):
+    from snip_occlusion import qgen_usage
+
+    w = ProviderSettings({})
+    assert "No AI requests yet" in w.usage_label.text()
+    assert not w.usage_reset_btn.isVisibleTo(w)
+    qgen_usage.record("anthropic", "claude-opus-5-5", 100_000, 10_000)
+    w = ProviderSettings({"qgen_provider": "anthropic", "qgen_api_key": "k"})
+    assert "claude-opus-5-5" in w.usage_label.text()
+    assert "$0.60" in w.usage_label.text()
+    assert w.usage_reset_btn.isVisibleTo(w)
+    w.usage_reset_btn.click()
+    assert qgen_usage.month_rows() == {}
+    assert "No AI requests yet" in w.usage_label.text()

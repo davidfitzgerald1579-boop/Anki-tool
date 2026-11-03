@@ -14,9 +14,17 @@ Supported providers:
       LM Studio, llama.cpp's built-in server, Jan, KoboldCpp, vLLM,
       text-generation-webui, and most other local inference servers, as
       well as any remote endpoint the user chooses to point it at.
+
+  "anthropic"
+      Claude, through Anthropic's Messages API, paid from the user's
+      Claude API credits. Needs "anthropic_api_key" (or the
+      ANTHROPIC_API_KEY environment variable). "model" picks the Claude
+      model, "claude_effort" how hard it thinks (low / medium / high)
+      and "max_output_tokens" caps each reply.
 """
 
 import json
+import os
 import urllib.error
 import urllib.request
 
@@ -32,9 +40,11 @@ def chat(config, prompt, system=None):
         return _chat_ollama(config, prompt, system)
     if provider == "openai_compatible":
         return _chat_openai_compatible(config, prompt, system)
+    if provider in ("anthropic", "claude"):
+        return _chat_anthropic(config, prompt, system)
     raise LLMError(
         "Unknown provider %r in the add-on config. "
-        "Use \"ollama\" or \"openai_compatible\"." % provider
+        "Use \"ollama\", \"openai_compatible\" or \"anthropic\"." % provider
     )
 
 
@@ -105,6 +115,77 @@ def _chat_openai_compatible(config, prompt, system):
         raise LLMError(
             "Unexpected response from the server:\n%s" % _truncate(json.dumps(data))
         )
+
+
+ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+ANTHROPIC_VERSION = "2026-10-21"
+DEFAULT_CLAUDE_MODEL = "claude-opus-5-5"
+_EFFORTS = ("low", "medium", "high")
+# a request Claude's safety filters decline is retried server-side on
+# another Claude model; Haiku has no such fallback
+_FALLBACK_FAMILIES = ("claude-fable-5", "claude-opus-5", "claude-sonnet-5-5")
+
+
+def _chat_anthropic(config, prompt, system):
+    model = str(config.get("model") or "").strip()
+    if not model or not model.startswith("claude"):
+        # "model" may still hold the Ollama default from before
+        model = DEFAULT_CLAUDE_MODEL
+    api_key = str(
+        config.get("anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY") or ""
+    ).strip()
+    if not api_key:
+        raise LLMError(
+            "Claude needs an API key. Create one at "
+            "https://platform.claude.com/settings/keys and put it in "
+            "\"anthropic_api_key\" in the add-on config."
+        )
+    try:
+        max_tokens = int(config.get("max_output_tokens") or 16000)
+    except (TypeError, ValueError):
+        max_tokens = 16000
+    max_tokens = max(1024, min(64000, max_tokens))
+    body = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    if system:
+        body["system"] = system
+    effort = str(config.get("claude_effort") or "medium").strip().lower()
+    if effort in _EFFORTS:
+        body["output_config"] = {"effort": effort}
+    headers = {"x-api-key": api_key, "anthropic-version": ANTHROPIC_VERSION}
+    if any(model.startswith(f) for f in _FALLBACK_FAMILIES):
+        body["fallbacks"] = "default"
+        headers["anthropic-beta"] = "server-side-fallback-2026-07-01"
+    data = _post_json(
+        ANTHROPIC_URL,
+        body,
+        headers=headers,
+        timeout=_timeout(config),
+        server_hint="Could not reach Anthropic's API. Check your internet connection.",
+    )
+    if not isinstance(data, dict):
+        raise LLMError("Unexpected response from Claude:\n%s" % _truncate(json.dumps(data)))
+    if data.get("stop_reason") == "refusal":
+        raise LLMError(
+            "Claude declined this request. Its safety filters occasionally "
+            "misfire on ordinary study material; try again or trim the text."
+        )
+    text = "".join(
+        str(b.get("text") or "")
+        for b in data.get("content") or []
+        if isinstance(b, dict) and b.get("type") == "text"
+    )
+    if not text.strip():
+        if data.get("stop_reason") == "max_tokens":
+            raise LLMError(
+                "Claude reached \"max_output_tokens\" (%d) before writing "
+                "anything - raise it, or lower \"claude_effort\"." % max_tokens
+            )
+        raise LLMError("Unexpected response from Claude:\n%s" % _truncate(json.dumps(data)))
+    return text
 
 
 def _timeout(config):

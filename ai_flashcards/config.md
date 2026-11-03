@@ -10,6 +10,9 @@ Which kind of LLM server to talk to:
   your own machine. Free and open source.
 - `"openai_compatible"` — any server exposing the OpenAI chat-completions
   API: LM Studio, llama.cpp server, Jan, KoboldCpp, vLLM, etc.
+- `"anthropic"` — Claude, paid from your Claude API credits. Set
+  `anthropic_api_key` (below) and a Claude `model`. Your text is sent to
+  Anthropic.
 
 ## model
 
@@ -20,6 +23,10 @@ The model name to request.
 - For LM Studio and similar servers, use the model identifier the server
   shows (many local servers ignore this field and use whatever model is
   currently loaded).
+- For `"anthropic"`: `claude-opus-5-5` (most capable, $4 / $20 per
+  million input / output tokens), `claude-sonnet-5-5` ($2 / $10) or
+  `claude-haiku-5-5` (fastest and cheapest, $0.10 / $0.50). A non-Claude
+  name here falls back to `claude-opus-5-5`.
 
 ## ollama_url
 
@@ -37,6 +44,25 @@ default). Only used when `provider` is `"openai_compatible"`.
 
 Optional. Sent as a `Bearer` token to OpenAI-compatible servers that
 require one. Local servers normally don't; leave it empty.
+
+## anthropic_api_key
+
+Your Claude API key, used only when `provider` is `"anthropic"`. Create
+one at https://platform.claude.com/settings/keys. Leave empty to use the
+`ANTHROPIC_API_KEY` environment variable instead. The key is stored in
+this add-on's config on your computer and sent only to api.anthropic.com.
+
+## claude_effort
+
+How hard Claude thinks before answering: `"low"`, `"medium"` (default)
+or `"high"`. Thinking is billed as output tokens, so lower effort is
+faster and cheaper.
+
+## max_output_tokens
+
+The most Claude may write in one request, thinking included — a hard
+ceiling on what one request can cost (you pay only for what is used).
+Default `16000`; allowed range 1024–64000.
 
 ## note_type
 

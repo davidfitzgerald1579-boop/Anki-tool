@@ -153,6 +153,47 @@ confidential. The add-on refuses HTTP redirects, so your key is only
 ever sent to the address you configured. The Settings window prints the destination
 next to the option so it is never a surprise.
 
+## Using Claude with your Claude API credits
+
+If you already have Claude API credits, the add-on can use Claude
+(Anthropic's own models — not open-source) instead:
+
+1. Create an API key at <https://platform.claude.com/settings/keys>
+   (the account needs credits under **Billing**).
+2. In the editor, open **⚙ Settings → AI model**, choose **A hosted
+   service** and pick **Anthropic (Claude)**.
+3. Paste the key, pick a model, and press **Test connection**.
+
+Below the model list are the controls for how much it uses:
+
+| Setting | What it does |
+| --- | --- |
+| **Model** | `claude-opus-5-5` (most capable), `claude-sonnet-5-5` (fast and capable) or `claude-haiku-5-5` (fastest, cheapest). **Fetch list** shows every model your key can use. |
+| **Effort** | How hard Claude thinks before writing the cards. Thinking is billed as output, so *Low* is fastest and cheapest — usually plenty for a slide; *High* is the most thorough. |
+| **Max output per request** | A hard ceiling on how many tokens one request may produce, thinking included — so on what one request can cost. You are billed only for what is used. |
+| **Monthly budget** | The add-on stops sending Claude requests once this month's estimated spend reaches it. *No limit* by default. |
+
+Underneath, a usage line shows this month's requests, tokens in and
+out, and an estimated cost per model (every provider's tokens are
+counted; only Claude's are priced). The estimate uses Anthropic's list
+prices — your bill in the Claude Console is the final word. **Reset**
+clears the tally without touching your bill.
+
+Rough cost per slide (about 1,500 tokens in; a few hundred to a couple
+of thousand out, depending on effort):
+
+| Model | Price per million tokens (in / out) | One slide's cards |
+| --- | --- | --- |
+| claude-haiku-5-5 | $0.10 / $0.50 | ≈ $0.001 |
+| claude-sonnet-5-5 | $2 / $10 | ≈ $0.01 – 0.03 |
+| claude-opus-5-5 | $4 / $20 | ≈ $0.02 – 0.05 |
+
+Background pre-generation (`qgen_prefetch`, on by default) starts a
+request as soon as each snip lands in the editor, so every snip costs a
+request whether or not you press *Suggest cards*. Turn it off in the
+add-on config if you'd rather only pay when you ask. As with any hosted
+service, the slide's *text* (never the image) is sent to Anthropic.
+
 ## Renting a server and running the model yourself
 
 If you do want your own box — for a model nobody hosts, or a machine
@@ -219,6 +260,7 @@ If you would rather not send text anywhere:
 | Service | Config value | Key from | Free tier |
 | --- | --- | --- | --- |
 | Groq | `"groq"` | console.groq.com/keys | Yes, no card |
+| Anthropic (Claude) | `"anthropic"` | platform.claude.com/settings/keys | No — uses your Claude API credits |
 | OpenRouter | `"openrouter"` | openrouter.ai/keys | `:free` models, 50/day |
 | Cerebras | `"cerebras"` | cloud.cerebras.ai | $5 trial credit (card required) |
 | Together AI | `"together"` | api.together.ai/settings/api-keys | Small sign-up credit |

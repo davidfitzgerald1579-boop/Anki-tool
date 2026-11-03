@@ -45,6 +45,10 @@ class GenerateDialog(QDialog):
 
         provider = config.get("provider", "ollama")
         model = config.get("model", "llama3.1:8b")
+        if str(provider).lower() in ("anthropic", "claude") and not str(
+            model
+        ).startswith("claude"):
+            model = "claude-opus-5-5"
         info = QLabel(
             "Using <b>%s</b> via <b>%s</b> &mdash; change this in "
             "Tools &rsaquo; Add-ons &rsaquo; Config." % (model, provider)

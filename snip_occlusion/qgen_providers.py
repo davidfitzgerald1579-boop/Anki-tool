@@ -14,16 +14,25 @@ whose computer runs the model:
               slide text is sent to that company, and the user brings
               their own API key.
 
+  "anthropic" - Anthropic's own Claude models (Opus, Sonnet, Haiku),
+              paid from the user's Claude API credits. Not open-weight,
+              and spoken to through Anthropic's Messages API rather than
+              the OpenAI one; the user picks the model, how hard it
+              thinks (effort), a cap on reply tokens and an optional
+              monthly budget, and the add-on tracks what was spent.
+
   "openai_compatible" - any other server speaking the OpenAI
               chat-completions API: LM Studio or llama.cpp on this
               machine, a GPU box the user rents and runs vLLM/Ollama on,
               a friend's PC across the network, ...
 
-Every hosted service serves its models through the same two wire
-protocols (the OpenAI chat-completions API or Ollama's native API), so
-a preset is just a known base URL, a few good model ids, where the key
-comes from, and the odd extra header. No SDKs: everything goes through
-the standard library, which is all Anki's bundled Python has.
+Hosted services serve their models through one of three wire protocols
+(the OpenAI chat-completions API, Ollama's native API, or Anthropic's
+Messages API), so a preset is just a known base URL, a few good model
+ids, where the key comes from, and the odd extra header. No SDKs:
+everything goes through the standard library, which is all Anki's
+bundled Python has - the official Anthropic SDK needs compiled
+dependencies an add-on cannot ship for every platform.
 """
 
 from __future__ import annotations
@@ -38,6 +47,9 @@ CUSTOM = "openai_compatible"
 
 API_OLLAMA = "ollama"
 API_OPENAI = "openai"
+API_ANTHROPIC = "anthropic"  # Anthropic's Messages API (Claude)
+
+ANTHROPIC = "anthropic"  # the qgen_provider value for Claude
 
 # suggestions for the local Ollama model box; the actual list comes from
 # the running server when the user presses Fetch
@@ -53,7 +65,7 @@ LOCAL_MODELS = (
 class Preset:
     key: str
     label: str
-    api: str  # API_OPENAI | API_OLLAMA
+    api: str  # API_OPENAI | API_OLLAMA | API_ANTHROPIC
     base_url: str
     key_url: str  # where to create an API key
     env_var: str  # consulted when qgen_api_key is empty
@@ -88,6 +100,27 @@ HOSTED = (
         free_tier="Free tier, no card needed (about 200,000 tokens a day per model - over a hundred slides).",
         note="Fast, and the free tier needs no card. Recommended.",
         pricing_url="https://groq.com/pricing",
+    ),
+    Preset(
+        key=ANTHROPIC,
+        label="Anthropic (Claude)",
+        api=API_ANTHROPIC,
+        base_url="https://api.anthropic.com/v1",
+        key_url="https://platform.claude.com/settings/keys",
+        env_var="ANTHROPIC_API_KEY",
+        models=(
+            ("claude-opus-5-5", "Claude Opus 5.5 - most capable; $4 in / $20 out per million tokens"),
+            ("claude-sonnet-5-5", "Claude Sonnet 5.5 - fast and capable; $2 / $10 per million tokens"),
+            ("claude-haiku-5-5", "Claude Haiku 5.5 - fastest and cheapest; $0.10 / $0.50 per million tokens"),
+        ),
+        free_tier="Paid from your Claude API credits (Claude Console → Billing); no free tier.",
+        note=(
+            "Claude models, not open-weight. Choose effort, a reply cap "
+            "and an optional monthly budget below; spending is tracked "
+            "here."
+        ),
+        pricing_url="https://platform.claude.com/docs/en/about-claude/pricing",
+        reasoning_param="",
     ),
     Preset(
         key="openrouter",
@@ -227,6 +260,83 @@ _BY_KEY = {p.key: p for p in HOSTED}
 REASONING_MODELS = ("gpt-oss", "deepseek-r1", "qwen3", "qwq", "-thinking")
 
 
+# Claude API list prices, US dollars per million tokens (input, output),
+# for estimating what a request cost. Ids are matched exactly or as a
+# prefix, so a dated snapshot ("claude-haiku-4-5-20251001") finds its
+# family. Anything not listed is tracked in tokens with no price.
+CLAUDE_PRICES = {
+    "claude-fable-5-1": (10.0, 50.0),
+    "claude-fable-5": (10.0, 50.0),
+    "claude-opus-5-5": (4.0, 20.0),
+    "claude-opus-5": (5.0, 25.0),
+    "claude-opus-4-8": (5.0, 25.0),
+    "claude-opus-4-7": (5.0, 25.0),
+    "claude-opus-4-6": (5.0, 25.0),
+    "claude-sonnet-5-5": (2.0, 10.0),
+    "claude-sonnet-5": (2.0, 10.0),
+    "claude-sonnet-4-6": (3.0, 15.0),
+    "claude-haiku-5-5": (0.10, 0.50),
+    "claude-haiku-4-5": (1.0, 5.0),
+}
+
+# How hard Claude thinks before answering ("effort"); "" = the model's
+# own default. Lower effort is faster and spends fewer tokens.
+CLAUDE_EFFORTS = (
+    ("low", "Low - fastest and cheapest; plenty for most slides"),
+    ("medium", "Medium - a balance of care and cost"),
+    ("high", "High - most thorough, uses the most tokens"),
+)
+DEFAULT_CLAUDE_EFFORT = "medium"
+DEFAULT_CLAUDE_MAX_TOKENS = 8000
+CLAUDE_MAX_TOKENS_RANGE = (1024, 64000)
+
+# Claude models whose requests may name a fallback for a declined
+# request ("fallbacks": "default"). Haiku has no server-side fallback.
+_FALLBACK_FAMILIES = (
+    "claude-fable-5",
+    "claude-opus-5",
+    "claude-sonnet-5-5",
+)
+
+# older Claude models that reject the effort setting
+_NO_EFFORT = (
+    "claude-3",
+    "claude-haiku-4",
+    "claude-sonnet-4-5",
+    "claude-sonnet-4-2",
+    "claude-sonnet-4-0",
+    "claude-opus-4-0",
+    "claude-opus-4-1",
+    "claude-opus-4-2",
+)
+
+
+def claude_price(model: str):
+    """(input, output) dollars per million tokens for a Claude model id,
+    or None when the price isn't known."""
+    m = str(model or "").strip().lower()
+    if not m:
+        return None
+    if m in CLAUDE_PRICES:
+        return CLAUDE_PRICES[m]
+    # longest prefix first, so "claude-opus-5-5-..." isn't priced as
+    # "claude-opus-5"
+    for known in sorted(CLAUDE_PRICES, key=len, reverse=True):
+        if m.startswith(known + "-") or m.startswith(known + "@"):
+            return CLAUDE_PRICES[known]
+    return None
+
+
+def claude_supports_effort(model: str) -> bool:
+    m = str(model or "").strip().lower()
+    return not any(m.startswith(frag) for frag in _NO_EFFORT)
+
+
+def claude_supports_fallbacks(model: str) -> bool:
+    m = str(model or "").strip().lower()
+    return any(m.startswith(frag) for frag in _FALLBACK_FAMILIES)
+
+
 def is_reasoning_model(model: str) -> bool:
     m = str(model or "").lower()
     return any(frag in m for frag in REASONING_MODELS)
@@ -299,7 +409,7 @@ class Target:
     """Everything a request needs, resolved from the config."""
 
     provider: str  # normalised qgen_provider
-    api: str  # API_OLLAMA | API_OPENAI
+    api: str  # API_OLLAMA | API_OPENAI | API_ANTHROPIC
     base_url: str
     model: str
     api_key: str
