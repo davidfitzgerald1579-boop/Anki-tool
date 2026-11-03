@@ -41,7 +41,11 @@ def test_every_preset_is_well_formed():
         assert p.base_url.startswith("https://")
         assert not p.base_url.endswith("/")
         assert p.key_url.startswith("https://")
-        assert p.api in (qgen_providers.API_OPENAI, qgen_providers.API_OLLAMA)
+        assert p.api in (
+            qgen_providers.API_OPENAI,
+            qgen_providers.API_OLLAMA,
+            qgen_providers.API_ANTHROPIC,
+        )
         assert p.models and all(mid and desc for mid, desc in p.models)
         assert p.env_var.isupper()
         assert p.free_tier
@@ -765,3 +769,44 @@ def test_cloudflare_block_is_not_blamed_on_the_key(monkeypatch):
         )
     assert "usually a rejected or insufficient API key" in str(exc.value)
     assert "console.groq.com" in str(exc.value)
+
+
+# ------------------------------------------------------------- Claude
+
+
+def test_anthropic_preset_resolves(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    t = qgen_providers.resolve(
+        {"qgen_provider": "anthropic", "qgen_api_key": "sk-ant-1"}
+    )
+    assert t.api == qgen_providers.API_ANTHROPIC
+    assert t.base_url == "https://api.anthropic.com/v1"
+    assert t.model == "claude-opus-5-5"  # the preset's default
+    assert t.api_key == "sk-ant-1"
+    assert t.remote and t.label == "Anthropic (Claude)"
+    assert "anthropic" in qgen_providers.valid_providers()
+
+
+def test_anthropic_key_from_environment(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-env")
+    t = qgen_providers.resolve({"qgen_provider": "anthropic"})
+    assert t.api_key == "sk-ant-env"
+
+
+def test_claude_prices_and_capabilities():
+    assert qgen_providers.claude_price("claude-opus-5-5") == (4.0, 20.0)
+    assert qgen_providers.claude_price("claude-opus-5") == (5.0, 25.0)
+    assert qgen_providers.claude_price("claude-haiku-5-5") == (0.10, 0.50)
+    # a dated snapshot finds its family, not a shorter neighbour
+    assert qgen_providers.claude_price("claude-haiku-4-5-20251001") == (1.0, 5.0)
+    assert qgen_providers.claude_price("llama3.1:8b") is None
+    assert qgen_providers.claude_price("") is None
+    assert qgen_providers.claude_supports_effort("claude-sonnet-5-5")
+    assert not qgen_providers.claude_supports_effort("claude-haiku-4-5")
+    assert qgen_providers.claude_supports_fallbacks("claude-opus-5-5")
+    assert qgen_providers.claude_supports_fallbacks("claude-sonnet-5-5")
+    assert not qgen_providers.claude_supports_fallbacks("claude-haiku-5-5")
+    # every suggested Claude model has a price, so its cost is tracked
+    for mid, _desc in qgen_providers.preset("anthropic").models:
+        assert qgen_providers.claude_price(mid) is not None
+

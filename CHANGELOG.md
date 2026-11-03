@@ -4,6 +4,34 @@ Each version below corresponds to a commit on the repository; the
 installed version is shown as `human_version` in
 `snip_occlusion/manifest.json`.
 
+## v0.33.0 — 2026-11-03
+
+- **Claude as an AI provider.** "Suggest cards" can now use Claude
+  with your own Claude API credits: ⚙ Settings → AI model → A hosted
+  service → **Anthropic (Claude)**, paste your API key, and pick
+  `claude-opus-5-5`, `claude-sonnet-5-5` or `claude-haiku-5-5` (or any
+  model your key can use, via Fetch list). It talks to Anthropic's
+  Messages API directly, so nothing new needs installing.
+- **Control how much Claude uses.** With Claude selected, Settings
+  has an **Effort** choice (low / medium / high: how hard Claude
+  thinks, which is billed as output), a **Max output per request**
+  ceiling, and an optional **Monthly budget** that stops Claude
+  requests once this month's estimated spend reaches it. In the config
+  these are `qgen_claude_effort`, `qgen_claude_max_tokens` and
+  `qgen_monthly_budget_usd`.
+- **Usage tally.** Settings now shows this month's requests and
+  tokens in/out per model for every provider, with an estimated cost
+  for Claude models (from Anthropic's list prices), and a Reset
+  button. Kept in `user_files/qgen_usage.json`.
+- When Claude's safety filters decline a request, Opus and Sonnet
+  retry it on another Claude model automatically
+  (`qgen_claude_fallback`, on by default); a decline that still comes
+  back, a used-up reply allowance and a low credit balance each get
+  a plain-English message.
+- The separate AI Flashcards add-on (`ai_flashcards/`) gains
+  `"provider": "anthropic"` too, with `anthropic_api_key`,
+  `claude_effort` and `max_output_tokens` in its config.
+
 ## v0.32.1 — 2026-10-31
 
 - **Fix: clicking a card in the added-cards list could fail with

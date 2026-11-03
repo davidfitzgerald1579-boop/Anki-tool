@@ -70,6 +70,12 @@
     to that service** (never the image). See
     [docs/hosted-llm.md](https://github.com/davidfitzgerald1579-boop/Anki-tool/blob/main/docs/hosted-llm.md) for how this works,
     what it costs and how to set it up.
+  - `"anthropic"`: Claude (Opus, Sonnet or Haiku), paid from your
+    Claude API credits. Needs a Claude API key (create one at
+    https://platform.claude.com/settings/keys) in `qgen_api_key` or the
+    `ANTHROPIC_API_KEY` environment variable. **The slide or lesson
+    text is sent to Anthropic.** The `qgen_claude_*` and
+    `qgen_monthly_budget_usd` settings below control how much it uses.
   - `"openai_compatible"`: any other server exposing the OpenAI
     chat-completions API — LM Studio, llama.cpp, Jan, vLLM on this
     machine, or a GPU server you rent and run yourself.
@@ -78,7 +84,30 @@
   with `ollama pull llama3.1:8b`; other good choices: `"qwen2.5:7b"`,
   `"mistral:7b"`, or `"llama3.2:3b"` on low-RAM machines). Each hosted
   preset has its own default and suggestions in the Settings window;
-  the Fetch button lists everything the server actually offers.
+  the Fetch button lists everything the server actually offers. For
+  `"anthropic"`: `"claude-opus-5-5"` (default, most capable — $4 / $20
+  per million input / output tokens), `"claude-sonnet-5-5"` ($2 / $10)
+  or `"claude-haiku-5-5"` (fastest and cheapest — $0.10 / $0.50).
+- `qgen_claude_effort`: how hard Claude thinks before writing the cards
+  — `"low"`, `"medium"` or `"high"`. Thinking is billed as output
+  tokens, so lower effort is faster and cheaper; `"low"` is plenty for
+  most slides. Default: `"medium"`.
+- `qgen_claude_max_tokens`: the most Claude may write in one request,
+  its thinking included — a hard ceiling on what a single request can
+  cost (you only pay for what it actually uses). 1024–64000. Default:
+  `8000`.
+- `qgen_monthly_budget_usd`: stop sending Claude requests once this
+  calendar month's estimated spend reaches this many dollars. `0`
+  means no limit. Estimates use Anthropic's list prices; the Claude
+  Console's usage page shows what you were actually billed. Every
+  provider's token use this month (and, for Claude, its estimated
+  cost) is shown in ⚙ Settings → AI model and kept in
+  `user_files/qgen_usage.json`. Default: `0`.
+- `qgen_claude_fallback`: when Claude's safety filters decline a
+  request (they occasionally misfire on ordinary study material),
+  let Anthropic retry it on another Claude model automatically. Applies
+  to Opus 5 / 5.5, Sonnet 5.5 and Fable; Haiku has no fallback.
+  Default: `true`.
 - `qgen_ollama_url`: the Ollama server address. Default:
   `"http://localhost:11434"`. Point it at another machine on your
   network (or a server you rent) to run the model there; put an

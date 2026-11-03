@@ -565,3 +565,200 @@ def test_phantom_blocklist_applies(monkeypatch):
     }
     qgen._verify_references([card], SOURCE_WITH_CITES)
     assert "notes" not in card
+
+
+# ------------------------------------------------------------- Claude
+
+
+def _claude_reply(text=_CARD_JSON, stop="end_turn", usage=None, **extra):
+    payload = {
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-opus-5-5",
+        "content": [
+            {"type": "thinking", "thinking": ""},
+            {"type": "text", "text": text},
+        ],
+        "stop_reason": stop,
+        "usage": usage or {"input_tokens": 1500, "output_tokens": 500},
+    }
+    payload.update(extra)
+    return payload
+
+
+def _claude_cfg(**extra):
+    cfg = {"qgen_provider": "anthropic", "qgen_api_key": "sk-ant-test"}
+    cfg.update(extra)
+    return cfg
+
+
+def test_generate_cards_via_claude(monkeypatch):
+    from snip_occlusion import qgen_usage
+
+    captured = {}
+
+    def fake_urlopen(request, timeout=None):
+        captured["url"] = request.full_url
+        captured["headers"] = {k.lower(): v for k, v in request.header_items()}
+        captured["body"] = json.loads(request.data.decode())
+        return _FakeResponse(_claude_reply())
+
+    monkeypatch.setattr(qgen, "_urlopen", fake_urlopen)
+    cards = qgen.generate_cards(
+        "Private members bills are brought forward by individual MPs.",
+        _claude_cfg(qgen_claude_effort="low", qgen_claude_max_tokens=6000),
+    )
+    assert cards[0]["back"] == "Individual MPs"
+    assert captured["url"] == "https://api.anthropic.com/v1/messages"
+    headers = captured["headers"]
+    assert headers["x-api-key"] == "sk-ant-test"
+    assert headers["anthropic-version"] == qgen.ANTHROPIC_VERSION
+    assert "authorization" not in headers  # Claude takes x-api-key only
+    assert headers["anthropic-beta"] == qgen.ANTHROPIC_FALLBACK_BETA
+    body = captured["body"]
+    assert body["model"] == "claude-opus-5-5"
+    assert body["max_tokens"] == 6000
+    assert body["output_config"] == {"effort": "low"}
+    assert body["fallbacks"] == "default"
+    assert "temperature" not in body and "thinking" not in body
+    assert "individual MPs" in body["messages"][0]["content"]
+    # the reply's tokens are tallied, priced at Opus 5.5's rates
+    row = qgen_usage.month_rows()["claude-opus-5-5"]
+    assert row["requests"] == 1
+    assert row["input_tokens"] == 1500 and row["output_tokens"] == 500
+    assert row["cost_usd"] == pytest.approx((1500 * 4 + 500 * 20) / 1e6)
+
+
+def test_claude_haiku_gets_no_fallback_and_defaults(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout=None):
+        captured["headers"] = {k.lower(): v for k, v in request.header_items()}
+        captured["body"] = json.loads(request.data.decode())
+        return _FakeResponse(_claude_reply())
+
+    monkeypatch.setattr(qgen, "_urlopen", fake_urlopen)
+    qgen.generate_cards("Some slide text.", _claude_cfg(qgen_model="claude-haiku-5-5"))
+    assert "fallbacks" not in captured["body"]
+    assert "anthropic-beta" not in captured["headers"]
+    assert captured["body"]["max_tokens"] == 8000  # the default ceiling
+    assert captured["body"]["output_config"] == {"effort": "medium"}
+
+
+def test_claude_needs_a_key(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(
+        qgen, "_urlopen", lambda *a, **k: pytest.fail("no request without a key")
+    )
+    with pytest.raises(qgen.QGenError) as exc:
+        qgen.generate_cards("Text.", {"qgen_provider": "anthropic"})
+    assert "API key" in str(exc.value)
+
+
+def test_claude_refusal_and_exhausted_allowance(monkeypatch):
+    replies = iter(
+        [
+            _claude_reply(
+                text="",
+                stop="refusal",
+                stop_details={"type": "refusal", "category": "bio"},
+            ),
+            _claude_reply(text="", stop="max_tokens"),
+        ]
+    )
+    monkeypatch.setattr(
+        qgen, "_urlopen", lambda *a, **k: _FakeResponse(next(replies))
+    )
+    with pytest.raises(qgen.QGenError) as exc:
+        qgen.generate_cards("Text.", _claude_cfg())
+    assert "declined" in str(exc.value) and "bio" in str(exc.value)
+    with pytest.raises(qgen.QGenError) as exc:
+        qgen.generate_cards("Text.", _claude_cfg())
+    assert "Max output tokens" in str(exc.value)
+
+
+def test_claude_monthly_budget_stops_requests(monkeypatch):
+    from snip_occlusion import qgen_usage
+
+    qgen_usage.record("anthropic", "claude-opus-5-5", 1_000_000, 0)  # $4
+    monkeypatch.setattr(
+        qgen, "_urlopen", lambda *a, **k: pytest.fail("over budget: no request")
+    )
+    with pytest.raises(qgen.QGenError) as exc:
+        qgen.generate_cards("Text.", _claude_cfg(qgen_monthly_budget_usd=3))
+    assert "budget" in str(exc.value)
+    # a higher budget lets it through
+    monkeypatch.setattr(
+        qgen, "_urlopen", lambda *a, **k: _FakeResponse(_claude_reply())
+    )
+    assert qgen.generate_cards("Text.", _claude_cfg(qgen_monthly_budget_usd=10))
+
+
+def test_claude_low_credit_message(monkeypatch):
+    body = json.dumps(
+        {
+            "type": "error",
+            "error": {
+                "type": "invalid_request_error",
+                "message": "Your credit balance is too low to access the "
+                "Anthropic API.",
+            },
+        }
+    ).encode()
+
+    def fail(request, timeout=None):
+        raise urllib.error.HTTPError(
+            request.full_url, 400, "Bad Request", {}, io.BytesIO(body)
+        )
+
+    monkeypatch.setattr(qgen, "_urlopen", fail)
+    with pytest.raises(qgen.QGenError) as exc:
+        qgen.generate_cards("Text.", _claude_cfg())
+    assert "credit balance" in str(exc.value)
+    assert "Billing" in str(exc.value) or "billing" in str(exc.value)
+
+
+def test_claude_list_models(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout=None):
+        captured["url"] = request.full_url
+        captured["headers"] = {k.lower(): v for k, v in request.header_items()}
+        return _FakeResponse(
+            {
+                "data": [
+                    {"id": "claude-sonnet-5-5", "type": "model"},
+                    {"id": "claude-opus-5-5", "type": "model"},
+                ],
+                "has_more": False,
+            }
+        )
+
+    monkeypatch.setattr(qgen, "_urlopen", fake_urlopen)
+    models = qgen.list_models(_claude_cfg())
+    assert models == ["claude-opus-5-5", "claude-sonnet-5-5"]
+    assert captured["url"] == "https://api.anthropic.com/v1/models?limit=100"
+    assert captured["headers"]["x-api-key"] == "sk-ant-test"
+
+
+def test_openai_usage_is_tallied_without_a_price(monkeypatch):
+    from snip_occlusion import qgen_usage
+
+    monkeypatch.setattr(
+        qgen,
+        "_urlopen",
+        lambda *a, **k: _FakeResponse(
+            {
+                "choices": [{"message": {"content": _CARD_JSON}}],
+                "usage": {"prompt_tokens": 900, "completion_tokens": 120},
+            }
+        ),
+    )
+    qgen.generate_cards(
+        "Some slide text.",
+        {"qgen_provider": "groq", "qgen_api_key": "gsk-1"},
+    )
+    row = qgen_usage.month_rows()["openai/gpt-oss-20b"]
+    assert row["input_tokens"] == 900 and row["output_tokens"] == 120
+    assert "cost_usd" not in row

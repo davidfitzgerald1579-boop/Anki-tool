@@ -15,6 +15,12 @@ the qgen_provider config key, see qgen_providers:
       (often free at student volumes) and tens of times faster. Needs an
       API key; the slide text is sent to that company.
 
+  "anthropic"
+      Claude (Opus, Sonnet, Haiku) through Anthropic's Messages API,
+      paid from the user's Claude API credits. Effort, a reply-token cap
+      and a monthly budget come from the config; each reply's token
+      counts are tallied in qgen_usage.
+
   "openai_compatible"
       Any other server exposing the OpenAI chat-completions API: LM
       Studio, llama.cpp's server, Jan, KoboldCpp, vLLM, a rented GPU box.
@@ -29,12 +35,16 @@ import time
 import urllib.error
 import urllib.request
 
-from . import qgen_feedback, qgen_providers
+from . import qgen_feedback, qgen_providers, qgen_usage
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_OPENAI_BASE_URL = "http://localhost:1234/v1"
 DEFAULT_MODEL = "llama3.1:8b"
 DEFAULT_TIMEOUT_S = 300
+ANTHROPIC_VERSION = "2026-10-21"
+# lets a request Claude's safety filters decline be retried on another
+# Claude model server-side ("fallbacks": "default")
+ANTHROPIC_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 _PROJECT_URL = "https://github.com/davidfitzgerald1579-boop/Anki-tool"
 
 
@@ -361,10 +371,7 @@ def answer_question(
             "Use one of: %s."
             % (str(exc), ", ".join(qgen_providers.valid_providers()))
         )
-    if target.api == qgen_providers.API_OLLAMA:
-        reply = _chat_ollama(cfg, prompt)
-    else:
-        reply = _chat_openai_compatible(cfg, prompt)
+    reply = _chat(target, cfg, prompt)
     try:
         cards = parse_cards(reply)
     except NoCardListError:
@@ -539,10 +546,7 @@ def generate_cards(
             "Use one of: %s."
             % (str(exc), ", ".join(qgen_providers.valid_providers()))
         )
-    if target.api == qgen_providers.API_OLLAMA:
-        reply = _chat_ollama(cfg, prompt)
-    else:
-        reply = _chat_openai_compatible(cfg, prompt)
+    reply = _chat(target, cfg, prompt)
     cards = _drop_off_topic(parse_cards(reply), text)
     _verify_references(cards, text)
     for card in cards:
@@ -700,9 +704,153 @@ def _ollama_options(config: dict, target) -> dict:
 
 def _auth_headers(target) -> dict:
     headers = dict(target.headers)
+    if target.api == qgen_providers.API_ANTHROPIC:
+        headers["anthropic-version"] = ANTHROPIC_VERSION
+        if target.api_key:
+            headers["x-api-key"] = target.api_key
+        return headers
     if target.api_key:
         headers["Authorization"] = "Bearer %s" % target.api_key
     return headers
+
+
+def _chat(target, config: dict, prompt: str) -> str:
+    """Send `prompt` with whichever wire protocol `target` speaks."""
+    if target.api == qgen_providers.API_OLLAMA:
+        return _chat_ollama(config, prompt)
+    if target.api == qgen_providers.API_ANTHROPIC:
+        return _chat_anthropic(config, prompt)
+    return _chat_openai_compatible(config, prompt)
+
+
+def _record_usage(target, model, input_tokens, output_tokens) -> None:
+    try:
+        qgen_usage.record(target.provider, model, input_tokens, output_tokens)
+    except Exception:
+        pass  # bookkeeping only; never fail a generation over it
+
+
+def claude_effort(config: dict) -> str:
+    """The configured effort level ("" = leave it to the model)."""
+    value = str(config.get("qgen_claude_effort") or "").strip().lower()
+    if value in ("default", "auto", "none"):
+        return ""
+    if not value:
+        return qgen_providers.DEFAULT_CLAUDE_EFFORT
+    known = {e for e, _ in qgen_providers.CLAUDE_EFFORTS}
+    return value if value in known else qgen_providers.DEFAULT_CLAUDE_EFFORT
+
+
+def claude_max_tokens(config: dict) -> int:
+    """The per-request ceiling on Claude's reply, thinking included."""
+    lo, hi = qgen_providers.CLAUDE_MAX_TOKENS_RANGE
+    try:
+        value = int(
+            config.get("qgen_claude_max_tokens")
+            or qgen_providers.DEFAULT_CLAUDE_MAX_TOKENS
+        )
+    except (TypeError, ValueError):
+        value = qgen_providers.DEFAULT_CLAUDE_MAX_TOKENS
+    return max(lo, min(hi, value))
+
+
+def _chat_anthropic(config: dict, prompt: str) -> str:
+    """One request to Anthropic's Messages API (POST /v1/messages).
+
+    Claude thinks adaptively before it answers; that thinking counts
+    toward max_tokens and is billed as output, so the ceiling is the
+    user's "max output tokens" setting rather than the per-card cap
+    the open models get, and `effort` is what keeps it short.
+    """
+    target = qgen_providers.resolve(config)
+    model = target.model
+    if not model:
+        raise QGenError(
+            'No Claude model chosen - set "qgen_model" (⚙ Settings → '
+            "AI model)."
+        )
+    if not target.api_key:
+        raise QGenError(
+            "Claude needs an API key. Create one at %s and paste it into "
+            "⚙ Settings → AI model (or set ANTHROPIC_API_KEY)."
+            % target.key_url
+        )
+    over = qgen_usage.budget_problem(config, model)
+    if over:
+        raise QGenError(over)
+    max_tokens = claude_max_tokens(config)
+    body = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    effort = claude_effort(config)
+    if effort and qgen_providers.claude_supports_effort(model):
+        body["output_config"] = {"effort": effort}
+    headers = _auth_headers(target)
+    if config.get(
+        "qgen_claude_fallback", True
+    ) and qgen_providers.claude_supports_fallbacks(model):
+        body["fallbacks"] = "default"
+        headers["anthropic-beta"] = ANTHROPIC_FALLBACK_BETA
+    payload = _post_json(
+        target.base_url + "/messages",
+        body,
+        headers=headers,
+        timeout=_timeout(config),
+        server_hint=_hosted_hint(target),
+        target=target,
+    )
+    if not isinstance(payload, dict):
+        raise QGenError("Unexpected reply from Claude: %r" % (payload,))
+    if payload.get("type") == "error" or (
+        "error" in payload and "content" not in payload
+    ):
+        err = payload.get("error")
+        if isinstance(err, dict):
+            err = err.get("message") or json.dumps(err)
+        raise QGenError("Claude reported an error: %s" % err)
+    usage = payload.get("usage") or {}
+    if isinstance(usage, dict):
+        tokens_in = sum(
+            int(usage.get(k) or 0)
+            for k in (
+                "input_tokens",
+                "cache_creation_input_tokens",
+                "cache_read_input_tokens",
+            )
+        )
+        _record_usage(
+            target,
+            payload.get("model") or model,
+            tokens_in,
+            usage.get("output_tokens") or 0,
+        )
+    stop = payload.get("stop_reason")
+    if stop == "refusal":
+        details = payload.get("stop_details") or {}
+        category = details.get("category") if isinstance(details, dict) else None
+        raise QGenError(
+            "Claude declined to answer this one%s. Its safety filters "
+            "occasionally misfire on ordinary study material; try again, "
+            "trim the text, or use a different model for this slide."
+            % (" (category: %s)" % category if category else "")
+        )
+    blocks = payload.get("content")
+    if not isinstance(blocks, list):
+        raise QGenError("Unexpected reply from Claude: %r" % (payload,))
+    text = "".join(
+        str(b.get("text") or "")
+        for b in blocks
+        if isinstance(b, dict) and b.get("type") == "text"
+    )
+    if not text.strip() and stop == "max_tokens":
+        raise QGenError(
+            "Claude used its whole reply allowance (%d tokens) thinking "
+            "and wrote no cards. Raise \"Max output tokens\" or lower "
+            "\"Effort\" in ⚙ Settings → AI model." % max_tokens
+        )
+    return text
 
 
 def _chat_ollama(config: dict, prompt: str) -> str:
@@ -764,9 +912,17 @@ def _chat_ollama(config: dict, prompt: str) -> str:
             )
         raise QGenError("Ollama reported an error: %s" % message)
     try:
-        return payload["message"]["content"]
+        content = payload["message"]["content"]
     except (KeyError, TypeError):
         raise QGenError("Unexpected reply from Ollama: %r" % payload)
+    if "prompt_eval_count" in payload or "eval_count" in payload:
+        _record_usage(
+            target,
+            model,
+            payload.get("prompt_eval_count") or 0,
+            payload.get("eval_count") or 0,
+        )
+    return content
 
 
 def _chat_openai_compatible(config: dict, prompt: str) -> str:
@@ -816,9 +972,18 @@ def _chat_openai_compatible(config: dict, prompt: str) -> str:
             err = err.get("message") or json.dumps(err)
         raise QGenError("%s reported an error: %s" % (target.label, err))
     try:
-        return payload["choices"][0]["message"]["content"]
+        content = payload["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
         raise QGenError("Unexpected reply from the server: %r" % payload)
+    usage = payload.get("usage") if isinstance(payload, dict) else None
+    if isinstance(usage, dict):
+        _record_usage(
+            target,
+            payload.get("model") or target.model,
+            usage.get("prompt_tokens") or 0,
+            usage.get("completion_tokens") or 0,
+        )
+    return content
 
 
 def _hosted_hint(target) -> str:
@@ -891,6 +1056,23 @@ def _http_error_message(exc, target, detail: str) -> str:
         return (
             "%s refused the request (HTTP %d) - it wants an API key or "
             "a different one.\n%s" % (label, exc.code, detail)
+        )
+    if (
+        target is not None
+        and target.api == qgen_providers.API_ANTHROPIC
+        and exc.code == 400
+        and "credit balance" in (detail or "").lower()
+    ):
+        return (
+            "Your Claude API credit balance is too low. Add credits in "
+            "the Claude Console (https://platform.claude.com/settings/"
+            "billing), or switch to another provider or the free local "
+            "model in ⚙ Settings.\n%s" % detail
+        )
+    if exc.code == 529:
+        return (
+            "%s is overloaded right now (HTTP 529). Wait a moment and try "
+            "again.\n%s" % (label, detail)
         )
     if exc.code == 402:
         return (
@@ -1036,9 +1218,10 @@ def list_models(config: dict, timeout: int = 20) -> list:
             if isinstance(m, dict)
         ]
     else:
-        payload = _get_json(
-            target.base_url + "/models", headers, timeout, hint, target
-        )
+        url = target.base_url + "/models"
+        if target.api == qgen_providers.API_ANTHROPIC:
+            url += "?limit=100"
+        payload = _get_json(url, headers, timeout, hint, target)
         items = payload.get("data") if isinstance(payload, dict) else payload
         names = [
             m.get("id") or m.get("name")
@@ -1100,10 +1283,7 @@ def check_connection(config: dict, timeout: int = 30) -> str:
     probe_cfg[_REPLY_CARDS_KEY] = 0  # no cap; a tiny reply anyway
     probe_cfg["qgen_timeout_seconds"] = timeout  # a probe, not a generation
     prompt = "Reply with exactly one word: OK"
-    if target.api == qgen_providers.API_OLLAMA:
-        reply = _chat_ollama(probe_cfg, prompt)
-    else:
-        reply = _chat_openai_compatible(probe_cfg, prompt)
+    reply = _chat(target, probe_cfg, prompt)
     elapsed = time.monotonic() - started
     reply = " ".join(str(reply or "").split())[:40]
     summary = "✓ %s answered with %s in %.1f s" % (

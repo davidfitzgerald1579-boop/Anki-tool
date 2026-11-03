@@ -138,6 +138,11 @@ fraction of a cent per slide. OpenRouter, Together, Hugging Face,
 Ollama Cloud and others are offered the same way. Choosing a hosted
 service means the slide *text* (never the image) is sent to it, and
 the Settings window says so next to the option.
+**Have Claude API credits?** Pick "Anthropic (Claude)" in the same list,
+paste your Claude API key, and choose the model (Opus, Sonnet or
+Haiku), how hard it thinks (effort), a cap on each reply and an
+optional monthly budget; the window shows this month's tokens and
+estimated cost ([details](docs/hosted-llm.md#using-claude-with-your-claude-api-credits)).
 Prefer everything on your own machine? Switch to "On this computer":
 install [Ollama](https://ollama.com/download) and run
 `ollama pull llama3.1:8b` (~5 GB) — no account, no key, nothing sent
@@ -224,6 +229,7 @@ snip_occlusion/
 ├── template.py       # card templates: % -positioned mask divs + CSS
 ├── qgen.py           # AI card drafts: prompt, parsing, HTTP to the model
 ├── qgen_providers.py # where the model runs: local Ollama / hosted presets
+├── qgen_usage.py     # tokens and estimated cost per month; the budget
 ├── qgen_settings.py  # the AI section of the ⚙ Settings window
 └── qtshim.py         # aqt.qt in Anki, PyQt6 in tests
 ```

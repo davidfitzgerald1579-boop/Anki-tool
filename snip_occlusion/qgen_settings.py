@@ -3,7 +3,9 @@
 Lets the user pick WHERE the model runs (this computer, a hosted
 service, any other server), which model, and an optional second model
 for the bake-off - then prove it works with a Test button before
-saving. Pure Qt on top of qgen / qgen_providers; nothing here touches
+saving. For Claude it also sets how hard the model thinks (effort), a
+cap on each reply, and a monthly budget; every provider shows what
+this month's requests have used. Pure Qt on top of qgen / qgen_providers; nothing here touches
 Anki, so it runs (and is tested) offscreen.
 """
 
@@ -12,7 +14,7 @@ from __future__ import annotations
 import threading
 
 from .qtshim import *  # noqa: F401,F403
-from . import qgen, qgen_providers
+from . import qgen, qgen_providers, qgen_usage
 
 _MUTED = "color:#8a8171"
 _OK = "color:#2f7d4a"
@@ -197,6 +199,62 @@ class ProviderSettings(QWidget):
         qconnect(self.bakeoff_check.toggled, self.alt_box.setEnabled)
         lay.addLayout(alt_row)
 
+        # --- Claude usage controls (shown only for Anthropic)
+        self.claude_pane = QWidget(self)
+        claude_form = QFormLayout(self.claude_pane)
+        claude_form.setContentsMargins(0, 2, 0, 2)
+        self.effort_box = QComboBox(self.claude_pane)
+        for value, label in qgen_providers.CLAUDE_EFFORTS:
+            self.effort_box.addItem(label, value)
+        self.effort_box.setToolTip(
+            "How much Claude thinks before writing the cards. Thinking is "
+            "billed as output tokens, so lower effort is faster and "
+            "cheaper; raise it if cards miss nuance."
+        )
+        claude_form.addRow("Effort:", self.effort_box)
+        self.max_tokens_box = QSpinBox(self.claude_pane)
+        lo, hi = qgen_providers.CLAUDE_MAX_TOKENS_RANGE
+        self.max_tokens_box.setRange(lo, hi)
+        self.max_tokens_box.setSingleStep(1000)
+        self.max_tokens_box.setSuffix(" tokens")
+        self.max_tokens_box.setToolTip(
+            "The most Claude may write per request, thinking included - "
+            "a hard ceiling on what one request can cost. You pay only "
+            "for what is actually used; a few cards need ~1,000-3,000."
+        )
+        claude_form.addRow("Max output per request:", self.max_tokens_box)
+        self.budget_box = QDoubleSpinBox(self.claude_pane)
+        self.budget_box.setRange(0.0, 10000.0)
+        self.budget_box.setDecimals(2)
+        self.budget_box.setSingleStep(1.0)
+        self.budget_box.setPrefix("$")
+        self.budget_box.setSpecialValueText("No limit")
+        self.budget_box.setToolTip(
+            "Stop sending Claude requests once this month's estimated "
+            "spend reaches this amount. 0 = no limit. Estimates use "
+            "Anthropic's list prices; the Claude Console shows the bill."
+        )
+        claude_form.addRow("Monthly budget:", self.budget_box)
+        lay.addWidget(self.claude_pane)
+
+        usage_row = QHBoxLayout()
+        self.usage_label = QLabel(self)
+        self.usage_label.setWordWrap(True)
+        self.usage_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        usage_row.addWidget(self.usage_label, 1)
+        self.usage_reset_btn = QPushButton("Reset", self)
+        self.usage_reset_btn.setToolTip(
+            "Forget this month's usage tally (does not change your bill)"
+        )
+        qconnect(self.usage_reset_btn.clicked, self._reset_usage)
+        usage_row.addWidget(
+            self.usage_reset_btn, 0, Qt.AlignmentFlag.AlignTop
+        )
+        lay.addLayout(usage_row)
+        qconnect(self.budget_box.valueChanged, self._refresh_usage)
+
         test_row = QHBoxLayout()
         self.test_btn = QPushButton("Test connection", self)
         qconnect(self.test_btn.clicked, self._test_connection)
@@ -240,6 +298,13 @@ class ProviderSettings(QWidget):
             self.custom_radio.setChecked(True)
         else:
             self.local_radio.setChecked(True)
+        effort = qgen.claude_effort(cfg)
+        self.effort_box.setCurrentIndex(
+            max(0, self.effort_box.findData(effort or
+                qgen_providers.DEFAULT_CLAUDE_EFFORT))
+        )
+        self.max_tokens_box.setValue(qgen.claude_max_tokens(cfg))
+        self.budget_box.setValue(qgen_usage.budget(cfg))
         self.bakeoff_check.setChecked(bool(cfg.get("qgen_bakeoff", False)))
         self.alt_box.setEnabled(self.bakeoff_check.isChecked())
         # the bake-off partner: whichever configured contender isn't
@@ -299,6 +364,17 @@ class ProviderSettings(QWidget):
                 self.bakeoff_check.isChecked() and alt and alt != model
             ),
         }
+        if self.is_claude():
+            # only written while Claude is chosen; switching to another
+            # provider leaves the saved Claude settings as they were
+            out["qgen_claude_effort"] = str(
+                self.effort_box.currentData()
+                or qgen_providers.DEFAULT_CLAUDE_EFFORT
+            )
+            out["qgen_claude_max_tokens"] = int(self.max_tokens_box.value())
+            out["qgen_monthly_budget_usd"] = round(
+                float(self.budget_box.value()), 2
+            )
         if alt and alt != model:
             out["qgen_bakeoff_models"] = [model, alt]
         return out
@@ -379,6 +455,7 @@ class ProviderSettings(QWidget):
         self.hosted_pane.setVisible(mode == "hosted")
         self.custom_pane.setVisible(mode == "custom")
         self._switch_provider(self.provider())
+        self._refresh_claude_pane()
         if mode == "hosted":
             self._service_changed()
         self._refresh_privacy()
@@ -399,6 +476,7 @@ class ProviderSettings(QWidget):
             "<span style='%s'>%s</span>" % (_MUTED, " ".join(bits))
         )
         self._switch_provider(preset.key)
+        self._refresh_claude_pane()
         self._refresh_privacy()
 
     def _switch_provider(self, provider: str) -> None:
@@ -461,6 +539,35 @@ class ProviderSettings(QWidget):
             box.setEditText(text)
         finally:
             box.blockSignals(False)
+
+    def is_claude(self) -> bool:
+        preset = self.current_preset() if self.mode() == "hosted" else None
+        return preset is not None and preset.api == qgen_providers.API_ANTHROPIC
+
+    def _refresh_claude_pane(self) -> None:
+        self.claude_pane.setVisible(self.is_claude())
+        self._refresh_usage()
+
+    def _refresh_usage(self, *_args) -> None:
+        try:
+            text = qgen_usage.summary(
+                {"qgen_monthly_budget_usd": self.budget_box.value()}
+            )
+        except Exception:
+            text = ""
+        has_rows = bool(text) and not text.startswith("No AI requests")
+        self.usage_reset_btn.setVisible(has_rows)
+        self.usage_label.setText(
+            "<span style='%s'>%s</span>"
+            % (_MUTED, _escape(text).replace("\n", "<br>"))
+        )
+
+    def _reset_usage(self) -> None:
+        try:
+            qgen_usage.reset_month()
+        except Exception:
+            pass
+        self._refresh_usage()
 
     def _refresh_privacy(self, *_args) -> None:
         try:
@@ -578,6 +685,7 @@ class ProviderSettings(QWidget):
         self.test_result.setText(
             "<span style='%s'>%s</span>" % (_OK, _escape(str(result)))
         )
+        self._refresh_usage()
 
 
 def _escape(text: str) -> str:
